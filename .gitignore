@@ -7,6 +7,9 @@ Release
 *.filters
 *.user
 
+# build dir
+build
+
 
 # Prerequisites
 *.d
