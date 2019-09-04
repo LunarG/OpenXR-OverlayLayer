@@ -19,3 +19,4 @@ Edit Build Events -> Post-Build Event to "COPY /Y $(OutDir)\$(TargetFileName) $(
 Re-build and select OverlayUser_Host as the Startup Project
 ```
 
+If your cmake-fu is strong, replace step 3 with cmake magic
