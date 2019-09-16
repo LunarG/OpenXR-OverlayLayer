@@ -6,7 +6,7 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release"
     CACHE STRING "Configuration types" FORCE)
 
 add_executable(OverlayUser_Host
-  ovelay_host.cpp
+  overlay_host.cpp
 )
 
 set_target_properties(OverlayUser_Host PROPERTIES FOLDER "Users")
