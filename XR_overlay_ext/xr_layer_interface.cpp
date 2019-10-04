@@ -36,14 +36,14 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrNegotiateLoaderApiLayerInterface(const XrN
         layerRequest->structSize != sizeof(XrNegotiateApiLayerRequest) ||
         loaderInfo->minInterfaceVersion > XR_CURRENT_LOADER_API_LAYER_VERSION ||
         loaderInfo->maxInterfaceVersion < XR_CURRENT_LOADER_API_LAYER_VERSION ||
-        loaderInfo->minXrVersion < XR_MAKE_VERSION(0, 9, 0) || 
-        loaderInfo->minXrVersion >= XR_MAKE_VERSION(1, 1, 0))
+        loaderInfo->minApiVersion < XR_MAKE_VERSION(0, 9, 0) || 
+        loaderInfo->minApiVersion >= XR_MAKE_VERSION(1, 1, 0))
     {
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
     layerRequest->layerInterfaceVersion = XR_CURRENT_LOADER_API_LAYER_VERSION;
-    layerRequest->layerXrVersion = XR_MAKE_VERSION(1, 0, 0);
+    layerRequest->layerApiVersion = XR_MAKE_VERSION(1, 0, 0);
     layerRequest->getInstanceProcAddr = reinterpret_cast<PFN_xrGetInstanceProcAddr>(Overlay_xrGetInstanceProcAddr);
     layerRequest->createApiLayerInstance = reinterpret_cast<PFN_xrCreateApiLayerInstance>(Overlay_xrCreateInstance);
 

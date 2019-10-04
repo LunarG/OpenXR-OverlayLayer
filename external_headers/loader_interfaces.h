@@ -1,4 +1,4 @@
-// Copyright (c) 2017 The Khronos Group Inc.
+// Copyright (c) 2017-2019 The Khronos Group Inc.
 // Copyright (c) 2017 Valve Corporation
 // Copyright (c) 2017 LunarG, Inc.
 //
@@ -18,6 +18,8 @@
 //
 
 #pragma once
+
+#include <openxr/openxr.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,8 +58,8 @@ typedef struct XrNegotiateLoaderInfo {
     size_t structSize;                    // sizeof(XrNegotiateLoaderInfo)
     uint32_t minInterfaceVersion;
     uint32_t maxInterfaceVersion;
-    uint32_t minXrVersion;
-    uint32_t maxXrVersion;
+    XrVersion minApiVersion;
+    XrVersion maxApiVersion;
 } XrNegotiateLoaderInfo;
 
 #define XR_API_LAYER_INFO_STRUCT_VERSION 1
@@ -66,7 +68,7 @@ typedef struct XrNegotiateApiLayerRequest {
     uint32_t structVersion;               // XR_API_LAYER_INFO_STRUCT_VERSION
     size_t structSize;                    // sizeof(XrNegotiateApiLayerRequest)
     uint32_t layerInterfaceVersion;       // CURRENT_LOADER_API_LAYER_VERSION
-    uint32_t layerXrVersion;
+    XrVersion layerApiVersion;
     PFN_xrGetInstanceProcAddr getInstanceProcAddr;
     PFN_xrCreateApiLayerInstance createApiLayerInstance;
 } XrNegotiateApiLayerRequest;
@@ -77,7 +79,7 @@ typedef struct XrNegotiateRuntimeRequest {
     uint32_t structVersion;               // XR_RUNTIME_INFO_STRUCT_VERSION
     size_t structSize;                    // sizeof(XrNegotiateRuntimeRequest)
     uint32_t runtimeInterfaceVersion;     // CURRENT_LOADER_RUNTIME_VERSION
-    uint32_t runtimeXrVersion;
+    XrVersion runtimeApiVersion;
     PFN_xrGetInstanceProcAddr getInstanceProcAddr;
 } XrNegotiateRuntimeRequest;
 

@@ -2,7 +2,7 @@
    "file_format_version" : "1.0.0",
    "api_layer": {
        "name": "XR_EXT_overlay_api_layer",
-       "library_path": "XR_overlay_ext.dll",
+       "library_path": ".\\XR_overlay_ext.dll",
        "api_version" : "1.0",
        "implementation_version" : "1",
        "description" : "OpenXR overlay extension API layer",
@@ -14,6 +14,6 @@
                "name": "XR_EXT_overlay",
                "spec_version": "1"
            }
-       ],
+       ]
     }
 }
