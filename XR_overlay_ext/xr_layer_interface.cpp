@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
 
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
 
@@ -11,6 +12,8 @@ static XrGeneratedDispatchTable *downchain = nullptr;
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
 #endif
+
+	XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance);
 
 
 // Negotiate an interface with the loader 
@@ -45,7 +48,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrNegotiateLoaderApiLayerInterface(const XrN
     layerRequest->layerInterfaceVersion = XR_CURRENT_LOADER_API_LAYER_VERSION;
     layerRequest->layerApiVersion = XR_MAKE_VERSION(1, 0, 0);
     layerRequest->getInstanceProcAddr = reinterpret_cast<PFN_xrGetInstanceProcAddr>(Overlay_xrGetInstanceProcAddr);
-    layerRequest->createApiLayerInstance = reinterpret_cast<PFN_xrCreateApiLayerInstance>(Overlay_xrCreateInstance);
+    layerRequest->createApiLayerInstance = reinterpret_cast<PFN_xrCreateApiLayerInstance>(Overlay_xrCreateApiLayerInstance);
 
     return XR_SUCCESS;
 }
@@ -137,7 +140,16 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = nullptr;
   }
 
-  return *function ? XR_SUCCESS : XR_ERROR_FUNCTION_UNSUPPORTED;
+      // If we setup the function, just return
+    if (*function != nullptr) {
+        return XR_SUCCESS;
+    }
+
+    if(downchain == nullptr) {
+        return XR_ERROR_HANDLE_INVALID;
+    }
+
+    return downchain->GetInstanceProcAddr(instance, name, function);
 }
 
 #ifdef __cplusplus
