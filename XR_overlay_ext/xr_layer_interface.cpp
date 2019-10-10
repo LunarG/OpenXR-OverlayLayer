@@ -6,6 +6,7 @@
 #include <stdio.h>
 
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
+DWORD gOverlayWorkerThreadId;
 
 static XrGeneratedDispatchTable *downchain = nullptr;
 
@@ -65,6 +66,16 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
+DWORD WINAPI ThreadBody(LPVOID)
+{
+    return 0;
+}
+
+void CreateOverlaySessionThread()
+{
+    HANDLE thread = CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId);
+}
+
 XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance) 
 {
     assert(0 == strncmp(kOverlayLayerName, apiLayerInfo->nextInfo->layerName, strnlen_s(kOverlayLayerName, XR_MAX_API_LAYER_NAME_SIZE)));
@@ -94,31 +105,115 @@ XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, cons
     //std::unique_lock<std::mutex> mlock(g_instance_dispatch_mutex);
     //g_instance_dispatch_map[returned_instance] = next_dispatch;
 
+    CreateOverlaySessionThread();
+
+    return result;
+}
+
+/*
+
+Final
+    add "external synchronization" around all funcs needing external synch
+    add special conditional "always synchronize" in case runtime misbehaves
+    catch and pass all functions
+    run with validation layer?
+*/
+
+// TODO catch BeginSession
+
+// TODO catch EndSession
+
+// TODO catch CreateSession
+// if not cached session
+//     create primary session and hold
+// if not overlay
+//     kick off thread to create overlay session
+//     hand back existing CreateSession
+// if overlay
+//     hand back placeholder for session for overlays
+
+// TODO for everything that receives a session
+// if it's the overlay session
+//   replace with the main session
+//   behave as overlay
+
+// TODO catch DestroySession
+// if not overlay
+//   if overlay exists, mark session destroyed and wait for thread to join
+//   else destroy session
+// if overlay
+//   mark overlay session destroyed
+// actually destroy on last of overlay or 
+
+// TODO catch PollEvent
+// if not overlay
+//     normal
+// else if overlay
+//     transmit STOPPING
+
+// TODO WaitFrame
+// if main
+//     mark have waitframed since beginsession
+//     chain waitframe and save off results
+// if overlay
+//     wait on main waitframe if not waitframed since beginsession
+//     use results saved from main
+
+// TODO BeginFrame
+// chain BeginFrame
+// mark that overlay or main session called BeginFrame
+// if main
+//     clear have waitframed since last beginframe
+// overlay
+//     mark that we have begun a frame
+
+// TODO EndFrame
+// if main
+//     add in overlay frame data if exists
+// if overlay
+//     store EndFrame data
+
+
+XrResult Overlay_xrGetSystemProperties(
+    XrInstance instance,
+    XrSystemId systemId,
+    XrSystemProperties* properties)
+{
+    XrResult result;
+
+    result = downchain->GetSystemProperties(instance, systemId, properties);
+    if(result != XR_SUCCESS)
+	return result;
+
+    // Reserve one for overlay
+    properties->graphicsProperties.maxLayerCount =
+        properties->graphicsProperties.maxLayerCount - 1;
+
     return result;
 }
 
 XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateInfo *createInfo, XrSwapchain *swapchain) 
 { 
-    return XR_ERROR_INITIALIZATION_FAILED;   // TBD
-    downchain->CreateSwapchain(session, createInfo, swapchain);
+    // return XR_ERROR_INITIALIZATION_FAILED;   // TBD
+    return downchain->CreateSwapchain(session, createInfo, swapchain);
 }
 
 XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info) 
 { 
-    return XR_ERROR_INITIALIZATION_FAILED;   // TBD
-    downchain->BeginFrame(session, info);
+    // return XR_ERROR_INITIALIZATION_FAILED;   // TBD
+    return downchain->BeginFrame(session, info);
 }
 
 XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info) 
 { 
-    return XR_ERROR_INITIALIZATION_FAILED;   // TBD
-    downchain->EndFrame(session, info);
+    // return XR_ERROR_INITIALIZATION_FAILED;   // TBD
+    return downchain->EndFrame(session, info);
 }
 
 XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrFrameState *state) 
 { 
-    return XR_ERROR_INITIALIZATION_FAILED;   // TBD
-    downchain->WaitFrame(session, info, state);
+    // return XR_ERROR_INITIALIZATION_FAILED;   // TBD
+    return downchain->WaitFrame(session, info, state);
 }
 
 XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PFN_xrVoidFunction *function) {
@@ -134,6 +229,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrBeginFrame);
   } else if (0 == strcmp(name, "xrEndFrame")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEndFrame);
+  } else if (0 == strcmp(name, "xrGetSystemProperties")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetSystemProperties);
   } else if (0 == strcmp(name, "xrWaitFrame")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrWaitFrame);
   } else {
