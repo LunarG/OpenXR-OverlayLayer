@@ -17,11 +17,17 @@ HANDLE gMainDestroySessionSema;
 
 XrInstance gSavedInstance;
 XrSession kOverlayFakeSession = (XrSession)0xCAFEFEED;
-XrSession gMainSessionSaved;
+XrSession gSavedMainSession;
 XrSession gOverlaySession;
 bool gExitOverlay = false;
+bool gSerializeEverything = true;
+
+HANDLE gOverlayCallMutex = NULL;      // handle to sync object
+LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
+
 
 enum {
+    // XXX need to do this with an enum generated from ext as part of build
     XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
 };
 
@@ -97,12 +103,13 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
 
 DWORD WINAPI ThreadBody(LPVOID)
 {
-    XrSessionCreateInfo createInfo{XR_TYPE_SESSION_CREATE_INFO};
-    XrSessionCreateInfoOverlayEXT createInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
-    createInfo.next = &createInfoOverlay;
-    createInfoOverlay.overlaySession = XR_TRUE;
-    createInfoOverlay.sessionLayersPlacement = 1;
-    XrResult result = Overlay_xrCreateSession(gSavedInstance, &createInfo, &gOverlaySession);
+    XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
+    XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
+    sessionCreateInfoOverlay.next = nullptr;
+    sessionCreateInfo.next = &sessionCreateInfoOverlay;
+	sessionCreateInfoOverlay.overlaySession = XR_TRUE;
+	sessionCreateInfoOverlay.sessionLayersPlacement = 1;
+    XrResult result = Overlay_xrCreateSession(gSavedInstance, &sessionCreateInfo, &gOverlaySession);
     if(result != XR_SUCCESS) {
         OutputDebugStringA("**BRAD** failed to call xrCreateSession in thread\n");
         DebugBreak();
@@ -110,12 +117,33 @@ DWORD WINAPI ThreadBody(LPVOID)
     }
     OutputDebugStringA("**BRAD** success in thread creating overlay session\n");
 
-    // XXX for debugging - won't wait on this here
+    XrSwapchain swapchain;
+    XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    swapchainCreateInfo.arraySize = 1;
+    swapchainCreateInfo.format = 28; // XXX!!! m_colorSwapchainFormat;
+    swapchainCreateInfo.width = 512;
+    swapchainCreateInfo.height = 512;
+    swapchainCreateInfo.mipCount = 1;
+    swapchainCreateInfo.faceCount = 1;
+    swapchainCreateInfo.sampleCount = 1;
+    swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+
+	swapchainCreateInfo.next = NULL;
+    result = Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchain);
+    if(result != XR_SUCCESS) {
+        OutputDebugStringA("**BRAD** failed to call xrDestroySession in thread\n");
+        DebugBreak();
+        return 1;
+    }
+    OutputDebugStringA("**BRAD** success in thread creating swapchain\n");
+
+    // XXX for debugging - won't wait on this normally
     DWORD waitresult = WaitForSingleObject(gOverlayWaitFrameSema, 1000000);
     if(waitresult == WAIT_TIMEOUT) {
         OutputDebugStringA("**BRAD** timeout waiting in ThreadBody on WaitFrameSema\n");
         DebugBreak();
     }
+    OutputDebugStringA("**BRAD** proceed\n");
 
     result = Overlay_xrDestroySession(gOverlaySession);
     if(result != XR_SUCCESS) {
@@ -123,6 +151,7 @@ DWORD WINAPI ThreadBody(LPVOID)
         DebugBreak();
         return 1;
     }
+    OutputDebugStringA("**BRAD** destroyed session, exiting\n");
     return 0;
 }
 
@@ -142,6 +171,8 @@ void CreateOverlaySessionThread()
         CreateSemaphoreA(nullptr, 0, 1, kOverlayWaitFrameSemaName));
     CHK(gMainDestroySessionSema =
         CreateSemaphoreA(nullptr, 0, 1, kMainDestroySessionSemaName));
+    CHK(gOverlayCallMutex = CreateMutex(NULL, TRUE, kOverlayMutexName));
+    ReleaseMutex(gOverlayCallMutex);
 
     CHK(gOverlayWorkerThread =
         CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId));
@@ -280,7 +311,7 @@ XrResult Overlay_xrDestroySession(
 
         gExitOverlay = true;
         ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
-        DWORD waitresult = WaitForSingleObject(gMainDestroySessionSema, 1000);
+        DWORD waitresult = WaitForSingleObject(gMainDestroySessionSema, 1000000);
         if(waitresult == WAIT_TIMEOUT) {
             OutputDebugStringA("**BRAD** main destroy session timeout\n");
             DebugBreak();
@@ -317,11 +348,11 @@ XrResult Overlay_xrCreateSession(
         if(result != XR_SUCCESS)
             return result;
 
-        gMainSessionSaved = *session;
+        gSavedMainSession = *session;
 
         // Let overlay session continue
         ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);
-
+		 
     } else {
 
         // Wait on main session
@@ -340,8 +371,24 @@ XrResult Overlay_xrCreateSession(
 
 XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateInfo *createInfo, XrSwapchain *swapchain) 
 { 
-    // return XR_ERROR_INITIALIZATION_FAILED;   // TBD
-    return downchain->CreateSwapchain(session, createInfo, swapchain);
+    if(gSerializeEverything) {
+        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**BRAD** timeout waiting in CreateSwapchain on gOverlayCallMutex\n");
+            DebugBreak();
+        }
+    }
+
+    if(session == kOverlayFakeSession) {
+        session = gSavedMainSession;
+    }
+
+    XrResult result = downchain->CreateSwapchain(session, createInfo, swapchain);
+    if(gSerializeEverything) {
+        ReleaseMutex(gOverlayCallMutex);
+    }
+
+    return result;
 }
 
 XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info) 
