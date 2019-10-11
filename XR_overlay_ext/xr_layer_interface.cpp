@@ -19,6 +19,7 @@ XrInstance gSavedInstance;
 XrSession kOverlayFakeSession = (XrSession)0xCAFEFEED;
 XrSession gMainSessionSaved;
 XrSession gOverlaySession;
+bool gExitOverlay = false;
 
 enum {
     XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
@@ -109,6 +110,19 @@ DWORD WINAPI ThreadBody(LPVOID)
     }
     OutputDebugStringA("**BRAD** success in thread creating overlay session\n");
 
+    // XXX for debugging - won't wait on this here
+    DWORD waitresult = WaitForSingleObject(gOverlayWaitFrameSema, 1000000);
+    if(waitresult == WAIT_TIMEOUT) {
+        OutputDebugStringA("**BRAD** timeout waiting in ThreadBody on WaitFrameSema\n");
+        DebugBreak();
+    }
+
+    result = Overlay_xrDestroySession(gOverlaySession);
+    if(result != XR_SUCCESS) {
+        OutputDebugStringA("**BRAD** failed to call xrDestroySession in thread\n");
+        DebugBreak();
+        return 1;
+    }
     return 0;
 }
 
@@ -251,6 +265,33 @@ XrResult Overlay_xrGetSystemProperties(
     return result;
 }
 
+XrResult Overlay_xrDestroySession(
+    XrSession session)
+{
+    XrResult result;
+
+    if(session == kOverlayFakeSession) {
+        // overlay session
+
+        ReleaseSemaphore(gMainDestroySessionSema, 1, nullptr);
+        result = XR_SUCCESS;
+    } else {
+        // main session
+
+        gExitOverlay = true;
+        ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
+        DWORD waitresult = WaitForSingleObject(gMainDestroySessionSema, 1000);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**BRAD** main destroy session timeout\n");
+            DebugBreak();
+        }
+        OutputDebugStringA("**BRAD** main destroy session okay\n");
+        result = downchain->DestroySession(session);
+    }
+
+    return result;
+}
+
 XrResult Overlay_xrCreateSession(
     XrInstance instance,
     const XrSessionCreateInfo* createInfo,
@@ -267,6 +308,7 @@ XrResult Overlay_xrCreateSession(
     // TODO handle the case where Main session passes the
     // overlaycreateinfo but overlaySession = FALSE
     if(cio == nullptr) {
+
         // Main session
 
         // TODO : remake chain without InfoOverlayEXT
@@ -281,6 +323,7 @@ XrResult Overlay_xrCreateSession(
         ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);
 
     } else {
+
         // Wait on main session
         DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, 1000);
         if(waitresult == WAIT_TIMEOUT) {
@@ -338,6 +381,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrWaitFrame);
   } else if (0 == strcmp(name, "xrCreateSession")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateSession);
+  } else if (0 == strcmp(name, "xrDestroySession")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrDestroySession);
   } else {
     *function = nullptr;
   }
