@@ -7,14 +7,42 @@
 
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
 DWORD gOverlayWorkerThreadId;
+HANDLE gOverlayWorkerThread;
+LPCSTR kOverlayCreateSessionSemaName = "XR_EXT_overlay_overlay_create_session_sema";
+HANDLE gOverlayCreateSessionSema;
+LPCSTR kOverlayWaitFrameSemaName = "XR_EXT_overlay_overlay_wait_frame_sema";
+HANDLE gOverlayWaitFrameSema;
+LPCSTR kMainDestroySessionSemaName = "XR_EXT_overlay_main_destroy_session_sema";
+HANDLE gMainDestroySessionSema;
+
+XrInstance gSavedInstance;
+XrSession kOverlayFakeSession = (XrSession)0xCAFEFEED;
+XrSession gMainSessionSaved;
+XrSession gOverlaySession;
+
+enum {
+    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
+};
+
+struct xrinfoBase
+{
+    XrStructureType       type;
+    void* XR_MAY_ALIAS    next;
+};
+
+typedef struct XrSessionCreateInfoOverlayEXT
+{
+    XrStructureType             type;
+    const void* XR_MAY_ALIAS    next;
+    XrBool32                    overlaySession;
+    uint32_t                    sessionLayersPlacement;
+} XrSessionCreateInfoOverlayEXT;
 
 static XrGeneratedDispatchTable *downchain = nullptr;
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
 #endif
-
-	XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance);
 
 
 // Negotiate an interface with the loader 
@@ -68,12 +96,42 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
 
 DWORD WINAPI ThreadBody(LPVOID)
 {
+    XrSessionCreateInfo createInfo{XR_TYPE_SESSION_CREATE_INFO};
+    XrSessionCreateInfoOverlayEXT createInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
+    createInfo.next = &createInfoOverlay;
+    createInfoOverlay.overlaySession = XR_TRUE;
+    createInfoOverlay.sessionLayersPlacement = 1;
+    XrResult result = Overlay_xrCreateSession(gSavedInstance, &createInfo, &gOverlaySession);
+    if(result != XR_SUCCESS) {
+        OutputDebugStringA("**BRAD** failed to call xrCreateSession in thread\n");
+        DebugBreak();
+        return 1;
+    }
+    OutputDebugStringA("**BRAD** success in thread creating overlay session\n");
+
     return 0;
 }
 
+char CHK_buf[512];
+#define CHK(a) \
+    if((a) == NULL) { \
+        sprintf_s(CHK_buf, "operation at %s:%d failed with %d\n", __FILE__, __LINE__, GetLastError()); \
+        OutputDebugStringA(CHK_buf); \
+        DebugBreak(); \
+    }
+
 void CreateOverlaySessionThread()
 {
-    HANDLE thread = CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId);
+    CHK(gOverlayCreateSessionSema =
+        CreateSemaphoreA(nullptr, 0, 1, kOverlayCreateSessionSemaName));
+    CHK(gOverlayWaitFrameSema =
+        CreateSemaphoreA(nullptr, 0, 1, kOverlayWaitFrameSemaName));
+    CHK(gMainDestroySessionSema =
+        CreateSemaphoreA(nullptr, 0, 1, kMainDestroySessionSemaName));
+
+    CHK(gOverlayWorkerThread =
+        CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId));
+    OutputDebugStringA("**BRAD** success\n");
 }
 
 XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance) 
@@ -95,6 +153,7 @@ XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, cons
     XrInstance returned_instance = *instance;
     XrResult result = pfn_next_cali(info, &local_api_layer_info, &returned_instance);
     *instance = returned_instance;
+    gSavedInstance = returned_instance;
 
     // Create the dispatch table to the next levels
     downchain = new XrGeneratedDispatchTable();
@@ -192,6 +251,50 @@ XrResult Overlay_xrGetSystemProperties(
     return result;
 }
 
+XrResult Overlay_xrCreateSession(
+    XrInstance instance,
+    const XrSessionCreateInfo* createInfo,
+    XrSession* session)
+{
+    XrResult result;
+
+    xrinfoBase* p = reinterpret_cast<xrinfoBase*>(const_cast<void*>(createInfo->next));
+    while(p != nullptr && p->type != XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
+        p = reinterpret_cast<xrinfoBase*>(const_cast<void*>(p->next));
+    }
+    XrSessionCreateInfoOverlayEXT* cio = reinterpret_cast<XrSessionCreateInfoOverlayEXT*>(p);
+
+    // TODO handle the case where Main session passes the
+    // overlaycreateinfo but overlaySession = FALSE
+    if(cio == nullptr) {
+        // Main session
+
+        // TODO : remake chain without InfoOverlayEXT
+
+        result = downchain->CreateSession(instance, createInfo, session);
+        if(result != XR_SUCCESS)
+            return result;
+
+        gMainSessionSaved = *session;
+
+        // Let overlay session continue
+        ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);
+
+    } else {
+        // Wait on main session
+        DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, 1000);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**BRAD** overlay create session timeout\n");
+            DebugBreak();
+        }
+        // TODO should store any kind of failure in main XrCreateSession and then fall through here
+        *session = kOverlayFakeSession;
+        result = XR_SUCCESS;
+    }
+
+    return result;
+}
+
 XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateInfo *createInfo, XrSwapchain *swapchain) 
 { 
     // return XR_ERROR_INITIALIZATION_FAILED;   // TBD
@@ -233,6 +336,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetSystemProperties);
   } else if (0 == strcmp(name, "xrWaitFrame")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrWaitFrame);
+  } else if (0 == strcmp(name, "xrCreateSession")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateSession);
   } else {
     *function = nullptr;
   }
