@@ -1,3 +1,5 @@
+#define XR_USE_GRAPHICS_API_D3D11 1
+
 #include "xr_overlay_dll.h"
 #include "xr_generated_dispatch_table.h"
 
@@ -27,6 +29,24 @@ XrFrameState gSavedWaitFrameState;
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
 
+char CHK_buf[512];
+#define CHK(a) \
+    if((a) == NULL) { \
+        sprintf_s(CHK_buf, "%s at %s:%d failed with %d\n", # a , __FILE__, __LINE__, GetLastError()); \
+        OutputDebugStringA(CHK_buf); \
+        DebugBreak(); \
+    }
+
+#define CHK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
+
+void CheckXrResult(XrResult a, const char* what, const char *file, int line)
+{
+    if(a != XR_SUCCESS) {
+        sprintf_s(CHK_buf, "%s at %s:%d failed with %d\n", what, file, line, a);
+        OutputDebugStringA(CHK_buf); \
+        DebugBreak(); \
+    }
+}
 
 enum {
     // XXX need to do this with an enum generated from ext as part of build
@@ -103,6 +123,10 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
+
+// XXX TODO - this should call XR functions normally, probably from
+// another compilation unit, and probably after we *know* CreateInstance
+// has completed and we have a working dispatch table.
 DWORD WINAPI ThreadBody(LPVOID)
 {
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
@@ -119,22 +143,33 @@ DWORD WINAPI ThreadBody(LPVOID)
     }
     OutputDebugStringA("**OVERLAY** success in thread creating overlay session\n");
 
-    XrSwapchain swapchain;
-    XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-    swapchainCreateInfo.arraySize = 1;
-    swapchainCreateInfo.format = 28; // XXX!!! m_colorSwapchainFormat;
-    swapchainCreateInfo.width = 512;
-    swapchainCreateInfo.height = 512;
-    swapchainCreateInfo.mipCount = 1;
-    swapchainCreateInfo.faceCount = 1;
-    swapchainCreateInfo.sampleCount = 1;
-    swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-    swapchainCreateInfo.next = NULL;
-    result = Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchain);
-    if(result != XR_SUCCESS) {
-        OutputDebugStringA("**OVERLAY** failed to call xrCreateSwapChain in thread\n");
-        DebugBreak();
-        return 1;
+    XrSwapchain swapchains[2];
+    XrSwapchainImageD3D11KHR *swapchainImages[2];
+    for(int eye = 0; eye < 2; eye++) {
+        XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        swapchainCreateInfo.arraySize = 1;
+        swapchainCreateInfo.format = 28; // XXX!!! m_colorSwapchainFormat;
+        swapchainCreateInfo.width = 512;
+        swapchainCreateInfo.height = 512;
+        swapchainCreateInfo.mipCount = 1;
+        swapchainCreateInfo.faceCount = 1;
+        swapchainCreateInfo.sampleCount = 1;
+        swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        swapchainCreateInfo.next = NULL;
+        result = Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchains[eye]);
+        if(result != XR_SUCCESS) {
+            OutputDebugStringA("**OVERLAY** failed to call xrCreateSwapChain in thread\n");
+            DebugBreak();
+            return 1;
+        }
+        uint32_t count;
+        Overlay_xrEnumerateSwapchainImages(swapchains[eye], 0, &count, nullptr);
+        swapchainImages[eye] = new XrSwapchainImageD3D11KHR[count];
+        for(uint32_t i = 0; i < count; i++) {
+            swapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+            swapchainImages[eye][i].next = NULL;
+        }
+        CHK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
     }
     OutputDebugStringA("**OVERLAY** success in thread creating swapchain\n");
 
@@ -145,6 +180,9 @@ DWORD WINAPI ThreadBody(LPVOID)
         Overlay_xrWaitFrame(gOverlaySession, NULL, &state);
         OutputDebugStringA("**OVERLAY** exited overlay session xrWaitFrame\n");
         Overlay_xrBeginFrame(gOverlaySession, NULL);
+        // for(int eye = 0; eye < 2; eye++) {
+            // xrWaitSwapchainImage
+        // }
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
         frameEndInfo.next = NULL;
         Overlay_xrEndFrame(gOverlaySession, &frameEndInfo);
@@ -159,14 +197,6 @@ DWORD WINAPI ThreadBody(LPVOID)
     OutputDebugStringA("**OVERLAY** destroyed session, exiting\n");
     return 0;
 }
-
-char CHK_buf[512];
-#define CHK(a) \
-    if((a) == NULL) { \
-        sprintf_s(CHK_buf, "operation at %s:%d failed with %d\n", __FILE__, __LINE__, GetLastError()); \
-        OutputDebugStringA(CHK_buf); \
-        DebugBreak(); \
-    }
 
 void CreateOverlaySessionThread()
 {
@@ -228,32 +258,6 @@ Final
     run with validation layer?
 */
 
-// TODO catch BeginSession
-
-// TODO catch EndSession
-
-// TODO catch CreateSession
-// if not cached session
-//     create primary session and hold
-// if not overlay
-//     kick off thread to create overlay session
-//     hand back existing CreateSession
-// if overlay
-//     hand back placeholder for session for overlays
-
-// TODO for everything that receives a session
-// if it's the overlay session
-//   replace with the main session
-//   behave as overlay
-
-// TODO catch DestroySession
-// if not overlay
-//   if overlay exists, mark session destroyed and wait for thread to join
-//   else destroy session
-// if overlay
-//   mark overlay session destroyed
-// actually destroy on last of overlay or 
-
 // TODO catch PollEvent
 // if not overlay
 //     normal
@@ -267,21 +271,6 @@ Final
 // if overlay
 //     wait on main waitframe if not waitframed since beginsession
 //     use results saved from main
-
-// TODO BeginFrame
-// chain BeginFrame
-// mark that overlay or main session called BeginFrame
-// if main
-//     clear have waitframed since last beginframe
-// overlay
-//     mark that we have begun a frame
-
-// TODO EndFrame
-// if main
-//     add in overlay frame data if exists
-// if overlay
-//     store EndFrame data
-
 
 XrResult Overlay_xrGetSystemProperties(
     XrInstance instance,
@@ -370,6 +359,25 @@ XrResult Overlay_xrCreateSession(
         // TODO should store any kind of failure in main XrCreateSession and then fall through here
         *session = kOverlayFakeSession;
         result = XR_SUCCESS;
+    }
+
+    return result;
+}
+
+XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images)
+{ 
+    if(gSerializeEverything) {
+        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**OVERLAY** timeout waiting in EnumerateSwapchainImages on gOverlayCallMutex\n");
+            DebugBreak();
+        }
+    }
+
+    XrResult result = downchain->EnumerateSwapchainImages(swapchain, imageCapacityInput, imageCountOutput, images);
+
+    if(gSerializeEverything) {
+        ReleaseMutex(gOverlayCallMutex);
     }
 
     return result;
@@ -526,6 +534,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateSession);
   } else if (0 == strcmp(name, "xrDestroySession")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrDestroySession);
+  } else if (0 == strcmp(name, "xrEnumerateSwapchainImages")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainImages);
   } else {
     *function = nullptr;
   }
