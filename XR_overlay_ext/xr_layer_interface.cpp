@@ -24,27 +24,38 @@ XrSession gOverlaySession;
 bool gExitOverlay = false;
 bool gSerializeEverything = true;
 
+const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
+
 XrFrameState gSavedWaitFrameState;
 
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
 
-char CHK_buf[512];
-#define CHK(a) \
-    if((a) == NULL) { \
-        sprintf_s(CHK_buf, "%s at %s:%d failed with %d\n", # a , __FILE__, __LINE__, GetLastError()); \
-        OutputDebugStringA(CHK_buf); \
-        DebugBreak(); \
-    }
+char CHECK_buf[512];
 
-#define CHK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
+#define CHECK(a) { a; CheckWinResult(#a, __FILE__, __LINE__); }
+
+void CheckWinResult(const char* what, const char *file, int line)
+{
+    DWORD lastError = GetLastError();
+    if(lastError != 0) {
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, NULL);
+        sprintf_s(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        OutputDebugStringA(CHECK_buf);
+        DebugBreak();
+        LocalFree(messageBuf);
+    }
+}
+
+#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
 void CheckXrResult(XrResult a, const char* what, const char *file, int line)
 {
     if(a != XR_SUCCESS) {
-        sprintf_s(CHK_buf, "%s at %s:%d failed with %d\n", what, file, line, a);
-        OutputDebugStringA(CHK_buf); \
-        DebugBreak(); \
+        sprintf_s(CHECK_buf, "%s at %s:%d failed with %d\n", what, file, line, a);
+        OutputDebugStringA(CHECK_buf);
+        DebugBreak();
     }
 }
 
@@ -169,23 +180,41 @@ DWORD WINAPI ThreadBody(LPVOID)
             swapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
             swapchainImages[eye][i].next = NULL;
         }
-        CHK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
+        CHECK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
     }
     OutputDebugStringA("**OVERLAY** success in thread creating swapchain\n");
 
     int whichImage = 0;
+    int whichSwapchain = 0;
     while(!gExitOverlay) {
         // ...
         XrFrameState state;
         Overlay_xrWaitFrame(gOverlaySession, NULL, &state);
         OutputDebugStringA("**OVERLAY** exited overlay session xrWaitFrame\n");
         Overlay_xrBeginFrame(gOverlaySession, NULL);
-        // for(int eye = 0; eye < 2; eye++) {
-            // xrWaitSwapchainImage
-        // }
+        for(int eye = 0; eye < 2; eye++) {
+            uint32_t index;
+            XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
+            XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+            acquireInfo.next = nullptr;
+            // TODO - these should be layered and wrapped with a mutex
+            CHECK_XR(downchain->AcquireSwapchainImage(sc, &acquireInfo, &index));
+
+            XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            waitInfo.next = nullptr;
+            waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
+            CHECK_XR(downchain->WaitSwapchainImage(sc, &waitInfo));
+
+            // TODO render into swapchain image here 
+
+            XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            releaseInfo.next = nullptr;
+            CHECK_XR(downchain->ReleaseSwapchainImage(sc, &releaseInfo));
+        }
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
         frameEndInfo.next = NULL;
         Overlay_xrEndFrame(gOverlaySession, &frameEndInfo);
+        whichSwapchain = (whichSwapchain + 1) % 2;
     }
 
     result = Overlay_xrDestroySession(gOverlaySession);
@@ -194,22 +223,23 @@ DWORD WINAPI ThreadBody(LPVOID)
         DebugBreak();
         return 1;
     }
+
     OutputDebugStringA("**OVERLAY** destroyed session, exiting\n");
     return 0;
 }
 
 void CreateOverlaySessionThread()
 {
-    CHK(gOverlayCreateSessionSema =
+    CHECK(gOverlayCreateSessionSema =
         CreateSemaphoreA(nullptr, 0, 1, kOverlayCreateSessionSemaName));
-    CHK(gOverlayWaitFrameSema =
+    CHECK(gOverlayWaitFrameSema =
         CreateSemaphoreA(nullptr, 0, 1, kOverlayWaitFrameSemaName));
-    CHK(gMainDestroySessionSema =
+    CHECK(gMainDestroySessionSema =
         CreateSemaphoreA(nullptr, 0, 1, kMainDestroySessionSemaName));
-    CHK(gOverlayCallMutex = CreateMutex(NULL, TRUE, kOverlayMutexName));
+    CHECK(gOverlayCallMutex = CreateMutex(NULL, TRUE, kOverlayMutexName));
     ReleaseMutex(gOverlayCallMutex);
 
-    CHK(gOverlayWorkerThread =
+    CHECK(gOverlayWorkerThread =
         CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId));
     OutputDebugStringA("**OVERLAY** success\n");
 }
