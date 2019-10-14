@@ -190,7 +190,7 @@ DWORD WINAPI ThreadBody(LPVOID)
     createSpaceInfo.next = nullptr;
     createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
     // Render head-locked 1.5m in front of device.
-    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({0.f, 0.f, -1.5f});
+    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
     CHECK_XR(Overlay_xrCreateReferenceSpace(gOverlaySession, &createSpaceInfo, &viewSpace));
 
     XrSwapchain swapchains[2];
@@ -262,7 +262,7 @@ DWORD WINAPI ThreadBody(LPVOID)
             layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
             layers[eye].subImage = fullImage;
             layers[eye].pose = Math::Pose::Identity();
-            layers[eye].size = {1.f, 1.f};
+            layers[eye].size = {0.33f, 0.33f};
         }
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
         frameEndInfo.next = nullptr;
