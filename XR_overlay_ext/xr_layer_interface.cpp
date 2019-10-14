@@ -3,9 +3,11 @@
 #include "xr_overlay_dll.h"
 #include "xr_generated_dispatch_table.h"
 
-#include <assert.h>
-#include <string.h>
-#include <stdio.h>
+#include <memory>
+
+#include <cassert>
+#include <cstring>
+#include <cstdio>
 
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
 DWORD gOverlayWorkerThreadId;
@@ -25,6 +27,8 @@ bool gExitOverlay = false;
 bool gSerializeEverything = true;
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
+
+enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 
 XrFrameState gSavedWaitFrameState;
 
@@ -213,6 +217,7 @@ DWORD WINAPI ThreadBody(LPVOID)
         }
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
         frameEndInfo.next = NULL;
+        frameEndInfo.layerCount = 0;
         Overlay_xrEndFrame(gOverlaySession, &frameEndInfo);
         whichSwapchain = (whichSwapchain + 1) % 2;
     }
@@ -314,8 +319,9 @@ XrResult Overlay_xrGetSystemProperties(
 	return result;
 
     // Reserve one for overlay
+    // TODO : should remove for main session, should return only max overlay layers for overlay session
     properties->graphicsProperties.maxLayerCount =
-        properties->graphicsProperties.maxLayerCount - 1;
+        properties->graphicsProperties.maxLayerCount - MAX_OVERLAY_LAYER_COUNT;
 
     return result;
 }
@@ -513,33 +519,60 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
     return result;
 }
 
+uint32_t gOverlayQuadLayerCount = 0;
+XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
+
 XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info) 
 { 
     XrResult result;
 
-    if(gSerializeEverything) {
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA("**OVERLAY** timeout waiting in CreateSwapchain on gOverlayCallMutex\n");
-            DebugBreak();
-        }
+    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+    if(waitresult == WAIT_TIMEOUT) {
+        OutputDebugStringA("**OVERLAY** timeout waiting in CreateSwapchain on gOverlayCallMutex\n");
+        DebugBreak();
     }
 
     if(session == kOverlayFakeSession) {
 
-        // TODO copy data from overlay EndFrame to the side
-		result = XR_SUCCESS;
+        // TODO: validate blend mode matches main session
+
+        if(info->layerCount > MAX_OVERLAY_LAYER_COUNT) {
+            gOverlayQuadLayerCount = 0;
+            result = XR_ERROR_LAYER_LIMIT_EXCEEDED;
+        } else {
+            bool valid = true;
+            for(uint32_t i = 0; i < info->layerCount; i++) {
+                if(info->layers[0]->type != XR_TYPE_COMPOSITION_LAYER_QUAD) {
+                    result = XR_ERROR_LAYER_INVALID;
+                    valid = false;
+                    break;
+                }
+            }
+            if(valid) {
+                gOverlayQuadLayerCount = info->layerCount;
+                for(uint32_t i = 0; i < info->layerCount; i++) {
+                    gOverlayQuadLayers[i] = *reinterpret_cast<const XrCompositionLayerQuad*>(info->layers[i]);
+                }
+                result = XR_SUCCESS;
+            } else {
+                gOverlayQuadLayerCount = 0;
+            }
+        }
 
     } else {
 
-        // TODO copy info and insert overlay before it
-        result = downchain->EndFrame(session, info);
+        XrFrameEndInfo info2 = *info;
+        std::unique_ptr<const XrCompositionLayerBaseHeader*> layers2(new const XrCompositionLayerBaseHeader*[info->layerCount + gOverlayQuadLayerCount]);
+        memcpy(layers2.get(), info->layers, sizeof(const XrCompositionLayerBaseHeader*) * info->layerCount);
+        for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++)
+            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&gOverlayQuadLayers);
 
+        info2.layerCount = info->layerCount + gOverlayQuadLayerCount;
+        info2.layers = layers2.get();
+        result = downchain->EndFrame(session, &info2);
     }
 
-    if(gSerializeEverything) {
-        ReleaseMutex(gOverlayCallMutex);
-    }
+    ReleaseMutex(gOverlayCallMutex);
     return result;
 }
 
