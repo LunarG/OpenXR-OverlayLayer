@@ -2,6 +2,7 @@
 
 #include "xr_overlay_dll.h"
 #include "xr_generated_dispatch_table.h"
+#include "xr_linear.h"
 
 #include <memory>
 
@@ -44,7 +45,7 @@ void CheckWinResult(const char* what, const char *file, int line)
     DWORD lastError = GetLastError();
     if(lastError != 0) {
         LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, NULL);
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         sprintf_s(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
         OutputDebugStringA(CHECK_buf);
         DebugBreak();
@@ -67,6 +68,32 @@ enum {
     // XXX need to do this with an enum generated from ext as part of build
     XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
 };
+
+namespace Math {
+namespace Pose {
+XrPosef Identity() {
+    XrPosef t{};
+    t.orientation.w = 1;
+    return t;
+}
+
+XrPosef Translation(const XrVector3f& translation) {
+    XrPosef t = Identity();
+    t.position = translation;
+    return t;
+}
+
+XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
+    XrPosef t = Identity();
+    t.orientation.x = 0.f;
+    t.orientation.y = std::sin(radians * 0.5f);
+    t.orientation.z = 0.f;
+    t.orientation.w = std::cos(radians * 0.5f);
+    t.position = translation;
+    return t;
+}
+}  // namespace Pose
+}  // namespace Math
 
 struct xrinfoBase
 {
@@ -158,6 +185,14 @@ DWORD WINAPI ThreadBody(LPVOID)
     }
     OutputDebugStringA("**OVERLAY** success in thread creating overlay session\n");
 
+    XrSpace viewSpace;
+    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+    createSpaceInfo.next = nullptr;
+    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+    // Render head-locked 1.5m in front of device.
+    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({0.f, 0.f, -1.5f});
+    CHECK_XR(Overlay_xrCreateReferenceSpace(gOverlaySession, &createSpaceInfo, &viewSpace));
+
     XrSwapchain swapchains[2];
     XrSwapchainImageD3D11KHR *swapchainImages[2];
     for(int eye = 0; eye < 2; eye++) {
@@ -170,7 +205,7 @@ DWORD WINAPI ThreadBody(LPVOID)
         swapchainCreateInfo.faceCount = 1;
         swapchainCreateInfo.sampleCount = 1;
         swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-        swapchainCreateInfo.next = NULL;
+        swapchainCreateInfo.next = nullptr;
         result = Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchains[eye]);
         if(result != XR_SUCCESS) {
             OutputDebugStringA("**OVERLAY** failed to call xrCreateSwapChain in thread\n");
@@ -182,7 +217,7 @@ DWORD WINAPI ThreadBody(LPVOID)
         swapchainImages[eye] = new XrSwapchainImageD3D11KHR[count];
         for(uint32_t i = 0; i < count; i++) {
             swapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
-            swapchainImages[eye][i].next = NULL;
+            swapchainImages[eye][i].next = nullptr;
         }
         CHECK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
     }
@@ -193,9 +228,9 @@ DWORD WINAPI ThreadBody(LPVOID)
     while(!gExitOverlay) {
         // ...
         XrFrameState state;
-        Overlay_xrWaitFrame(gOverlaySession, NULL, &state);
+        Overlay_xrWaitFrame(gOverlaySession, nullptr, &state);
         OutputDebugStringA("**OVERLAY** exited overlay session xrWaitFrame\n");
-        Overlay_xrBeginFrame(gOverlaySession, NULL);
+        Overlay_xrBeginFrame(gOverlaySession, nullptr);
         for(int eye = 0; eye < 2; eye++) {
             uint32_t index;
             XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
@@ -215,9 +250,26 @@ DWORD WINAPI ThreadBody(LPVOID)
             releaseInfo.next = nullptr;
             CHECK_XR(downchain->ReleaseSwapchainImage(sc, &releaseInfo));
         }
+        XrCompositionLayerQuad layers[2];
+        XrCompositionLayerBaseHeader* layerPointers[2];
+        for(uint32_t eye = 0; eye < 2; eye++) {
+            XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {512, 512}}, 0};
+            layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
+            layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+            layers[eye].next = nullptr;
+            layers[eye].layerFlags = 0;
+            layers[eye].space = viewSpace;
+            layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+            layers[eye].subImage = fullImage;
+            layers[eye].pose = Math::Pose::Identity();
+            layers[eye].size = {1.f, 1.f};
+        }
         XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-        frameEndInfo.next = NULL;
-        frameEndInfo.layerCount = 0;
+        frameEndInfo.next = nullptr;
+        frameEndInfo.layers = layerPointers;
+        frameEndInfo.layerCount = 2;
+        frameEndInfo.displayTime = gSavedWaitFrameState.predictedDisplayTime;
+        frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; // XXX ignored
         Overlay_xrEndFrame(gOverlaySession, &frameEndInfo);
         whichSwapchain = (whichSwapchain + 1) % 2;
     }
@@ -241,7 +293,7 @@ void CreateOverlaySessionThread()
         CreateSemaphoreA(nullptr, 0, 1, kOverlayWaitFrameSemaName));
     CHECK(gMainDestroySessionSema =
         CreateSemaphoreA(nullptr, 0, 1, kMainDestroySessionSemaName));
-    CHECK(gOverlayCallMutex = CreateMutex(NULL, TRUE, kOverlayMutexName));
+    CHECK(gOverlayCallMutex = CreateMutex(nullptr, TRUE, kOverlayMutexName));
     ReleaseMutex(gOverlayCallMutex);
 
     CHECK(gOverlayWorkerThread =
@@ -411,6 +463,29 @@ XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imag
     }
 
     XrResult result = downchain->EnumerateSwapchainImages(swapchain, imageCapacityInput, imageCountOutput, images);
+
+    if(gSerializeEverything) {
+        ReleaseMutex(gOverlayCallMutex);
+    }
+
+    return result;
+}
+
+XrResult Overlay_xrCreateReferenceSpace(XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
+{ 
+    if(gSerializeEverything) {
+        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**OVERLAY** timeout waiting in Overlay_xrCreateReferenceSpace on gOverlayCallMutex\n");
+            DebugBreak();
+        }
+    }
+
+    if(session == kOverlayFakeSession) {
+        session = gSavedMainSession;
+    }
+
+    XrResult result = downchain->CreateReferenceSpace(session, createInfo, space);
 
     if(gSerializeEverything) {
         ReleaseMutex(gOverlayCallMutex);
@@ -597,6 +672,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateSession);
   } else if (0 == strcmp(name, "xrDestroySession")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrDestroySession);
+  } else if (0 == strcmp(name, "xrCreateReferenceSpace")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateReferenceSpace);
   } else if (0 == strcmp(name, "xrEnumerateSwapchainImages")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainImages);
   } else {
