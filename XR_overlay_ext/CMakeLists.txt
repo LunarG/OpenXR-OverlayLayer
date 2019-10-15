@@ -9,6 +9,8 @@ add_library(XR_overlay_ext SHARED
   ../../external_headers/xr_generated_dispatch_table.h
   ../external_headers/xr_generated_dispatch_table.c
   xr_layer_interface.cpp
+  image1.c 
+  image2.c
   xr_overlay_dll.cpp
   xr_overlay_dll.h
 )

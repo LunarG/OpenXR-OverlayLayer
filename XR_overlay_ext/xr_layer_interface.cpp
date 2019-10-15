@@ -1,14 +1,15 @@
+#include <memory>
+#include <chrono>
+
+#include <cassert>
+#include <cstring>
+#include <cstdio>
+
 #define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "xr_overlay_dll.h"
 #include "xr_generated_dispatch_table.h"
 #include "xr_linear.h"
-
-#include <memory>
-
-#include <cassert>
-#include <cstring>
-#include <cstdio>
 
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
 DWORD gOverlayWorkerThreadId;
@@ -20,6 +21,7 @@ HANDLE gOverlayWaitFrameSema;
 LPCSTR kMainDestroySessionSemaName = "XR_EXT_overlay_main_destroy_session_sema";
 HANDLE gMainDestroySessionSema;
 
+ID3D11Device *gSavedD3DDevice;
 XrInstance gSavedInstance;
 XrSession kOverlayFakeSession = (XrSession)0xCAFEFEED;
 XrSession gSavedMainSession;
@@ -40,10 +42,22 @@ char CHECK_buf[512];
 
 #define CHECK(a) { a; CheckWinResult(#a, __FILE__, __LINE__); }
 
+void CheckD3DResult(HRESULT result, const char* what, const char *file, int line)
+{
+    if(result != S_OK) {
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        sprintf_s(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
+        OutputDebugStringA(CHECK_buf);
+        DebugBreak();
+        LocalFree(messageBuf);
+    }
+}
+
 void CheckWinResult(const char* what, const char *file, int line)
 {
     DWORD lastError = GetLastError();
-    if(lastError != 0) {
+    if(lastError != S_OK) {
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         sprintf_s(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
@@ -52,6 +66,8 @@ void CheckWinResult(const char* what, const char *file, int line)
         LocalFree(messageBuf);
     }
 }
+
+#define CHECK_D3D(a) CheckD3DResult(a, #a, __FILE__, __LINE__)
 
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
@@ -165,10 +181,15 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
+extern "C" {
+extern int Image2Width;
+extern int Image2Height;
+extern unsigned char Image2Bytes[];
+extern int Image1Width;
+extern int Image1Height;
+extern unsigned char Image1Bytes[];
+};
 
-// XXX TODO - this should call XR functions normally, probably from
-// another compilation unit, and probably after we *know* CreateInstance
-// has completed and we have a working dispatch table.
 DWORD WINAPI ThreadBody(LPVOID)
 {
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
@@ -177,13 +198,37 @@ DWORD WINAPI ThreadBody(LPVOID)
     sessionCreateInfo.next = &sessionCreateInfoOverlay;
     sessionCreateInfoOverlay.overlaySession = XR_TRUE;
     sessionCreateInfoOverlay.sessionLayersPlacement = 1;
-    XrResult result = Overlay_xrCreateSession(gSavedInstance, &sessionCreateInfo, &gOverlaySession);
-    if(result != XR_SUCCESS) {
-        OutputDebugStringA("**OVERLAY** failed to call xrCreateSession in thread\n");
-        DebugBreak();
-        return 1;
-    }
+    CHECK_XR(Overlay_xrCreateSession(gSavedInstance, &sessionCreateInfo, &gOverlaySession));
     OutputDebugStringA("**OVERLAY** success in thread creating overlay session\n");
+
+    // Don't have gSavedD3DDevice until after CreateSession
+    ID3D11DeviceContext* d3dContext;
+    gSavedD3DDevice->GetImmediateContext(&d3dContext);
+
+    ID3D11Texture2D* sourceImages[2];
+    for(int i = 0; i < 2; i++) {
+        D3D11_TEXTURE2D_DESC desc;
+        desc.Width = 512;
+        desc.Height = 512;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        desc.MiscFlags = 0;
+
+        CHECK_D3D(gSavedD3DDevice->CreateTexture2D(&desc, NULL, &sourceImages[i]));
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECK_D3D(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
+        if(i == 0)
+            memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
+        else
+            memcpy(mapped.pData, Image1Bytes, 512 * 512 * 4);
+        CHECK(d3dContext->Unmap(sourceImages[i], 0));
+    }
 
     XrSpace viewSpace;
     XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
@@ -206,14 +251,10 @@ DWORD WINAPI ThreadBody(LPVOID)
         swapchainCreateInfo.sampleCount = 1;
         swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
         swapchainCreateInfo.next = nullptr;
-        result = Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchains[eye]);
-        if(result != XR_SUCCESS) {
-            OutputDebugStringA("**OVERLAY** failed to call xrCreateSwapChain in thread\n");
-            DebugBreak();
-            return 1;
-        }
+        CHECK_XR(Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchains[eye]));
+
         uint32_t count;
-        Overlay_xrEnumerateSwapchainImages(swapchains[eye], 0, &count, nullptr);
+        CHECK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], 0, &count, nullptr));
         swapchainImages[eye] = new XrSwapchainImageD3D11KHR[count];
         for(uint32_t i = 0; i < count; i++) {
             swapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
@@ -224,9 +265,19 @@ DWORD WINAPI ThreadBody(LPVOID)
     OutputDebugStringA("**OVERLAY** success in thread creating swapchain\n");
 
     int whichImage = 0;
-    int whichSwapchain = 0;
+    auto then = std::chrono::steady_clock::now();
     while(!gExitOverlay) {
-        // ...
+        auto now = std::chrono::steady_clock::now();
+        if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
+            whichImage = (whichImage + 1) % 2;
+            then = std::chrono::steady_clock::now();
+        }
+        if(whichImage == 0) {
+            OutputDebugStringA("**OVERLAY** image 0");
+        } else {
+            OutputDebugStringA("**OVERLAY** image 1");
+        }
+
         XrFrameState state;
         Overlay_xrWaitFrame(gOverlaySession, nullptr, &state);
         OutputDebugStringA("**OVERLAY** exited overlay session xrWaitFrame\n");
@@ -244,7 +295,7 @@ DWORD WINAPI ThreadBody(LPVOID)
             waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
             CHECK_XR(downchain->WaitSwapchainImage(sc, &waitInfo));
 
-            // TODO render into swapchain image here 
+            d3dContext->CopyResource(swapchainImages[eye][index].texture, sourceImages[whichImage]);
 
             XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
             releaseInfo.next = nullptr;
@@ -271,15 +322,9 @@ DWORD WINAPI ThreadBody(LPVOID)
         frameEndInfo.displayTime = gSavedWaitFrameState.predictedDisplayTime;
         frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; // XXX ignored
         Overlay_xrEndFrame(gOverlaySession, &frameEndInfo);
-        whichSwapchain = (whichSwapchain + 1) % 2;
     }
 
-    result = Overlay_xrDestroySession(gOverlaySession);
-    if(result != XR_SUCCESS) {
-        OutputDebugStringA("**OVERLAY** failed to call xrDestroySession in thread\n");
-        DebugBreak();
-        return 1;
-    }
+    CHECK_XR(Overlay_xrDestroySession(gOverlaySession));
 
     OutputDebugStringA("**OVERLAY** destroyed session, exiting\n");
     return 0;
@@ -414,10 +459,17 @@ XrResult Overlay_xrCreateSession(
     XrResult result;
 
     xrinfoBase* p = reinterpret_cast<xrinfoBase*>(const_cast<void*>(createInfo->next));
-    while(p != nullptr && p->type != XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
+    XrSessionCreateInfoOverlayEXT* cio = nullptr;
+    XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
+    while(p != nullptr) {
+        if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
+            cio = reinterpret_cast<XrSessionCreateInfoOverlayEXT*>(p);
+        }
+        if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+            d3dbinding = reinterpret_cast<XrGraphicsBindingD3D11KHR*>(p);
+        }
         p = reinterpret_cast<xrinfoBase*>(const_cast<void*>(p->next));
     }
-    XrSessionCreateInfoOverlayEXT* cio = reinterpret_cast<XrSessionCreateInfoOverlayEXT*>(p);
 
     // TODO handle the case where Main session passes the
     // overlaycreateinfo but overlaySession = FALSE
@@ -432,6 +484,7 @@ XrResult Overlay_xrCreateSession(
             return result;
 
         gSavedMainSession = *session;
+        gSavedD3DDevice = d3dbinding->device;
 
         // Let overlay session continue
         ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);
