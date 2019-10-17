@@ -11,6 +11,8 @@
 #include "xr_generated_dispatch_table.h"
 #include "xr_linear.h"
 
+#include <d3d11_4.h>
+
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
 DWORD gOverlayWorkerThreadId;
 HANDLE gOverlayWorkerThread;
@@ -202,6 +204,12 @@ DWORD WINAPI ThreadBody(LPVOID)
     OutputDebugStringA("**OVERLAY** success in thread creating overlay session\n");
 
     // Don't have gSavedD3DDevice until after CreateSession
+
+    // XXX TODO use multiple Devices to avoid having to synchronize
+    ID3D11Multithread* d3dMultithread;
+    CHECK_D3D(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
+    d3dMultithread->SetMultithreadProtected(TRUE);
+
     ID3D11DeviceContext* d3dContext;
     gSavedD3DDevice->GetImmediateContext(&d3dContext);
 
@@ -227,7 +235,7 @@ DWORD WINAPI ThreadBody(LPVOID)
             memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
         else
             memcpy(mapped.pData, Image1Bytes, 512 * 512 * 4);
-        CHECK(d3dContext->Unmap(sourceImages[i], 0));
+        d3dContext->Unmap(sourceImages[i], 0);
     }
 
     XrSpace viewSpace;
@@ -271,11 +279,6 @@ DWORD WINAPI ThreadBody(LPVOID)
         if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
             whichImage = (whichImage + 1) % 2;
             then = std::chrono::steady_clock::now();
-        }
-        if(whichImage == 0) {
-            OutputDebugStringA("**OVERLAY** image 0");
-        } else {
-            OutputDebugStringA("**OVERLAY** image 1");
         }
 
         XrFrameState state;
