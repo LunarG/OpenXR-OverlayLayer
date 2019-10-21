@@ -1,5 +1,6 @@
 #include <memory>
 #include <chrono>
+#include <string>
 
 #include <cassert>
 #include <cstring>
@@ -25,7 +26,8 @@ HANDLE gMainDestroySessionSema;
 
 ID3D11Device *gSavedD3DDevice;
 XrInstance gSavedInstance;
-XrSession kOverlayFakeSession = (XrSession)0xCAFEFEED;
+unsigned int overlaySessionStandin;
+XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
 XrSession gSavedMainSession;
 XrSession gOverlaySession;
 bool gExitOverlay = false;
@@ -42,15 +44,33 @@ LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
 
 char CHECK_buf[512];
 
-#define CHECK(a) { a; CheckWinResult(#a, __FILE__, __LINE__); }
+std::string fmt(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    int size = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    if(size >= 0) {
+        int provided = size + 1;
+        std::unique_ptr<char[]> buf(new char[provided]);
+
+        va_start(args, fmt);
+        int size = vsnprintf(buf.get(), provided, fmt, args);
+        va_end(args);
+
+        return std::string(buf.get());
+    }
+    return "(fmt() failed, vsnprintf returned -1)";
+}
 
 void CheckD3DResult(HRESULT result, const char* what, const char *file, int line)
 {
     if(result != S_OK) {
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        sprintf_s(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
-        OutputDebugStringA(CHECK_buf);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
+        OutputDebugStringA(str.data());
         DebugBreak();
         LocalFree(messageBuf);
     }
@@ -62,12 +82,14 @@ void CheckWinResult(const char* what, const char *file, int line)
     if(lastError != S_OK) {
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        sprintf_s(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
-        OutputDebugStringA(CHECK_buf);
+        std::string str = fmt(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        OutputDebugStringA(str.data());
         DebugBreak();
         LocalFree(messageBuf);
     }
 }
+
+#define CHECK(a) { a; CheckWinResult(#a, __FILE__, __LINE__); }
 
 #define CHECK_D3D(a) CheckD3DResult(a, #a, __FILE__, __LINE__)
 
@@ -76,8 +98,8 @@ void CheckWinResult(const char* what, const char *file, int line)
 void CheckXrResult(XrResult a, const char* what, const char *file, int line)
 {
     if(a != XR_SUCCESS) {
-        sprintf_s(CHECK_buf, "%s at %s:%d failed with %d\n", what, file, line, a);
-        OutputDebugStringA(CHECK_buf);
+        std::string str = fmt(CHECK_buf, "%s at %s:%d failed with %d\n", what, file, line, a);
+        OutputDebugStringA(str.data());
         DebugBreak();
     }
 }
