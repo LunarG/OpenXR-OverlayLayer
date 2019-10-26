@@ -42,8 +42,6 @@ XrFrameState gSavedWaitFrameState;
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
 
-char CHECK_buf[512];
-
 std::string fmt(const char* fmt, ...)
 {
     va_list args;
@@ -64,41 +62,42 @@ std::string fmt(const char* fmt, ...)
     return "(fmt() failed, vsnprintf returned -1)";
 }
 
-void CheckD3DResult(HRESULT result, const char* what, const char *file, int line)
+void CheckResultWithLastError(bool success, const char* what, const char *file, int line)
 {
-    if(result != S_OK) {
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-void CheckWinResult(const char* what, const char *file, int line)
-{
-    DWORD lastError = GetLastError();
-    if(lastError != S_OK) {
+    if(!success) {
+        DWORD lastError = GetLastError();
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt(CHECK_buf, "%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
         OutputDebugStringA(str.data());
         DebugBreak();
         LocalFree(messageBuf);
     }
 }
 
-#define CHECK(a) { a; CheckWinResult(#a, __FILE__, __LINE__); }
+void CheckResult(HRESULT result, const char* what, const char *file, int line)
+{
+    if(result != S_OK) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        OutputDebugStringA(str.data());
+        DebugBreak();
+        LocalFree(messageBuf);
+    }
+}
 
-#define CHECK_D3D(a) CheckD3DResult(a, #a, __FILE__, __LINE__)
+#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
+
+#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
 
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
 void CheckXrResult(XrResult a, const char* what, const char *file, int line)
 {
     if(a != XR_SUCCESS) {
-        std::string str = fmt(CHECK_buf, "%s at %s:%d failed with %d\n", what, file, line, a);
+        std::string str = fmt("%s at %s:%d failed with %d\n", what, file, line, a);
         OutputDebugStringA(str.data());
         DebugBreak();
     }
@@ -214,8 +213,45 @@ extern int Image1Height;
 extern unsigned char Image1Bytes[];
 };
 
+//
+// Shared Memory
+// uint64_t requestType;
+// size_t requestSize
+// { requestSize bytes }
+// response bytes here
+
 DWORD WINAPI ThreadBody(LPVOID)
 {
+    void *shmem = IPCGetSharedMemory();
+
+    bool continueIPC = true;
+    do {
+        IPCWaitForGuestRequest(); // XXX TODO check response
+        OutputDebugStringA("**OVERLAY** success in waiting for guest request\n");
+
+        unsigned char* unpackPtr = reinterpret_cast<unsigned char*>(shmem);
+        uint64_t requestType = unpack<uint64_t>(unpackPtr);
+        size_t requestSize = unpack<size_t>(unpackPtr);
+        unsigned char* packPtr = unpackPtr + requestSize;
+
+        switch(requestType) {
+
+            case IPC_REQUEST_HANDOFF:
+                // Establish IPC parameters and make initial handoff
+                pack(packPtr, gSavedInstance);
+                IPCFinishHostResponse();
+                continueIPC = false; // XXX testing initial handoff
+                break;
+
+            default:
+                OutputDebugStringA("unknown request type in IPC");
+                abort();
+                break;
+        }
+
+    } while(continueIPC);
+    OutputDebugStringA("**OVERLAY** exited IPC loop\n");
+
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
     XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
     sessionCreateInfoOverlay.next = nullptr;
@@ -229,7 +265,7 @@ DWORD WINAPI ThreadBody(LPVOID)
 
     // XXX TODO use multiple Devices to avoid having to synchronize
     ID3D11Multithread* d3dMultithread;
-    CHECK_D3D(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
+    CHECK(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
     d3dMultithread->SetMultithreadProtected(TRUE);
 
     ID3D11DeviceContext* d3dContext;
@@ -249,10 +285,10 @@ DWORD WINAPI ThreadBody(LPVOID)
         desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         desc.MiscFlags = 0;
 
-        CHECK_D3D(gSavedD3DDevice->CreateTexture2D(&desc, NULL, &sourceImages[i]));
+        CHECK(gSavedD3DDevice->CreateTexture2D(&desc, NULL, &sourceImages[i]));
 
         D3D11_MAPPED_SUBRESOURCE mapped;
-        CHECK_D3D(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
+        CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
         if(i == 0)
             memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
         else
@@ -357,16 +393,16 @@ DWORD WINAPI ThreadBody(LPVOID)
 
 void CreateOverlaySessionThread()
 {
-    CHECK(gOverlayCreateSessionSema =
+    CHECK_NOT_NULL(gOverlayCreateSessionSema =
         CreateSemaphoreA(nullptr, 0, 1, kOverlayCreateSessionSemaName));
-    CHECK(gOverlayWaitFrameSema =
+    CHECK_NOT_NULL(gOverlayWaitFrameSema =
         CreateSemaphoreA(nullptr, 0, 1, kOverlayWaitFrameSemaName));
-    CHECK(gMainDestroySessionSema =
+    CHECK_NOT_NULL(gMainDestroySessionSema =
         CreateSemaphoreA(nullptr, 0, 1, kMainDestroySessionSemaName));
-    CHECK(gOverlayCallMutex = CreateMutex(nullptr, TRUE, kOverlayMutexName));
+    CHECK_NOT_NULL(gOverlayCallMutex = CreateMutex(nullptr, TRUE, kOverlayMutexName));
     ReleaseMutex(gOverlayCallMutex);
 
-    CHECK(gOverlayWorkerThread =
+    CHECK_NOT_NULL(gOverlayWorkerThread =
         CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId));
     OutputDebugStringA("**OVERLAY** success\n");
 }

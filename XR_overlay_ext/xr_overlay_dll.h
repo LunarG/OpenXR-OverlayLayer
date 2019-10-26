@@ -26,6 +26,25 @@
 #define XR_OVERLAY_EXT_API __declspec(dllimport)
 #endif
 
+template <typename T>
+T unpack(unsigned char*& ptr)
+{
+    T tmp = *reinterpret_cast<T*>(ptr);
+    ptr += sizeof(T);
+	return tmp;
+}
+
+template <typename T>
+bool pack(unsigned char*& ptr, T& v)
+{
+    // XXX TODO - don't overflow the buffer - also pass and check size
+    *reinterpret_cast<T*>(ptr) = v;
+    ptr += sizeof(T);
+    return true;
+}
+
+const uint64_t IPC_REQUEST_HANDOFF = 1;
+
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
 #endif
@@ -35,6 +54,11 @@ XR_OVERLAY_EXT_API bool MapSharedMemory(UINT32 size);
 XR_OVERLAY_EXT_API bool UnmapSharedMemory();
 XR_OVERLAY_EXT_API void SetSharedMem(LPCWSTR lpszBuf);
 XR_OVERLAY_EXT_API void GetSharedMem(LPWSTR lpszBuf, DWORD cchSize);
+XR_OVERLAY_EXT_API void* IPCGetSharedMemory();
+XR_OVERLAY_EXT_API bool IPCWaitForGuestRequest();
+XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
+XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
+XR_OVERLAY_EXT_API void IPCFinishHostResponse();
 
 
 // Exported entry points

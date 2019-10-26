@@ -13,10 +13,70 @@ static HANDLE mutex_handle = NULL;      // handle to sync object
 
 LPCWSTR kSharedMemName = TEXT("XR_EXT_overlay_shared_mem");
 LPCWSTR kSharedMutexName = TEXT("XR_EXT_overlay_mutex");
+LPCWSTR kHost = TEXT("XR_EXT_overlay_mutex");
+LPCWSTR kGuestRequestSemaName = TEXT("LUNARG_XR_IPC_guest_request_sema");
+LPCWSTR kHostResponseSemaName = TEXT("LUNARG_XR_IPC_host_response_sema");
+HANDLE gGuestRequestSema;
+HANDLE gHostResponseSema;
+
+static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100000; // 1000 // XXX debugging
+static const DWORD HOST_RESPONSE_WAIT_MILLIS = 100000; // 1000 // XXX debugging
+
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
 #endif
+
+bool CreateIPCSemaphores()
+{
+    gGuestRequestSema = CreateSemaphore(nullptr, 0, 1, kGuestRequestSemaName);
+    if(gGuestRequestSema == NULL) {
+        OutputDebugStringA("Creation of gGuestRequestSema failed");
+        DebugBreak();
+        return false;
+    }
+    gHostResponseSema = CreateSemaphore(nullptr, 0, 1, kHostResponseSemaName);
+    if(gHostResponseSema == NULL) {
+        OutputDebugStringA("Creation of gHostResponseSema failed");
+        DebugBreak();
+        return false;
+    }
+	return true;
+}
+
+void* IPCGetSharedMemory()
+{
+    return shared_mem;
+}
+
+// Call from Guest when request in shmem is complete
+void IPCFinishGuestRequest()
+{
+    ReleaseSemaphore(gGuestRequestSema, 1, nullptr);
+}
+
+// Call from Host to get complete request in shmem
+bool IPCWaitForGuestRequest()
+{
+    WaitForSingleObject(gGuestRequestSema, GUEST_REQUEST_WAIT_MILLIS);
+    // XXX TODO something sane on very long timeout
+	return true;
+}
+
+// Call from Host when response in shmem is complete
+void IPCFinishHostResponse()
+{
+    ReleaseSemaphore(gHostResponseSema, 1, nullptr);
+}
+
+// Call from Guest to get complete request in shmem
+bool IPCWaitForHostResponse()
+{
+    WaitForSingleObject(gHostResponseSema, HOST_RESPONSE_WAIT_MILLIS);
+    // XXX TODO something sane on very long timeout
+	return true;
+}
+
 
 // Set up shared memory using a named file-mapping object. 
 bool MapSharedMemory(UINT32 req_memsize)
@@ -127,9 +187,13 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 {
     switch (ul_reason_for_call)
     {
-    case DLL_PROCESS_ATTACH:
-        MapSharedMemory(32768);
+    case DLL_PROCESS_ATTACH: {
+        BOOL success = CreateIPCSemaphores();
+        if(success) {
+            MapSharedMemory(32768);
+        }
         break;
+    }
 
     case DLL_PROCESS_DETACH:
         UnmapSharedMemory();
