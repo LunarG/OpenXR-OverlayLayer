@@ -6,7 +6,7 @@
 // The DLL code
 #include <memory.h> 
  
-static DWORD  mem_size = 256;   // TBD HACK! - can't default, need to pass via shared_mem meta
+static size_t  mem_size = 256;   // TBD HACK! - can't default, need to pass via shared_mem meta
 static LPVOID shared_mem = NULL;        // pointer to shared memory
 static HANDLE shared_mem_handle = NULL; // handle to file mapping
 static HANDLE mutex_handle = NULL;      // handle to sync object
@@ -22,6 +22,10 @@ HANDLE gHostResponseSema;
 static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100000; // 1000 // XXX debugging
 static const DWORD HOST_RESPONSE_WAIT_MILLIS = 100000; // 1000 // XXX debugging
 
+XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
+{
+    return IPCBuffer(shared_mem, mem_size);
+}
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -109,10 +113,13 @@ bool MapSharedMemory(UINT32 req_memsize)
         return false; 
     }
 
+    MEMORY_BASIC_INFORMATION mbi = { 0 };
+    VirtualQueryEx(GetCurrentProcess(), shared_mem, &mbi, sizeof(mbi));
+    mem_size = mbi.RegionSize;
+
     // First will initialize memory
     if (first)
     {
-        mem_size = req_memsize; // TBD Pass memsize to non-first by writing to 'meta' area?
         memset(shared_mem, '\0', mem_size); 
         ReleaseMutex(mutex_handle);
     }
@@ -161,7 +168,7 @@ void SetSharedMem(LPCWSTR lpszBuf)
  
 // GetSharedMem gets the contents of the shared memory
 // 
-void GetSharedMem(LPWSTR lpszBuf, DWORD cchSize) 
+void GetSharedMem(LPWSTR lpszBuf, size_t cchSize) 
 { 
     WaitForSingleObject(mutex_handle, INFINITE);
 

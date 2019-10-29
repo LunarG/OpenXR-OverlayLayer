@@ -131,69 +131,6 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
-const void* unpackXrStruct(unsigned char*& ptr);
-
-template <>
-XrSessionCreateInfo* unpack<XrSessionCreateInfo*>(unsigned char*& ptr)
-{
-	// type already unpacked
-	// XXX MUSTFIX memory leak - add allocator to unpacker or put directly in shmem
-	XrSessionCreateInfo *tmp = new XrSessionCreateInfo;
-	tmp->type = XR_TYPE_SESSION_CREATE_INFO;
-	tmp->next = unpackXrStruct(ptr);
-	tmp->createFlags = unpack<XrSessionCreateFlags>(ptr);
-	tmp->systemId = unpack<XrSystemId>(ptr);
-	return tmp;
-}
-
-template <>
-XrSessionCreateInfoOverlayEXT* unpack<XrSessionCreateInfoOverlayEXT*>(unsigned char*& ptr)
-{
-	// type already unpacked
-	// XXX MUSTFIX memory leak - add allocator to unpacker or put directly in shmem
-	XrSessionCreateInfoOverlayEXT *tmp = new XrSessionCreateInfoOverlayEXT;
-	tmp->type = (XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT;
-	tmp->next = unpackXrStruct(ptr);
-	tmp->overlaySession = unpack<XrBool32>(ptr);
-	tmp->sessionLayersPlacement = unpack<uint32_t>(ptr);
-	return tmp;
-}
-
-const void* unpackXrStruct(unsigned char*& ptr)
-{
-	bool notnull = unpack<bool>(ptr);
-	if (!notnull)
-		return nullptr;
-
-	XrStructureType type = unpack<XrStructureType>(ptr);
-	const void* p;
-	switch (type) {
-	case XR_TYPE_SESSION_CREATE_INFO:
-		p = unpack<XrSessionCreateInfo*>(ptr);
-		break;
-	case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT:
-		p = unpack<XrSessionCreateInfoOverlayEXT*>(ptr);
-		break;
-	default:
-		// I don't know what this is
-		std::string str = fmt("packXrStruct called to pack unknown type %d - dropped from \"next\" chain.\n", type);
-		OutputDebugStringA(str.data());
-		abort();
-		break;
-	}
-	return p;
-}
-
-template <>
-IPCXrCreateSessionIn unpack<IPCXrCreateSessionIn>(unsigned char*& ptr)
-{
-	IPCXrCreateSessionIn tmp;
-	tmp.instance = unpack<XrInstance>(ptr);
-	tmp.createInfo = reinterpret_cast<const XrSessionCreateInfo *>(unpackXrStruct(ptr));
-	return tmp;
-}
-
-
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
 #endif
@@ -257,7 +194,6 @@ extern int Image1Height;
 extern unsigned char Image1Bytes[];
 };
 
-
 DWORD WINAPI ThreadBody(LPVOID)
 {
     void *shmem = IPCGetSharedMemory();
@@ -267,36 +203,37 @@ DWORD WINAPI ThreadBody(LPVOID)
         IPCWaitForGuestRequest(); // XXX TODO check response
         OutputDebugStringA("**OVERLAY** success in waiting for guest request\n");
 
-        unsigned char* unpackPtr = reinterpret_cast<unsigned char*>(shmem);
-        uint64_t requestType = unpack<uint64_t>(unpackPtr);
+        IPCBuffer ipcbuf = IPCGetBuffer();
+        IPCXrHeader *hdr;
+        hdr = ipcbuf.getAndAdvance<IPCXrHeader>();
 
-        unsigned char* packPtr = reinterpret_cast<unsigned char*>(shmem);
+        hdr->makePointersAbsolute(ipcbuf.base);
 
-        switch(requestType) {
+        switch(hdr->requestType) {
 
             case IPC_XR_CREATE_SESSION: {
-                IPCXrCreateSessionIn args = unpack<IPCXrCreateSessionIn>(unpackPtr);
-                XrSession session;
-                XrResult result = Overlay_xrCreateSession(args.instance, args.createInfo, &session);
-                pack(packPtr, (XrResult)result);
-                pack(packPtr, session);
-                IPCFinishHostResponse();
-                continueIPC = false; // XXX testing initial handoff, normally will remain in this loop until remote terminates
+                IPCXrCreateSession *args = ipcbuf.getAndAdvance<IPCXrCreateSession>();
+                hdr->result = Overlay_xrCreateSession(args->instance, args->createInfo, args->session);
+                continueIPC = false; // XXX testing initial handshake, normally will remain in this loop until remote terminates
                 break;
             }
 
-            case IPC_REQUEST_HANDOFF:
-                // Establish IPC parameters and make initial handoff
-                pack(packPtr, (XrResult)XR_SUCCESS);
-                pack(packPtr, gSavedInstance);
-                IPCFinishHostResponse();
+            case IPC_HANDSHAKE: {
+                // Establish IPC parameters and make initial handshake
+                IPCXrHandshake *args = ipcbuf.getAndAdvance<IPCXrHandshake>();
+                hdr->result = XR_SUCCESS;
+                *(args->instance) = gSavedInstance;
                 break;
+            }
 
             default:
                 OutputDebugStringA("unknown request type in IPC");
                 abort();
                 break;
         }
+
+        hdr->makePointersRelative(ipcbuf.base);
+        IPCFinishHostResponse();
 
     } while(continueIPC);
     OutputDebugStringA("**OVERLAY** exited IPC loop\n");
