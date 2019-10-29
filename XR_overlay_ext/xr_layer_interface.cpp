@@ -42,72 +42,6 @@ XrFrameState gSavedWaitFrameState;
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
 
-std::string fmt(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    int size = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if(size >= 0) {
-        int provided = size + 1;
-        std::unique_ptr<char[]> buf(new char[provided]);
-
-        va_start(args, fmt);
-        int size = vsnprintf(buf.get(), provided, fmt, args);
-        va_end(args);
-
-        return std::string(buf.get());
-    }
-    return "(fmt() failed, vsnprintf returned -1)";
-}
-
-void CheckResultWithLastError(bool success, const char* what, const char *file, int line)
-{
-    if(!success) {
-        DWORD lastError = GetLastError();
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-void CheckResult(HRESULT result, const char* what, const char *file, int line)
-{
-    if(result != S_OK) {
-        DWORD lastError = GetLastError();
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
-
-#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
-
-#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
-
-void CheckXrResult(XrResult a, const char* what, const char *file, int line)
-{
-    if(a != XR_SUCCESS) {
-        std::string str = fmt("%s at %s:%d failed with %d\n", what, file, line, a);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-    }
-}
-
-enum {
-    // XXX need to do this with an enum generated from ext as part of build
-    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
-};
-
 namespace Math {
 namespace Pose {
 XrPosef Identity() {
@@ -134,21 +68,131 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
 }  // namespace Pose
 }  // namespace Math
 
-struct xrinfoBase
-{
-    XrStructureType       type;
-    void* XR_MAY_ALIAS    next;
-};
-
-typedef struct XrSessionCreateInfoOverlayEXT
-{
-    XrStructureType             type;
-    const void* XR_MAY_ALIAS    next;
-    XrBool32                    overlaySession;
-    uint32_t                    sessionLayersPlacement;
-} XrSessionCreateInfoOverlayEXT;
-
 static XrGeneratedDispatchTable *downchain = nullptr;
+
+static std::string fmt(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    int size = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    if(size >= 0) {
+        int provided = size + 1;
+        std::unique_ptr<char[]> buf(new char[provided]);
+
+        va_start(args, fmt);
+        int size = vsnprintf(buf.get(), provided, fmt, args);
+        va_end(args);
+
+        return std::string(buf.get());
+    }
+    return "(fmt() failed, vsnprintf returned -1)";
+}
+
+static void CheckResultWithLastError(bool success, const char* what, const char *file, int line)
+{
+    if(!success) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        OutputDebugStringA(str.data());
+        DebugBreak();
+        LocalFree(messageBuf);
+    }
+}
+
+static void CheckResult(HRESULT result, const char* what, const char *file, int line)
+{
+    if(result != S_OK) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        OutputDebugStringA(str.data());
+        DebugBreak();
+        LocalFree(messageBuf);
+    }
+}
+
+#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
+
+#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
+
+#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
+
+static void CheckXrResult(XrResult a, const char* what, const char *file, int line)
+{
+    if(a != XR_SUCCESS) {
+        std::string str = fmt("%s at %s:%d failed with %d\n", what, file, line, a);
+        OutputDebugStringA(str.data());
+        DebugBreak();
+    }
+}
+
+const void* unpackXrStruct(unsigned char*& ptr);
+
+template <>
+XrSessionCreateInfo* unpack<XrSessionCreateInfo*>(unsigned char*& ptr)
+{
+	// type already unpacked
+	// XXX MUSTFIX memory leak - add allocator to unpacker or put directly in shmem
+	XrSessionCreateInfo *tmp = new XrSessionCreateInfo;
+	tmp->type = XR_TYPE_SESSION_CREATE_INFO;
+	tmp->next = unpackXrStruct(ptr);
+	tmp->createFlags = unpack<XrSessionCreateFlags>(ptr);
+	tmp->systemId = unpack<XrSystemId>(ptr);
+	return tmp;
+}
+
+template <>
+XrSessionCreateInfoOverlayEXT* unpack<XrSessionCreateInfoOverlayEXT*>(unsigned char*& ptr)
+{
+	// type already unpacked
+	// XXX MUSTFIX memory leak - add allocator to unpacker or put directly in shmem
+	XrSessionCreateInfoOverlayEXT *tmp = new XrSessionCreateInfoOverlayEXT;
+	tmp->type = (XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT;
+	tmp->next = unpackXrStruct(ptr);
+	tmp->overlaySession = unpack<XrBool32>(ptr);
+	tmp->sessionLayersPlacement = unpack<uint32_t>(ptr);
+	return tmp;
+}
+
+const void* unpackXrStruct(unsigned char*& ptr)
+{
+	bool notnull = unpack<bool>(ptr);
+	if (!notnull)
+		return nullptr;
+
+	XrStructureType type = unpack<XrStructureType>(ptr);
+	const void* p;
+	switch (type) {
+	case XR_TYPE_SESSION_CREATE_INFO:
+		p = unpack<XrSessionCreateInfo*>(ptr);
+		break;
+	case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT:
+		p = unpack<XrSessionCreateInfoOverlayEXT*>(ptr);
+		break;
+	default:
+		// I don't know what this is
+		std::string str = fmt("packXrStruct called to pack unknown type %d - dropped from \"next\" chain.\n", type);
+		OutputDebugStringA(str.data());
+		abort();
+		break;
+	}
+	return p;
+}
+
+template <>
+IPCXrCreateSessionIn unpack<IPCXrCreateSessionIn>(unsigned char*& ptr)
+{
+	IPCXrCreateSessionIn tmp;
+	tmp.instance = unpack<XrInstance>(ptr);
+	tmp.createInfo = reinterpret_cast<const XrSessionCreateInfo *>(unpackXrStruct(ptr));
+	return tmp;
+}
+
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -213,12 +257,6 @@ extern int Image1Height;
 extern unsigned char Image1Bytes[];
 };
 
-//
-// Shared Memory
-// uint64_t requestType;
-// size_t requestSize
-// { requestSize bytes }
-// response bytes here
 
 DWORD WINAPI ThreadBody(LPVOID)
 {
@@ -231,16 +269,27 @@ DWORD WINAPI ThreadBody(LPVOID)
 
         unsigned char* unpackPtr = reinterpret_cast<unsigned char*>(shmem);
         uint64_t requestType = unpack<uint64_t>(unpackPtr);
-        size_t requestSize = unpack<size_t>(unpackPtr);
-        unsigned char* packPtr = unpackPtr + requestSize;
+
+        unsigned char* packPtr = reinterpret_cast<unsigned char*>(shmem);
 
         switch(requestType) {
 
+            case IPC_XR_CREATE_SESSION: {
+                IPCXrCreateSessionIn args = unpack<IPCXrCreateSessionIn>(unpackPtr);
+                XrSession session;
+                XrResult result = Overlay_xrCreateSession(args.instance, args.createInfo, &session);
+                pack(packPtr, (XrResult)result);
+                pack(packPtr, session);
+                IPCFinishHostResponse();
+                continueIPC = false; // XXX testing initial handoff, normally will remain in this loop until remote terminates
+                break;
+            }
+
             case IPC_REQUEST_HANDOFF:
                 // Establish IPC parameters and make initial handoff
+                pack(packPtr, (XrResult)XR_SUCCESS);
                 pack(packPtr, gSavedInstance);
                 IPCFinishHostResponse();
-                continueIPC = false; // XXX testing initial handoff
                 break;
 
             default:
@@ -252,14 +301,7 @@ DWORD WINAPI ThreadBody(LPVOID)
     } while(continueIPC);
     OutputDebugStringA("**OVERLAY** exited IPC loop\n");
 
-    XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
-    XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
-    sessionCreateInfoOverlay.next = nullptr;
-    sessionCreateInfo.next = &sessionCreateInfoOverlay;
-    sessionCreateInfoOverlay.overlaySession = XR_TRUE;
-    sessionCreateInfoOverlay.sessionLayersPlacement = 1;
-    CHECK_XR(Overlay_xrCreateSession(gSavedInstance, &sessionCreateInfo, &gOverlaySession));
-    OutputDebugStringA("**OVERLAY** success in thread creating overlay session\n");
+    // gOverlaySession was saved off when we proxied the IPC call to CreateSession
 
     // Don't have gSavedD3DDevice until after CreateSession
 
@@ -519,17 +561,17 @@ XrResult Overlay_xrCreateSession(
 {
     XrResult result;
 
-    xrinfoBase* p = reinterpret_cast<xrinfoBase*>(const_cast<void*>(createInfo->next));
-    XrSessionCreateInfoOverlayEXT* cio = nullptr;
-    XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
+    const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
+    const XrSessionCreateInfoOverlayEXT* cio = nullptr;
+    const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
     while(p != nullptr) {
         if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
-            cio = reinterpret_cast<XrSessionCreateInfoOverlayEXT*>(p);
+            cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(p);
         }
         if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
-            d3dbinding = reinterpret_cast<XrGraphicsBindingD3D11KHR*>(p);
+            d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
         }
-        p = reinterpret_cast<xrinfoBase*>(const_cast<void*>(p->next));
+        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
     }
 
     // TODO handle the case where Main session passes the
@@ -560,6 +602,7 @@ XrResult Overlay_xrCreateSession(
         }
         // TODO should store any kind of failure in main XrCreateSession and then fall through here
         *session = kOverlayFakeSession;
+        gOverlaySession = *session; // XXX as loop is transferred to IPC
         result = XR_SUCCESS;
     }
 

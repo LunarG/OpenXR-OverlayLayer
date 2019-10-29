@@ -26,6 +26,19 @@
 #define XR_OVERLAY_EXT_API __declspec(dllimport)
 #endif
 
+typedef struct XrSessionCreateInfoOverlayEXT
+{
+    XrStructureType             type;
+    const void* XR_MAY_ALIAS    next;
+    XrBool32                    overlaySession;
+    uint32_t                    sessionLayersPlacement;
+} XrSessionCreateInfoOverlayEXT;
+
+struct IPCXrCreateSessionIn {
+    XrInstance instance;
+    const XrSessionCreateInfo *createInfo;
+};
+
 template <typename T>
 T unpack(unsigned char*& ptr)
 {
@@ -35,7 +48,7 @@ T unpack(unsigned char*& ptr)
 }
 
 template <typename T>
-bool pack(unsigned char*& ptr, T& v)
+bool pack(unsigned char*& ptr, const T& v)
 {
     // XXX TODO - don't overflow the buffer - also pass and check size
     *reinterpret_cast<T*>(ptr) = v;
@@ -44,6 +57,7 @@ bool pack(unsigned char*& ptr, T& v)
 }
 
 const uint64_t IPC_REQUEST_HANDOFF = 1;
+const uint64_t IPC_XR_CREATE_SESSION = 2;
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -59,6 +73,11 @@ XR_OVERLAY_EXT_API bool IPCWaitForGuestRequest();
 XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
 XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
 XR_OVERLAY_EXT_API void IPCFinishHostResponse();
+
+enum {
+    // XXX need to do this with an enum generated from ext as part of build
+    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
+};
 
 
 // Exported entry points
