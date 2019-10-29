@@ -67,6 +67,32 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
 
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
+namespace Math {
+namespace Pose {
+XrPosef Identity() {
+    XrPosef t{};
+    t.orientation.w = 1;
+    return t;
+}
+
+XrPosef Translation(const XrVector3f& translation) {
+    XrPosef t = Identity();
+    t.position = translation;
+    return t;
+}
+
+XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
+    XrPosef t = Identity();
+    t.orientation.x = 0.f;
+    t.orientation.y = std::sin(radians * 0.5f);
+    t.orientation.z = 0.f;
+    t.orientation.w = std::cos(radians * 0.5f);
+    t.position = translation;
+    return t;
+}
+}  // namespace Pose
+}  // namespace Math
+
 
 // MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
 template <typename T>
@@ -138,6 +164,16 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 skipped = false;
                 break;
             }
+
+            case XR_TYPE_REFERENCE_SPACE_CREATE_INFO: {
+                const XrReferenceSpaceCreateInfo* src = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase);
+                XrReferenceSpaceCreateInfo* dst = new(ipcbuf) XrReferenceSpaceCreateInfo;
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                *dst = *src; // sloppy, should copy just non-pointers
+                skipped = false;
+                break;
+            }
+
 
             default: {
                 // I don't know what this is, skip it and try the next one
@@ -221,6 +257,30 @@ void IPCCopyOut(IPCXrCreateSession* dst, const IPCXrCreateSession* src)
     IPCCopyOut(dst->session, src->session);
 }
 
+
+template <>
+IPCXrCreateReferenceSpace* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrCreateReferenceSpace* src)
+{
+    IPCXrCreateReferenceSpace *dst = new(ipcbuf) IPCXrCreateReferenceSpace;
+
+    dst->session = src->session;
+
+    dst->createInfo = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo)));
+    header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
+
+    // TODO don't bother copying session here since session is only out
+    dst->space = IPCSerializeNoCopy(ipcbuf, header, src->space);
+    header->addOffsetToPointer(ipcbuf.base, &dst->space);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrCreateReferenceSpace* dst, const IPCXrCreateReferenceSpace* src)
+{
+    IPCCopyOut(dst->space, src->space);
+}
+
 template <>
 IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrHandshake* src)
 {
@@ -245,33 +305,23 @@ XrResult ipcxrHandshake(
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake handshakeArgs {instance};
-    IPCXrHandshake *handshakeArgsSerialized = IPCSerialize(ipcbuf, header, &handshakeArgs);
+    IPCXrHandshake args {instance};
+    IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
+#if 0
     printf("buf before Remote makePointersRelative: ");
     for(int i = 0; i < 32; i++)
-        printf("%02X ", ((unsigned char*)handshakeArgsSerialized)[i]);
+        printf("%02X ", ((unsigned char*)argsSerialized)[i]);
     puts("");
+#endif
     header->makePointersRelative(ipcbuf.base);
-    printf("buf after Remote makePointersRelative : ");
-    for(int i = 0; i < 32; i++)
-        printf("%02X ", ((unsigned char*)handshakeArgsSerialized)[i]);
-    puts("");
 
     IPCFinishGuestRequest();
     IPCWaitForHostResponse();
 
-    printf("buf before Remote makePointersAbsolute: ");
-    for(int i = 0; i < 32; i++)
-        printf("%02X ", ((unsigned char*)handshakeArgsSerialized)[i]);
-    puts("");
     header->makePointersAbsolute(ipcbuf.base);
-    printf("buf after Remote makePointersAbsolute : ");
-    for(int i = 0; i < 32; i++)
-        printf("%02X ", ((unsigned char*)handshakeArgsSerialized)[i]);
-    puts("");
 
-    IPCCopyOut(&handshakeArgs, handshakeArgsSerialized);
+    IPCCopyOut(&args, argsSerialized);
 
     return header->result;
 }
@@ -284,9 +334,9 @@ XrResult ipcxrCreateSession(
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_SESSION};
 
-    IPCXrCreateSession createSessionArgs {instance, createInfo, session};
+    IPCXrCreateSession args {instance, createInfo, session};
 
-    IPCXrCreateSession* createSessionArgsSerialized = IPCSerialize(ipcbuf, header, &createSessionArgs);
+    IPCXrCreateSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
     header->makePointersRelative(ipcbuf.base);
 
     IPCFinishGuestRequest();
@@ -294,7 +344,30 @@ XrResult ipcxrCreateSession(
 
     header->makePointersAbsolute(ipcbuf.base);
 
-    IPCCopyOut(&createSessionArgs, createSessionArgsSerialized);
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+XrResult ipcxrCreateReferenceSpace(
+    XrSession                                   session,
+    const XrReferenceSpaceCreateInfo*           createInfo,
+    XrSpace*                                    space)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_REFERENCE_SPACE};
+
+    IPCXrCreateReferenceSpace args {session, createInfo, space};
+
+    IPCXrCreateReferenceSpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    header->makePointersRelative(ipcbuf.base);
+
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
 
     return header->result;
 }
@@ -309,7 +382,6 @@ int main( void )
 
     XrInstance instance;
     CHECK_XR(ipcxrHandshake(&instance));
-    printf("instance is %p\n", instance);
 
     XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
     sessionCreateInfoOverlay.next = nullptr;
@@ -321,8 +393,15 @@ int main( void )
 
     XrSession session;
     CHECK_XR(ipcxrCreateSession(instance, &sessionCreateInfo, &session));
-    printf("session is %p\n", session);
-    OutputDebugStringA("**OVERLAY** success in thread creating overlay session\n");
+
+    XrSpace viewSpace;
+    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+    createSpaceInfo.next = nullptr;
+    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+    // Render head-locked 1.5m in front of device.
+    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
+    CHECK_XR(ipcxrCreateReferenceSpace(session, &createSpaceInfo, &viewSpace));
+	printf("reference space is %p", viewSpace);
     
     return 0;
 }

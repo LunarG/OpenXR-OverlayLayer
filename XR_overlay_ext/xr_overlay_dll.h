@@ -47,6 +47,12 @@ struct IPCXrCreateSession {
     XrSession* session;
 };
 
+struct IPCXrCreateReferenceSpace {
+    XrSession session;
+    const XrReferenceSpaceCreateInfo *createInfo;
+    XrSpace* space;
+};
+
 #define MAX_POINTER_FIXUP_COUNT 128
 
 struct IPCXrHeader
@@ -220,6 +226,7 @@ bool pack(unsigned char*& ptr, const T& v)
 
 const uint64_t IPC_HANDSHAKE = 1;
 const uint64_t IPC_XR_CREATE_SESSION = 2;
+const uint64_t IPC_XR_CREATE_REFERENCE_SPACE = 3;
 
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer();
 

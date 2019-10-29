@@ -214,6 +214,12 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_CREATE_SESSION: {
                 IPCXrCreateSession *args = ipcbuf.getAndAdvance<IPCXrCreateSession>();
                 hdr->result = Overlay_xrCreateSession(args->instance, args->createInfo, args->session);
+                break;
+            }
+
+            case IPC_XR_CREATE_REFERENCE_SPACE: {
+                IPCXrCreateReferenceSpace *args = ipcbuf.getAndAdvance<IPCXrCreateReferenceSpace>();
+                hdr->result = Overlay_xrCreateReferenceSpace(args->session, args->createInfo, args->space);
                 continueIPC = false; // XXX testing initial handshake, normally will remain in this loop until remote terminates
                 break;
             }
