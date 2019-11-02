@@ -133,20 +133,6 @@ void IPCCopyOut(T* dst, const T* src)
     *dst = *src;
 }
 
-template <typename T1, typename T2>
-void addPointerAndSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, T1*& dst, const T2* src)
-{
-    dst = IPCSerialize(ipcbuf, header, src);
-    header->addOffsetToPointer(ipcbuf.base, &dst);
-}
-
-template <typename T>
-void addPointer(IPCBuffer& ipcbuf, IPCXrHeader* header, T*& dst, const T* src)
-{
-    dst = IPCSerializeNoCopy(ipcbuf, header, src);
-    header->addOffsetToPointer(ipcbuf.base, &dst);
-}
-
 template <>
 XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const XrBaseInStructure* srcbase)
 {
@@ -162,8 +148,8 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
         switch(srcbase->type) {
 
             case XR_TYPE_SESSION_CREATE_INFO: {
-                auto src = reinterpret_cast<const XrSessionCreateInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSessionCreateInfo;
+                const XrSessionCreateInfo* src = reinterpret_cast<const XrSessionCreateInfo*>(srcbase);
+                XrSessionCreateInfo* dst = new(ipcbuf) XrSessionCreateInfo;
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
                 *dst = *src; // sloppy, should copy just non-pointers
                 skipped = false;
@@ -171,8 +157,8 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
             }
 
             case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT: {
-                auto src = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase);
-                auto dst = new(ipcbuf) XrSessionCreateInfoOverlayEXT;
+                const XrSessionCreateInfoOverlayEXT* src = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase);
+                XrSessionCreateInfoOverlayEXT* dst = new(ipcbuf) XrSessionCreateInfoOverlayEXT;
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
                 *dst = *src; // sloppy, should copy just non-pointers
                 skipped = false;
@@ -199,7 +185,8 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
         }
     } while(skipped);
 
-    addPointerAndSerialize(ipcbuf, header, dstbase->next, srcbase->next);
+    dstbase->next = reinterpret_cast<XrBaseInStructure*>(IPCSerialize(ipcbuf, header, srcbase->next));
+    header->addOffsetToPointer(ipcbuf.base, &dstbase->next);
 
     return dstbase;
 }
@@ -254,8 +241,11 @@ IPCXrCreateSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const I
 
     dst->instance = src->instance;
 
-    addPointerAndSerialize(ipcbuf, header, dst->createInfo, src->createInfo);
-    addPointer(ipcbuf, header, dst->session, src->session);
+    dst->createInfo = reinterpret_cast<const XrSessionCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo)));
+    header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
+
+    dst->session = IPCSerializeNoCopy(ipcbuf, header, src->session);
+    header->addOffsetToPointer(ipcbuf.base, &dst->session);
 
     return dst;
 }
@@ -274,8 +264,11 @@ IPCXrCreateReferenceSpace* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, 
 
     dst->session = src->session;
 
-    addPointerAndSerialize(ipcbuf, header, dst->createInfo, src->createInfo);
-    addPointer(ipcbuf, header, dst->space, src->space);
+    dst->createInfo = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo)));
+    header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
+
+    dst->space = IPCSerializeNoCopy(ipcbuf, header, src->space);
+    header->addOffsetToPointer(ipcbuf.base, &dst->space);
 
     return dst;
 }
@@ -289,9 +282,11 @@ void IPCCopyOut(IPCXrCreateReferenceSpace* dst, const IPCXrCreateReferenceSpace*
 template <>
 IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrHandshake* src)
 {
-    auto dst = new(ipcbuf) IPCXrHandshake;
+    IPCXrHandshake *dst = new(ipcbuf) IPCXrHandshake;
 
-    addPointer(ipcbuf, header, dst->instance, src->instance);
+    // TODO don't bother copying instance in here because out only
+    dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
+    header->addOffsetToPointer(ipcbuf.base, &dst->instance);
 
     return dst;
 }
