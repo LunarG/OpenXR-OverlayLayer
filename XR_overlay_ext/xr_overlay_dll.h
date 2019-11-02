@@ -264,7 +264,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrCreateSession(XrInstance instance, const X
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySession(XrSession session);
 XR_OVERLAY_EXT_API XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images);
 XR_OVERLAY_EXT_API XrResult Overlay_xrCreateReferenceSpace(XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space);
-
+XrResult Overlay_xrEnumerateSwapchainFormats(XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats);
 
 // Function used to negotiate an interface betewen the loader and a layer.
 XR_OVERLAY_EXT_API XrResult Overlay_xrNegotiateLoaderApiLayerInterface(const XrNegotiateLoaderInfo *li, const char *ln, XrNegotiateApiLayerRequest *lr);

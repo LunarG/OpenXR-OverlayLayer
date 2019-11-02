@@ -1,6 +1,8 @@
 #include <memory>
 #include <chrono>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 #include <cassert>
 #include <cstring>
@@ -246,6 +248,15 @@ DWORD WINAPI ThreadBody(LPVOID)
 
     // gOverlaySession was saved off when we proxied the IPC call to CreateSession
 
+    XrSpace viewSpace;
+    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+    createSpaceInfo.next = nullptr;
+    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+    // Render head-locked 1.5m in front of device.
+    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
+    CHECK_XR(Overlay_xrCreateReferenceSpace(gOverlaySession, &createSpaceInfo, &viewSpace));
+
+
     // Don't have gSavedD3DDevice until after CreateSession
 
     // XXX TODO use multiple Devices to avoid having to synchronize
@@ -281,20 +292,29 @@ DWORD WINAPI ThreadBody(LPVOID)
         d3dContext->Unmap(sourceImages[i], 0);
     }
 
-    XrSpace viewSpace;
-    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-    createSpaceInfo.next = nullptr;
-    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
-    // Render head-locked 1.5m in front of device.
-    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
-    CHECK_XR(Overlay_xrCreateReferenceSpace(gOverlaySession, &createSpaceInfo, &viewSpace));
+
+    uint64_t chosenFormat;
+    {
+        uint32_t count;
+        CHECK_XR(Overlay_xrEnumerateSwapchainFormats(gOverlaySession, 0, &count, nullptr));
+        std::vector<int64_t> runtimeFormats(count);
+        CHECK_XR(Overlay_xrEnumerateSwapchainFormats(gOverlaySession, (uint32_t)count, &count, runtimeFormats.data()));
+        std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
+        auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
+        if(formatFound == runtimeFormats.end()) {
+            OutputDebugStringA("No supported swapchain format found\n");
+            // XXX Do something smarter here
+            DebugBreak();
+        }
+        chosenFormat = *formatFound;
+    }
 
     XrSwapchain swapchains[2];
     XrSwapchainImageD3D11KHR *swapchainImages[2];
     for(int eye = 0; eye < 2; eye++) {
         XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
         swapchainCreateInfo.arraySize = 1;
-        swapchainCreateInfo.format = 28; // XXX!!! m_colorSwapchainFormat;
+        swapchainCreateInfo.format = chosenFormat;
         swapchainCreateInfo.width = 512;
         swapchainCreateInfo.height = 512;
         swapchainCreateInfo.mipCount = 1;
@@ -552,6 +572,33 @@ XrResult Overlay_xrCreateSession(
     return result;
 }
 
+XrResult Overlay_xrEnumerateSwapchainFormats(
+    XrSession                                   session,
+    uint32_t                                    formatCapacityInput,
+    uint32_t*                                   formatCountOutput,
+    int64_t*                                    formats)
+{ 
+    if(gSerializeEverything) {
+        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**OVERLAY** timeout waiting in EnumerateSwapchainImages on gOverlayCallMutex\n");
+            DebugBreak();
+        }
+    }
+
+    if(session == kOverlayFakeSession) {
+        session = gSavedMainSession;
+    }
+
+    XrResult result = downchain->EnumerateSwapchainFormats(session, formatCapacityInput, formatCountOutput, formats);
+
+    if(gSerializeEverything) {
+        ReleaseMutex(gOverlayCallMutex);
+    }
+
+    return result;
+}
+
 XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images)
 { 
     if(gSerializeEverything) {
@@ -774,6 +821,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrDestroySession);
   } else if (0 == strcmp(name, "xrCreateReferenceSpace")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateReferenceSpace);
+  } else if (0 == strcmp(name, "xrEnumerateSwapchainFormats")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainFormats);
   } else if (0 == strcmp(name, "xrEnumerateSwapchainImages")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainImages);
   } else {
