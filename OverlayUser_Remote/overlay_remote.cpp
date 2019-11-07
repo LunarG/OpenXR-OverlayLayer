@@ -3,6 +3,10 @@
 #include <windows.h>
 #include <tchar.h>
 #include <iostream>
+#include <vector>
+#include <algorithm>
+
+#define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "../XR_overlay_ext/xr_overlay_dll.h"
 
@@ -111,6 +115,23 @@ T* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
 
 // MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
 template <typename T>
+T* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p, size_t count)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T[count];
+    if(!t)
+        return nullptr;
+
+    for(size_t i = 0; i < count; i++)
+        t[i] = p[i];
+
+    return t;
+}
+
+// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+template <typename T>
 T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
 {
     if(!p)
@@ -125,12 +146,38 @@ T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
 
 // MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
 template <typename T>
+T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p, size_t count)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T[count];
+    if(!t)
+        return nullptr;
+
+    return t;
+}
+
+// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+template <typename T>
 void IPCCopyOut(T* dst, const T* src)
 {
     if(!src)
         return;
 
     *dst = *src;
+}
+
+// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+template <typename T>
+void IPCCopyOut(T* dst, const T* src, size_t count)
+{
+    if(!src)
+        return;
+
+    for(size_t i = 0; i < count; i++) {
+        dst[i] = src[i];
+    }
 }
 
 template <>
@@ -232,6 +279,30 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
     }
 
     IPCCopyOut(dstbase->next, srcbase->next);
+}
+
+template <>
+IPCXrEnumerateSwapchainFormats* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEnumerateSwapchainFormats* src)
+{
+    auto dst = new(ipcbuf) IPCXrEnumerateSwapchainFormats;
+
+    dst->session = src->session;
+    dst->formatCapacityInput = src->formatCapacityInput;
+    dst->formatCountOutput = IPCSerializeNoCopy(ipcbuf, header, src->formatCountOutput);
+    header->addOffsetToPointer(ipcbuf.base, &dst->formatCountOutput);
+    dst->formats = IPCSerializeNoCopy(ipcbuf, header, src->formats, src->formatCapacityInput);
+    header->addOffsetToPointer(ipcbuf.base, &dst->formats);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrEnumerateSwapchainFormats* dst, const IPCXrEnumerateSwapchainFormats* src)
+{
+    IPCCopyOut(dst->formatCountOutput, src->formatCountOutput);
+	if (src->formats) {
+		IPCCopyOut(dst->formats, src->formats, *src->formatCountOutput);
+	}
 }
 
 template <>
@@ -370,6 +441,33 @@ XrResult ipcxrCreateReferenceSpace(
     return header->result;
 }
 
+XrResult ipcxrEnumerateSwapchainFormats(
+    XrSession                                   session,
+    uint32_t                                    formatCapacityInput,
+    uint32_t*                                   formatCountOutput,
+    int64_t*                                    formats)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS};
+
+    IPCXrEnumerateSwapchainFormats args {session, formatCapacityInput, formatCountOutput, formats};
+
+    IPCXrEnumerateSwapchainFormats* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    header->makePointersRelative(ipcbuf.base);
+
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    // TODO intersect with {RGB,RGBA,BGRA,BGR}8
+
+    return header->result;
+}
+
+
 int main( void )
 {
     //DebugBreak();
@@ -399,7 +497,23 @@ int main( void )
     // Render head-locked 1.5m in front of device.
     createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
     CHECK_XR(ipcxrCreateReferenceSpace(session, &createSpaceInfo, &viewSpace));
-	printf("reference space is %p", viewSpace);
-    
+
+    uint64_t chosenFormat;
+    {
+        uint32_t count;
+        CHECK_XR(ipcxrEnumerateSwapchainFormats(session, 0, &count, nullptr));
+        std::vector<int64_t> runtimeFormats(count);
+        CHECK_XR(ipcxrEnumerateSwapchainFormats(session, (uint32_t)count, &count, runtimeFormats.data()));
+        std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
+        auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
+        if(formatFound == runtimeFormats.end()) {
+            OutputDebugStringA("No supported swapchain format found\n");
+            // XXX Do something smarter here
+            DebugBreak();
+        }
+        chosenFormat = *formatFound;
+        printf("%d formats returned, chosen format is %lld\n", count, chosenFormat);
+    }
+
     return 0;
 }

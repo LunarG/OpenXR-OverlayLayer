@@ -213,6 +213,14 @@ DWORD WINAPI ThreadBody(LPVOID)
 
         switch(hdr->requestType) {
 
+            case IPC_HANDSHAKE: {
+                // Establish IPC parameters and make initial handshake
+                IPCXrHandshake *args = ipcbuf.getAndAdvance<IPCXrHandshake>();
+                hdr->result = XR_SUCCESS;
+                *(args->instance) = gSavedInstance;
+                break;
+            }
+
             case IPC_XR_CREATE_SESSION: {
                 IPCXrCreateSession *args = ipcbuf.getAndAdvance<IPCXrCreateSession>();
                 hdr->result = Overlay_xrCreateSession(args->instance, args->createInfo, args->session);
@@ -222,15 +230,16 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_CREATE_REFERENCE_SPACE: {
                 IPCXrCreateReferenceSpace *args = ipcbuf.getAndAdvance<IPCXrCreateReferenceSpace>();
                 hdr->result = Overlay_xrCreateReferenceSpace(args->session, args->createInfo, args->space);
-                continueIPC = false; // XXX testing initial handshake, normally will remain in this loop until remote terminates
                 break;
             }
 
-            case IPC_HANDSHAKE: {
-                // Establish IPC parameters and make initial handshake
-                IPCXrHandshake *args = ipcbuf.getAndAdvance<IPCXrHandshake>();
-                hdr->result = XR_SUCCESS;
-                *(args->instance) = gSavedInstance;
+            case IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS: { 
+                IPCXrEnumerateSwapchainFormats *args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
+                hdr->result = Overlay_xrEnumerateSwapchainFormats(args->session, args->formatCapacityInput, args->formatCountOutput, args->formats);
+                static int howManyCalls = 0;
+                howManyCalls++;
+                if(howManyCalls > 1)
+                    continueIPC = false; // XXX testing initial handshake, normally will remain in this loop until remote terminates
                 break;
             }
 
@@ -353,7 +362,7 @@ DWORD WINAPI ThreadBody(LPVOID)
             XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
             XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
             acquireInfo.next = nullptr;
-            // TODO - these should be layered and wrapped with a mutex
+            // TODO - these should be layered
             CHECK_XR(downchain->AcquireSwapchainImage(sc, &acquireInfo, &index));
 
             XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};

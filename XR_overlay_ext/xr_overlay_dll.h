@@ -53,6 +53,13 @@ struct IPCXrCreateReferenceSpace {
     XrSpace* space;
 };
 
+struct IPCXrEnumerateSwapchainFormats {
+    XrSession                                   session;
+    uint32_t                                    formatCapacityInput;
+    uint32_t*                                   formatCountOutput;
+    int64_t*                                    formats;
+};
+
 #define MAX_POINTER_FIXUP_COUNT 128
 
 struct IPCXrHeader
@@ -224,9 +231,12 @@ bool pack(unsigned char*& ptr, const T& v)
     return true;
 }
 
-const uint64_t IPC_HANDSHAKE = 1;
-const uint64_t IPC_XR_CREATE_SESSION = 2;
-const uint64_t IPC_XR_CREATE_REFERENCE_SPACE = 3;
+enum {
+    IPC_HANDSHAKE = 1,
+    IPC_XR_CREATE_SESSION,
+    IPC_XR_CREATE_REFERENCE_SPACE,
+    IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS,
+};
 
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer();
 
