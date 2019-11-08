@@ -97,6 +97,7 @@ struct IPCXrReleaseSwapchainImage {
 struct IPCXrDestroySession {
     XrSession                                   session;
 };
+
 // no RPC struct for EnumerateSwapchainImages
 
 #define MAX_POINTER_FIXUP_COUNT 128
