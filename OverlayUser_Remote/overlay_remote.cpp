@@ -11,6 +11,7 @@
 #define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "../XR_overlay_ext/xr_overlay_dll.h"
+#include <openxr/openxr_platform.h>
 
 static std::string fmt(const char* fmt, ...)
 {
@@ -265,6 +266,11 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 break;
             }
 
+            case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+                // We know what this is but do not send it through.  Skip it.
+                srcbase = srcbase->next;
+                break;
+            }
 
             default: {
                 // I don't know what this is, skip it and try the next one
@@ -523,13 +529,21 @@ int main( void )
     XrInstance instance;
     CHECK_XR(ipcxrHandshake(&instance));
 
+    ID3D11Device* d3d11Device;
+    CHECK(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0,
+        D3D11_SDK_VERSION, &d3d11Device, NULL, NULL));
+
     XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
     sessionCreateInfoOverlay.next = nullptr;
     sessionCreateInfoOverlay.overlaySession = XR_TRUE;
     sessionCreateInfoOverlay.sessionLayersPlacement = 1;
 
+    XrGraphicsBindingD3D11KHR d3dBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
+    d3dBinding.device = d3d11Device;
+    d3dBinding.next = &sessionCreateInfoOverlay;
+
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
-    sessionCreateInfo.next = &sessionCreateInfoOverlay;
+    sessionCreateInfo.next = &d3dBinding;
 
     XrSession session;
     CHECK_XR(ipcxrCreateSession(instance, &sessionCreateInfo, &session));
