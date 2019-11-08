@@ -187,14 +187,6 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
-extern "C" {
-extern int Image2Width;
-extern int Image2Height;
-extern unsigned char Image2Bytes[];
-extern int Image1Width;
-extern int Image1Height;
-extern unsigned char Image1Bytes[];
-};
 
 DWORD WINAPI ThreadBody(LPVOID)
 {
@@ -236,11 +228,11 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS: { 
                 IPCXrEnumerateSwapchainFormats *args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
                 hdr->result = Overlay_xrEnumerateSwapchainFormats(args->session, args->formatCapacityInput, args->formatCountOutput, args->formats);
-                static int howManyCalls = 0;
-                howManyCalls++;
-                if(howManyCalls > 1)
-                    continueIPC = false; // XXX testing initial handshake, normally will remain in this loop until remote terminates
                 break;
+            }
+
+            case IPC_XR_DESTROY_SESSION: { 
+                continueIPC = false;
             }
 
             default:
@@ -256,150 +248,6 @@ DWORD WINAPI ThreadBody(LPVOID)
     OutputDebugStringA("**OVERLAY** exited IPC loop\n");
 
     // gOverlaySession was saved off when we proxied the IPC call to CreateSession
-
-    XrSpace viewSpace;
-    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-    createSpaceInfo.next = nullptr;
-    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
-    // Render head-locked 1.5m in front of device.
-    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
-    CHECK_XR(Overlay_xrCreateReferenceSpace(gOverlaySession, &createSpaceInfo, &viewSpace));
-
-
-    // Don't have gSavedD3DDevice until after CreateSession
-
-    // XXX TODO use multiple Devices to avoid having to synchronize
-    ID3D11Multithread* d3dMultithread;
-    CHECK(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
-    d3dMultithread->SetMultithreadProtected(TRUE);
-
-    ID3D11DeviceContext* d3dContext;
-    gSavedD3DDevice->GetImmediateContext(&d3dContext);
-
-    ID3D11Texture2D* sourceImages[2];
-    for(int i = 0; i < 2; i++) {
-        D3D11_TEXTURE2D_DESC desc;
-        desc.Width = 512;
-        desc.Height = 512;
-        desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
-        desc.Usage = D3D11_USAGE_STAGING;
-        desc.BindFlags = 0;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        desc.MiscFlags = 0;
-
-        CHECK(gSavedD3DDevice->CreateTexture2D(&desc, NULL, &sourceImages[i]));
-
-        D3D11_MAPPED_SUBRESOURCE mapped;
-        CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
-        if(i == 0)
-            memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
-        else
-            memcpy(mapped.pData, Image1Bytes, 512 * 512 * 4);
-        d3dContext->Unmap(sourceImages[i], 0);
-    }
-
-
-    uint64_t chosenFormat;
-    {
-        uint32_t count;
-        CHECK_XR(Overlay_xrEnumerateSwapchainFormats(gOverlaySession, 0, &count, nullptr));
-        std::vector<int64_t> runtimeFormats(count);
-        CHECK_XR(Overlay_xrEnumerateSwapchainFormats(gOverlaySession, (uint32_t)count, &count, runtimeFormats.data()));
-        std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
-        auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
-        if(formatFound == runtimeFormats.end()) {
-            OutputDebugStringA("No supported swapchain format found\n");
-            // XXX Do something smarter here
-            DebugBreak();
-        }
-        chosenFormat = *formatFound;
-    }
-
-    XrSwapchain swapchains[2];
-    XrSwapchainImageD3D11KHR *swapchainImages[2];
-    for(int eye = 0; eye < 2; eye++) {
-        XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-        swapchainCreateInfo.arraySize = 1;
-        swapchainCreateInfo.format = chosenFormat;
-        swapchainCreateInfo.width = 512;
-        swapchainCreateInfo.height = 512;
-        swapchainCreateInfo.mipCount = 1;
-        swapchainCreateInfo.faceCount = 1;
-        swapchainCreateInfo.sampleCount = 1;
-        swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-        swapchainCreateInfo.next = nullptr;
-        CHECK_XR(Overlay_xrCreateSwapchain(gOverlaySession, &swapchainCreateInfo, &swapchains[eye]));
-
-        uint32_t count;
-        CHECK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], 0, &count, nullptr));
-        swapchainImages[eye] = new XrSwapchainImageD3D11KHR[count];
-        for(uint32_t i = 0; i < count; i++) {
-            swapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
-            swapchainImages[eye][i].next = nullptr;
-        }
-        CHECK_XR(Overlay_xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
-    }
-    OutputDebugStringA("**OVERLAY** success in thread creating swapchain\n");
-
-    int whichImage = 0;
-    auto then = std::chrono::steady_clock::now();
-    while(!gExitOverlay) {
-        auto now = std::chrono::steady_clock::now();
-        if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
-            whichImage = (whichImage + 1) % 2;
-            then = std::chrono::steady_clock::now();
-        }
-
-        XrFrameState state;
-        Overlay_xrWaitFrame(gOverlaySession, nullptr, &state);
-        OutputDebugStringA("**OVERLAY** exited overlay session xrWaitFrame\n");
-        Overlay_xrBeginFrame(gOverlaySession, nullptr);
-        for(int eye = 0; eye < 2; eye++) {
-            uint32_t index;
-            XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
-            XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-            acquireInfo.next = nullptr;
-            // TODO - these should be layered
-            CHECK_XR(downchain->AcquireSwapchainImage(sc, &acquireInfo, &index));
-
-            XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-            waitInfo.next = nullptr;
-            waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
-            CHECK_XR(downchain->WaitSwapchainImage(sc, &waitInfo));
-
-            d3dContext->CopyResource(swapchainImages[eye][index].texture, sourceImages[whichImage]);
-
-            XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-            releaseInfo.next = nullptr;
-            CHECK_XR(downchain->ReleaseSwapchainImage(sc, &releaseInfo));
-        }
-        XrCompositionLayerQuad layers[2];
-        XrCompositionLayerBaseHeader* layerPointers[2];
-        for(uint32_t eye = 0; eye < 2; eye++) {
-            XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {512, 512}}, 0};
-            layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
-            layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-            layers[eye].next = nullptr;
-            layers[eye].layerFlags = 0;
-            layers[eye].space = viewSpace;
-            layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
-            layers[eye].subImage = fullImage;
-            layers[eye].pose = Math::Pose::Identity();
-            layers[eye].size = {0.33f, 0.33f};
-        }
-        XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-        frameEndInfo.next = nullptr;
-        frameEndInfo.layers = layerPointers;
-        frameEndInfo.layerCount = 2;
-        frameEndInfo.displayTime = gSavedWaitFrameState.predictedDisplayTime;
-        frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; // XXX ignored
-        Overlay_xrEndFrame(gOverlaySession, &frameEndInfo);
-    }
-
-    CHECK_XR(Overlay_xrDestroySession(gOverlaySession));
 
     OutputDebugStringA("**OVERLAY** destroyed session, exiting\n");
     return 0;
@@ -560,6 +408,10 @@ XrResult Overlay_xrCreateSession(
 
         gSavedMainSession = *session;
         gSavedD3DDevice = d3dbinding->device;
+
+        ID3D11Multithread* d3dMultithread;
+        CHECK(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
+        d3dMultithread->SetMultithreadProtected(TRUE);
 
         // Let overlay session continue
         ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);

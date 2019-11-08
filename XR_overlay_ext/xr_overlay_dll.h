@@ -60,6 +60,45 @@ struct IPCXrEnumerateSwapchainFormats {
     int64_t*                                    formats;
 };
 
+struct IPCXrCreateSwapchain {
+    XrSession                                   session;
+    const XrSwapchainCreateInfo*                createInfo;
+    XrSwapchain*                                swapchain;
+    int32_t*                                    swapchainCount;    
+};
+struct IPCXrWaitFrame {
+    XrSession                                   session;
+    const XrFrameWaitInfo*                      frameWaitInfo;
+    XrFrameState*                               frameState;
+};
+struct IPCXrBeginFrame {
+    XrSession                                   session;
+    const XrFrameBeginInfo*                     frameBeginInfo;
+};
+struct IPCXrEndFrame {
+    XrSession                                   session;
+    const XrFrameEndInfo*                       frameEndInfo;
+};
+struct IPCXrAcquireSwapchainImage {
+    XrSwapchain                                 swapchain;
+    const XrSwapchainImageAcquireInfo*          acquireInfo;
+    uint32_t*                                   index;
+};
+struct IPCXrWaitSwapchainImage {
+    XrSwapchain                                 swapchain;
+    const XrSwapchainImageWaitInfo*             waitInfo;
+    HANDLE                                      sourceImage;
+};
+struct IPCXrReleaseSwapchainImage {
+    XrSwapchain                                 swapchain;
+    const XrSwapchainImageReleaseInfo*          releaseInfo;
+    HANDLE                                      sourceImage;
+};
+struct IPCXrDestroySession {
+    XrSession                                   session;
+};
+// no RPC struct for EnumerateSwapchainImages
+
 #define MAX_POINTER_FIXUP_COUNT 128
 
 struct IPCXrHeader
@@ -236,6 +275,14 @@ enum {
     IPC_XR_CREATE_SESSION,
     IPC_XR_CREATE_REFERENCE_SPACE,
     IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS,
+    IPC_XR_CREATE_SWAPCHAIN,
+    IPC_XR_BEGIN_FRAME,
+    IPC_XR_WAIT_FRAME,
+    IPC_XR_END_FRAME,
+    IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE,
+    IPC_XR_WAIT_SWAPCHAIN_IMAGE,
+    IPC_XR_RELEASE_SWAPCHAIN_IMAGE,
+    IPC_XR_DESTROY_SESSION,
 };
 
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer();
