@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <memory>
 
 #define XR_USE_GRAPHICS_API_D3D11 1
 
@@ -97,8 +99,50 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
 }  // namespace Pose
 }  // namespace Math
 
+struct LocalSession
+{
+    XrSession       session;
+    ID3D11Device*   d3d11;
+    LocalSession(XrSession session_, ID3D11Device *d3d11_) :
+        session(session_),
+        d3d11(d3d11_)
+    {}
+    LocalSession(const LocalSession& l) :
+        session(l.session),
+        d3d11(l.d3d11)
+    {}
+};
 
-// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+typedef std::unique_ptr<LocalSession> LocalSessionPtr;
+
+std::map<XrSession, LocalSession> gLocalSessionMap;
+
+struct LocalSwapchain
+{
+    XrSwapchain             swapchain;
+    size_t                  swapchainTextureCount;
+    int                     nextSwapchain; 
+    ID3D11Texture2D*        swapchainTextures;
+    LocalSwapchain(XrSwapchain sc, size_t count, ID3D11Device* d3d11) :
+        swapchain(sc),
+        nextSwapchain(0)
+    {
+        abort();
+        // Create D3D textures from saved device
+    }
+    ~LocalSwapchain()
+    {
+        abort();
+        // Need to acquire back from remote side?
+        // destroy swapchains
+    }
+};
+
+typedef std::unique_ptr<LocalSwapchain> LocalSwapchainPtr;
+
+std::map<XrSwapchain, LocalSwapchainPtr> gLocalSwapchainMap;
+
+// MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
 T* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
 {
@@ -113,7 +157,7 @@ T* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
     return t;
 }
 
-// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+// MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
 T* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p, size_t count)
 {
@@ -130,7 +174,7 @@ T* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p, size_t count
     return t;
 }
 
-// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+// MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
 T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
 {
@@ -144,7 +188,7 @@ T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p)
     return t;
 }
 
-// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+// MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
 T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p, size_t count)
 {
@@ -158,7 +202,7 @@ T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCXrHeader* header, const T* p, size_t
     return t;
 }
 
-// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+// MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
 void IPCCopyOut(T* dst, const T* src)
 {
@@ -168,7 +212,7 @@ void IPCCopyOut(T* dst, const T* src)
     *dst = *src;
 }
 
-// MUST ONLY DEFAULT FOR STRUCTS WITH NO POINTERS IN THEM
+// MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
 void IPCCopyOut(T* dst, const T* src, size_t count)
 {
