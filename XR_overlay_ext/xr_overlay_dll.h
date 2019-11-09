@@ -29,6 +29,11 @@
 #define XR_OVERLAY_EXT_API __declspec(dllimport)
 #endif
 
+enum {
+    KEYED_MUTEX_IPC_REMOTE = 0,
+    KEYED_MUTEX_IPC_HOST = 0, // 1, XXX test
+};
+
 typedef struct XrSessionCreateInfoOverlayEXT
 {
     XrStructureType             type;
@@ -39,6 +44,7 @@ typedef struct XrSessionCreateInfoOverlayEXT
 
 struct IPCXrHandshake {
     XrInstance *instance;
+    LUID *adapterLUID;
 };
 
 struct IPCXrCreateSession {
@@ -66,34 +72,41 @@ struct IPCXrCreateSwapchain {
     XrSwapchain*                                swapchain;
     int32_t*                                    swapchainCount;    
 };
+
 struct IPCXrWaitFrame {
     XrSession                                   session;
     const XrFrameWaitInfo*                      frameWaitInfo;
     XrFrameState*                               frameState;
 };
+
 struct IPCXrBeginFrame {
     XrSession                                   session;
     const XrFrameBeginInfo*                     frameBeginInfo;
 };
+
 struct IPCXrEndFrame {
     XrSession                                   session;
     const XrFrameEndInfo*                       frameEndInfo;
 };
+
 struct IPCXrAcquireSwapchainImage {
     XrSwapchain                                 swapchain;
     const XrSwapchainImageAcquireInfo*          acquireInfo;
     uint32_t*                                   index;
 };
+
 struct IPCXrWaitSwapchainImage {
     XrSwapchain                                 swapchain;
     const XrSwapchainImageWaitInfo*             waitInfo;
     HANDLE                                      sourceImage;
 };
+
 struct IPCXrReleaseSwapchainImage {
     XrSwapchain                                 swapchain;
     const XrSwapchainImageReleaseInfo*          releaseInfo;
     HANDLE                                      sourceImage;
 };
+
 struct IPCXrDestroySession {
     XrSession                                   session;
 };

@@ -17,6 +17,7 @@
 #include <openxr/openxr_platform.h>
 
 #include <dxgi1_2.h>
+#include <d3d11_1.h>
 
 extern "C" {
 	extern int Image2Width;
@@ -64,10 +65,9 @@ static void CheckResultWithLastError(bool success, const char* what, const char 
 static void CheckResult(HRESULT result, const char* what, const char *file, int line)
 {
     if(result != S_OK) {
-        DWORD lastError = GetLastError();
         LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
         OutputDebugStringA(str.data());
         DebugBreak();
         LocalFree(messageBuf);
@@ -136,8 +136,6 @@ std::map<XrSession, LocalSessionPtr> gLocalSessionMap;
 struct LocalSwapchain
 {
     XrSwapchain             swapchain;
-    size_t                  swapchainTextureCount;
-    int                     nextSwapchain; 
     std::vector<ID3D11Texture2D*> swapchainTextures;
     std::vector<HANDLE>          swapchainHandles;
     std::vector<IDXGIKeyedMutex*>          swapchainKeyedMutexes;
@@ -146,9 +144,9 @@ struct LocalSwapchain
 
     LocalSwapchain(XrSwapchain sc, size_t count, ID3D11Device* d3d11, const XrSwapchainCreateInfo* createInfo) :
         swapchain(sc),
-        nextSwapchain(0),
         swapchainTextures(count),
         swapchainHandles(count),
+		swapchainKeyedMutexes(count),
         waited(false)
     {
         for(int i = 0; i < count; i++) {
@@ -156,18 +154,46 @@ struct LocalSwapchain
             desc.Width = createInfo->width;
             desc.Height = createInfo->height;
             desc.MipLevels = desc.ArraySize = 1;
-            desc.Format = static_cast<DXGI_FORMAT>(createInfo->format);
+            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // static_cast<DXGI_FORMAT>(createInfo->format);
             desc.SampleDesc.Count = 1;
-            desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
+            desc.SampleDesc.Quality = 0; // D3D11_STANDARD_MULTISAMPLE_PATTERN;
             desc.Usage = D3D11_USAGE_DEFAULT;
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-            desc.CPUAccessFlags = 0;
+            desc.CPUAccessFlags = 0; // D3D11_CPU_ACCESS_WRITE;
+#ifdef USE_NTHANDLE
             desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+#else
+            desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+#endif
 
             CHECK(d3d11->CreateTexture2D(&desc, NULL, &swapchainTextures[i]));
-            IDXGIResource1* pDXGIResource = NULL;
-            CHECK(swapchainTextures[i]->QueryInterface(__uuidof(IDXGIResource1), (LPVOID*) &pDXGIResource));
-            CHECK(pDXGIResource->CreateSharedHandle(NULL, DXGI_SHARED_RESOURCE_READ, NULL, &swapchainHandles[i]));
+            {
+                IDXGIResource1* sharedResource = NULL;
+                CHECK(swapchainTextures[i]->QueryInterface(__uuidof(IDXGIResource1), (LPVOID*) &sharedResource));
+#ifdef USE_NTHANDLE
+                CHECK(sharedResource->CreateSharedHandle(NULL,
+                    DXGI_SHARED_RESOURCE_READ, // GENERIC_ALL | DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+                    NULL, &swapchainHandles[i]));
+#else
+                CHECK(sharedResource->GetSharedHandle(&swapchainHandles[i]));
+#endif
+                // CHECK(sharedResource->Release());
+            }
+
+#if 0
+            {
+                ID3D11Texture2D *sharedResource1;
+                ID3D11Device1 *device1;
+                CHECK(d3d11->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
+#ifdef USE_NTHANDLE
+                CHECK(device1->OpenSharedResource1(swapchainHandles[i], __uuidof(ID3D11Texture2D), (LPVOID*) &sharedResource1));
+#else
+                CHECK(device1->OpenSharedResource(swapchainHandles[i], __uuidof(ID3D11Texture2D), (LPVOID*) &sharedResource1));
+#endif
+                CHECK(device1->Release());
+            }
+#endif
+
             CHECK(swapchainTextures[i]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&swapchainKeyedMutexes[i]));
         }
     }
@@ -268,9 +294,10 @@ template <>
 XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const XrBaseInStructure* srcbase)
 {
     XrBaseInStructure *dstbase = nullptr;
-    bool skipped = false;
+    bool skipped;
 
     do {
+        skipped = false;
 
         if(!srcbase) {
             return nullptr;
@@ -297,6 +324,14 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
             case XR_TYPE_FRAME_BEGIN_INFO: {
                 auto src = reinterpret_cast<const XrFrameBeginInfo*>(srcbase);
                 auto dst = new(ipcbuf) XrFrameBeginInfo;
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                *dst = *src;
+                break;
+            }
+
+            case XR_TYPE_COMPOSITION_LAYER_QUAD: {
+                auto src = reinterpret_cast<const XrCompositionLayerQuad*>(srcbase);
+                auto dst = new(ipcbuf) XrCompositionLayerQuad;
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
                 *dst = *src;
                 break;
@@ -632,6 +667,8 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
     // TODO don't bother copying instance in here because out only
     dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
+    dst->adapterLUID = IPCSerializeNoCopy(ipcbuf, header, src->adapterLUID);
+    header->addOffsetToPointer(ipcbuf.base, &dst->adapterLUID);
 
     return dst;
 }
@@ -640,23 +677,20 @@ template <>
 void IPCCopyOut(IPCXrHandshake* dst, const IPCXrHandshake* src)
 {
     IPCCopyOut(dst->instance, src->instance);
+    IPCCopyOut(dst->adapterLUID, src->adapterLUID);
 }
 
 XrResult ipcxrHandshake(
-    XrInstance *instance)
+    XrInstance *instance,
+    LUID *luid)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake args {instance};
+    IPCXrHandshake args {instance, luid};
     IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
-#if 0
-    printf("buf before Remote makePointersRelative: ");
-    for(int i = 0; i < 32; i++)
-        printf("%02X ", ((unsigned char*)argsSerialized)[i]);
-    puts("");
-#endif
     header->makePointersRelative(ipcbuf.base);
 
     IPCFinishGuestRequest();
@@ -666,6 +700,7 @@ XrResult ipcxrHandshake(
 
     IPCCopyOut(&args, argsSerialized);
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -674,6 +709,7 @@ XrResult ipcxrCreateSession(
     const XrSessionCreateInfo* createInfo,
     XrSession* session)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
 
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
     const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
@@ -709,6 +745,7 @@ XrResult ipcxrCreateSession(
         gLocalSessionMap[*session] = LocalSessionPtr(new LocalSession(*session, d3dbinding->device));
     }
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -717,6 +754,7 @@ XrResult ipcxrCreateReferenceSpace(
     const XrReferenceSpaceCreateInfo*           createInfo,
     XrSpace*                                    space)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_REFERENCE_SPACE};
 
@@ -732,6 +770,7 @@ XrResult ipcxrCreateReferenceSpace(
 
     IPCCopyOut(&args, argsSerialized);
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -741,6 +780,7 @@ XrResult ipcxrEnumerateSwapchainFormats(
     uint32_t*                                   formatCountOutput,
     int64_t*                                    formats)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS};
 
@@ -757,6 +797,7 @@ XrResult ipcxrEnumerateSwapchainFormats(
 
     // TODO intersect with {RGB,RGBA,BGRA,BGR}8
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -785,6 +826,7 @@ XrResult ipcxrCreateSwapchain(
     const XrSwapchainCreateInfo*                createInfo,
     XrSwapchain*                                swapchain)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     if(createInfo->sampleCount != 1) {
         return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
     }
@@ -823,6 +865,7 @@ XrResult ipcxrCreateSwapchain(
         gLocalSwapchainMap[*swapchain] = LocalSwapchainPtr(new LocalSwapchain(*swapchain, swapchainCount, localSession->d3d11, createInfo));
     }
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -830,6 +873,7 @@ XrResult ipcxrBeginFrame(
     XrSession                                   session,
     const XrFrameBeginInfo*                     frameBeginInfo)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_BEGIN_FRAME};
 
@@ -844,6 +888,7 @@ XrResult ipcxrBeginFrame(
 
     // IPCCopyOut(&args, argsSerialized);
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -852,6 +897,7 @@ XrResult ipcxrWaitFrame(
     const XrFrameWaitInfo*                      frameWaitInfo,
     XrFrameState*                               frameState)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_WAIT_FRAME};
 
@@ -866,6 +912,7 @@ XrResult ipcxrWaitFrame(
 
     IPCCopyOut(&args, argsSerialized);
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -873,6 +920,7 @@ XrResult ipcxrEndFrame(
     XrSession                                  session,
     const XrFrameEndInfo*                      frameEndInfo)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_END_FRAME};
 
@@ -887,6 +935,7 @@ XrResult ipcxrEndFrame(
 
     // IPCCopyOut(&args, argsSerialized);
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -895,6 +944,7 @@ XrResult ipcxrAcquireSwapchainImage(
     const XrSwapchainImageAcquireInfo*          acquireInfo,
     uint32_t*                                   index)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE};
 
@@ -911,6 +961,8 @@ XrResult ipcxrAcquireSwapchainImage(
 
     gLocalSwapchainMap[swapchain]->acquired.push_back(*index);
 
+    OutputDebugStringA(fmt("acquired %u\n", *index).c_str());
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -918,6 +970,7 @@ XrResult ipcxrWaitSwapchainImage(
     XrSwapchain                                 swapchain,
     const XrSwapchainImageWaitInfo*             waitInfo)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     auto& localSwapchain = gLocalSwapchainMap[swapchain];
     if(localSwapchain->waited) {
         return XR_ERROR_CALL_ORDER_INVALID;
@@ -941,8 +994,10 @@ XrResult ipcxrWaitSwapchainImage(
     // IPCCopyOut(&args, argsSerialized);
 
     localSwapchain->waited = true;
-    localSwapchain->swapchainKeyedMutexes[wasWaited]->AcquireSync(0, INFINITE);
+    OutputDebugStringA(fmt("%ld (%d) AcquireSync% to REMOTE\n", localSwapchain->swapchainHandles[wasWaited], wasWaited).c_str());
+    // XXX test CHECK(localSwapchain->swapchainKeyedMutexes[wasWaited]->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -950,6 +1005,7 @@ XrResult ipcxrReleaseSwapchainImage(
     XrSwapchain                                 swapchain,
     const XrSwapchainImageReleaseInfo*             waitInfo)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     if(!gLocalSwapchainMap[swapchain]->waited)
         return XR_ERROR_CALL_ORDER_INVALID;
 
@@ -957,9 +1013,15 @@ XrResult ipcxrReleaseSwapchainImage(
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_RELEASE_SWAPCHAIN_IMAGE};
 
     uint32_t beingReleased = gLocalSwapchainMap[swapchain]->acquired[0];
-	auto& localSwapchain = gLocalSwapchainMap[swapchain];
-	localSwapchain->acquired.erase(gLocalSwapchainMap[swapchain]->acquired.begin());
-    localSwapchain->swapchainKeyedMutexes[beingReleased]->ReleaseSync(1);
+    OutputDebugStringA(fmt("releasing %d\n", beingReleased).c_str());
+
+    auto& localSwapchain = gLocalSwapchainMap[swapchain];
+
+    localSwapchain->acquired.erase(gLocalSwapchainMap[swapchain]->acquired.begin());
+
+    OutputDebugStringA(fmt("%ld (%d) ReleaseSync to HOST\n", localSwapchain->swapchainHandles[beingReleased], beingReleased).c_str());
+    // XXX test CHECK(localSwapchain->swapchainKeyedMutexes[beingReleased]->ReleaseSync(KEYED_MUTEX_IPC_HOST));
+
     HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[beingReleased];
     IPCXrReleaseSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
 
@@ -975,6 +1037,7 @@ XrResult ipcxrReleaseSwapchainImage(
 
     gLocalSwapchainMap[swapchain]->waited = false;
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -984,10 +1047,12 @@ XrResult ipcxrEnumerateSwapchainImages(
         uint32_t* imageCountOutput,
         XrSwapchainImageBaseHeader* images)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     auto& localSwapchain = gLocalSwapchainMap[swapchain];
 
     if(imageCapacityInput == 0) {
         *imageCountOutput = (uint32_t)localSwapchain->swapchainTextures.size();
+        OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
         return XR_SUCCESS;
     }
 
@@ -1005,12 +1070,14 @@ XrResult ipcxrEnumerateSwapchainImages(
 
     *imageCountOutput = toWrite;
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return XR_SUCCESS;
 }
 
 XrResult ipcxrDestroySession(
     XrSession                                 session)
 {
+    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_DESTROY_SESSION};
 
@@ -1028,6 +1095,7 @@ XrResult ipcxrDestroySession(
         gLocalSessionMap.erase(session);
     }
 
+    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -1042,38 +1110,38 @@ int main( void )
     // printf("Child process read from shared memory: %S\n", cBuf);
 
     XrInstance instance;
-    CHECK_XR(ipcxrHandshake(&instance));
+    LUID adapterLUID;
+    CHECK_XR(ipcxrHandshake(&instance, &adapterLUID));
+    printf("LUID = %08X%08X\n", adapterLUID.HighPart, adapterLUID.LowPart);
+
+    IDXGIFactory1 * pFactory;
+    CHECK(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)(&pFactory)));
+
+    UINT i = 0; 
+    IDXGIAdapter * pAdapter = NULL; 
+    bool found = false;
+    while(!found && (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)) { 
+        DXGI_ADAPTER_DESC desc;
+        CHECK(pAdapter->GetDesc(&desc));
+        printf("%d : %ls desc.LUID = %08X%08X\n", i, desc.Description, desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
+        if((desc.AdapterLuid.LowPart == adapterLUID.LowPart) && (desc.AdapterLuid.HighPart == adapterLUID.HighPart)) {
+            found = true;
+        }
+        ++i; 
+    } 
+    if(!found)
+        abort();
 
     ID3D11Device* d3d11Device;
-    CHECK(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0,
-        D3D11_SDK_VERSION, &d3d11Device, NULL, NULL));
-
-    ID3D11DeviceContext* d3dContext;
-	d3d11Device->GetImmediateContext(&d3dContext);
-
-    ID3D11Texture2D* sourceImages[2];
-    for(int i = 0; i < 2; i++) {
-        D3D11_TEXTURE2D_DESC desc;
-        desc.Width = 512;
-        desc.Height = 512;
-        desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
-        desc.Usage = D3D11_USAGE_STAGING;
-        desc.BindFlags = 0;
-        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-        desc.MiscFlags = 0;
-
-        CHECK(d3d11Device->CreateTexture2D(&desc, NULL, &sourceImages[i]));
-
-        D3D11_MAPPED_SUBRESOURCE mapped;
-        CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
-        if(i == 0)
-            memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
-        else
-            memcpy(mapped.pData, Image1Bytes, 512 * 512 * 4);
-        d3dContext->Unmap(sourceImages[i], 0);
+    D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1};
+    D3D_FEATURE_LEVEL featureLevel;
+    CHECK(D3D11CreateDevice(pAdapter, D3D_DRIVER_TYPE_UNKNOWN, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG,
+		levels, 1,
+        D3D11_SDK_VERSION, &d3d11Device, &featureLevel, NULL));
+    if (featureLevel != D3D_FEATURE_LEVEL_11_1)
+    {
+        OutputDebugStringA("Direct3D Feature Level 11.1 not created\n");
+        abort();
     }
 
     XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
@@ -1142,6 +1210,34 @@ int main( void )
     }
     OutputDebugStringA("**OVERLAY** success in thread creating swapchain\n");
 
+    ID3D11DeviceContext* d3dContext;
+    d3d11Device->GetImmediateContext(&d3dContext);
+
+    ID3D11Texture2D* sourceImages[2];
+    for(int i = 0; i < 2; i++) {
+        D3D11_TEXTURE2D_DESC desc;
+        desc.Width = 512;
+        desc.Height = 512;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        desc.MiscFlags = 0;
+
+        CHECK(d3d11Device->CreateTexture2D(&desc, NULL, &sourceImages[i]));
+
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
+        if(i == 0)
+            memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
+        else
+            memcpy(mapped.pData, Image1Bytes, 512 * 512 * 4);
+        d3dContext->Unmap(sourceImages[i], 0);
+    }
+
     // Spawn a thread to wait for a keypress
     static bool quit = false;
     auto exitPollingThread = std::thread{[] {
@@ -1204,6 +1300,7 @@ int main( void )
         frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
         frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; // XXX ignored
         ipcxrEndFrame(session, &frameEndInfo);
+        printf("Frame\n");
     }
 
     CHECK_XR(ipcxrDestroySession(session));

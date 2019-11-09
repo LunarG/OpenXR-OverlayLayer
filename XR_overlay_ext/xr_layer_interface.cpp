@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <set>
 
 #include <cassert>
 #include <cstring>
@@ -35,40 +37,12 @@ XrSession gOverlaySession;
 bool gExitOverlay = false;
 bool gSerializeEverything = true;
 
-const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
-
 enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 
 XrFrameState gSavedWaitFrameState;
 
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
-
-namespace Math {
-namespace Pose {
-XrPosef Identity() {
-    XrPosef t{};
-    t.orientation.w = 1;
-    return t;
-}
-
-XrPosef Translation(const XrVector3f& translation) {
-    XrPosef t = Identity();
-    t.position = translation;
-    return t;
-}
-
-XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
-    XrPosef t = Identity();
-    t.orientation.x = 0.f;
-    t.orientation.y = std::sin(radians * 0.5f);
-    t.orientation.z = 0.f;
-    t.orientation.w = std::cos(radians * 0.5f);
-    t.position = translation;
-    return t;
-}
-}  // namespace Pose
-}  // namespace Math
 
 static XrGeneratedDispatchTable *downchain = nullptr;
 
@@ -108,10 +82,9 @@ static void CheckResultWithLastError(bool success, const char* what, const char 
 static void CheckResult(HRESULT result, const char* what, const char *file, int line)
 {
     if(result != S_OK) {
-        DWORD lastError = GetLastError();
         LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
         OutputDebugStringA(str.data());
         DebugBreak();
         LocalFree(messageBuf);
@@ -187,12 +160,28 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
+struct SwapchainCachedData
+{
+    XrSwapchain swapchain;
+    std::vector<ID3D11Texture2D*> swapchainImages;
+    std::set<HANDLE> remoteImagesAcquired;
+    std::vector<uint32_t>   acquired;
+
+    SwapchainCachedData(XrSwapchain swapchain_, const std::vector<ID3D11Texture2D*>& swapchainImages_) :
+        swapchain(swapchain_),
+        swapchainImages(swapchainImages_)
+    {}
+
+};
+
+typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
+std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
 
 DWORD WINAPI ThreadBody(LPVOID)
 {
     void *shmem = IPCGetSharedMemory();
 
-    bool continueIPC = true;
+    bool exitIPC = false;
     do {
         IPCWaitForGuestRequest(); // XXX TODO check response
         OutputDebugStringA("**OVERLAY** success in waiting for guest request\n");
@@ -201,38 +190,184 @@ DWORD WINAPI ThreadBody(LPVOID)
         IPCXrHeader *hdr;
         hdr = ipcbuf.getAndAdvance<IPCXrHeader>();
 
+        OutputDebugStringA(fmt("RPC for procedure %d\n", hdr->requestType).c_str());
+
         hdr->makePointersAbsolute(ipcbuf.base);
 
         switch(hdr->requestType) {
 
             case IPC_HANDSHAKE: {
                 // Establish IPC parameters and make initial handshake
-                IPCXrHandshake *args = ipcbuf.getAndAdvance<IPCXrHandshake>();
+                auto args = ipcbuf.getAndAdvance<IPCXrHandshake>();
+
+                // Wait on main session
+                DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, 10000);
+                if(waitresult == WAIT_TIMEOUT) {
+                    OutputDebugStringA("**OVERLAY** overlay create session timeout\n");
+                    DebugBreak();
+                }
+
                 hdr->result = XR_SUCCESS;
+
                 *(args->instance) = gSavedInstance;
+
+                {
+                    IDXGIDevice * dxgiDevice;
+                    CHECK(gSavedD3DDevice->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice));
+
+                    IDXGIAdapter *adapter;
+                    CHECK(dxgiDevice->GetAdapter(&adapter));
+
+                    DXGI_ADAPTER_DESC desc;
+                    CHECK(adapter->GetDesc(&desc));
+                    printf("%ls desc.LUID = %08X%08X\n", desc.Description, desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
+
+                    *(args->adapterLUID) = desc.AdapterLuid;
+
+					// CHECK(adapter->Release());
+
+					// CHECK(dxgiDevice->Release());
+                }
+
                 break;
             }
 
             case IPC_XR_CREATE_SESSION: {
-                IPCXrCreateSession *args = ipcbuf.getAndAdvance<IPCXrCreateSession>();
+                auto args = ipcbuf.getAndAdvance<IPCXrCreateSession>();
                 hdr->result = Overlay_xrCreateSession(args->instance, args->createInfo, args->session);
                 break;
             }
 
             case IPC_XR_CREATE_REFERENCE_SPACE: {
-                IPCXrCreateReferenceSpace *args = ipcbuf.getAndAdvance<IPCXrCreateReferenceSpace>();
+                auto args = ipcbuf.getAndAdvance<IPCXrCreateReferenceSpace>();
                 hdr->result = Overlay_xrCreateReferenceSpace(args->session, args->createInfo, args->space);
                 break;
             }
 
             case IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS: { 
-                IPCXrEnumerateSwapchainFormats *args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
+                auto args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
                 hdr->result = Overlay_xrEnumerateSwapchainFormats(args->session, args->formatCapacityInput, args->formatCountOutput, args->formats);
                 break;
             }
 
+            case IPC_XR_CREATE_SWAPCHAIN: {
+                auto args = ipcbuf.getAndAdvance<IPCXrCreateSwapchain>();
+                hdr->result = Overlay_xrCreateSwapchain(args->session, args->createInfo, args->swapchain);
+                if(hdr->result == XR_SUCCESS) {
+                    uint32_t count;
+                    CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, 0, &count, nullptr));
+                    std::vector<XrSwapchainImageD3D11KHR> swapchainImages(count);
+                    std::vector<ID3D11Texture2D*> swapchainTextures(count);
+                    for(uint32_t i = 0; i < count; i++) {
+                        swapchainImages[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+                        swapchainImages[i].next = nullptr;
+                    }
+                    CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages.data())));
+
+                    for(uint32_t i = 0; i < count; i++) {
+                        swapchainTextures[i] = swapchainImages[i].texture;
+                    }
+                  
+                    gSwapchainMap[*args->swapchain] = SwapchainCachedDataPtr(new SwapchainCachedData(*args->swapchain, swapchainTextures));
+                    *args->swapchainCount = count;
+                }
+                break;
+            }
+
+            case IPC_XR_BEGIN_FRAME: {
+                auto args = ipcbuf.getAndAdvance<IPCXrBeginFrame>();
+                hdr->result = Overlay_xrBeginFrame(args->session, args->frameBeginInfo);
+                break;
+            }
+
+            case IPC_XR_WAIT_FRAME: {
+                auto args = ipcbuf.getAndAdvance<IPCXrWaitFrame>();
+                hdr->result = Overlay_xrWaitFrame(args->session, args->frameWaitInfo, args->frameState);
+                break;
+            }
+
+            case IPC_XR_END_FRAME: {
+                auto args = ipcbuf.getAndAdvance<IPCXrEndFrame>();
+                hdr->result = Overlay_xrEndFrame(args->session, args->frameEndInfo);
+                break;
+            }
+
+            case IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE: {
+                auto args = ipcbuf.getAndAdvance<IPCXrAcquireSwapchainImage>();
+                hdr->result = downchain->AcquireSwapchainImage(args->swapchain, args->acquireInfo, args->index);
+                if(hdr->result == XR_SUCCESS) {
+                    auto& cache = gSwapchainMap[args->swapchain];
+                    cache->acquired.push_back(*args->index);
+                }
+                break;
+            }
+
+            case IPC_XR_WAIT_SWAPCHAIN_IMAGE: {
+                auto args = ipcbuf.getAndAdvance<IPCXrWaitSwapchainImage>();
+                hdr->result = downchain->WaitSwapchainImage(args->swapchain, args->waitInfo);
+                auto& cache = gSwapchainMap[args->swapchain];
+                if(cache->remoteImagesAcquired.find(args->sourceImage) != cache->remoteImagesAcquired.end()) {
+                    IDXGIKeyedMutex* keyedMutex;
+                    {
+                        ID3D11Resource *sharedResource;
+                        {
+                            ID3D11Device1 *device1;
+                            CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
+#ifdef USE_NTHANDLE
+                            CHECK(device1->OpenSharedResource1(args->sourceImage, __uuidof(ID3D11Resource), (LPVOID*) &sharedResource));
+#else
+                            CHECK(device1->OpenSharedResource(args->sourceImage, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedResource));
+#endif
+                           // CHECK(device1->Release());
+                        }
+                        CHECK(sharedResource->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+                    }
+                    OutputDebugStringA(fmt("%ld ReleaseSync to REMOTE\n", args->sourceImage).c_str());
+                    cache->remoteImagesAcquired.erase(args->sourceImage);
+                    // XXX test CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+                    // CHECK(keyedMutex->Release());
+                }
+                break;
+            }
+
+            case IPC_XR_RELEASE_SWAPCHAIN_IMAGE: {
+                auto args = ipcbuf.getAndAdvance<IPCXrReleaseSwapchainImage>();
+                auto& cache = gSwapchainMap[args->swapchain];
+
+                ID3D11Texture2D *sharedResource;
+                {
+                    ID3D11Device1 *device1;
+                    CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
+#ifdef USE_NTHANDLE
+                    CHECK(device1->OpenSharedResource1(args->sourceImage, __uuidof(ID3D11Texture2D), (LPVOID*)&sharedResource));
+#else
+                    CHECK(device1->OpenSharedResource(args->sourceImage, __uuidof(ID3D11Texture2D), (LPVOID*)&sharedResource));
+#endif
+                    // CHECK(device1->Release());
+                }
+                {
+                    IDXGIKeyedMutex* keyedMutex;
+                    CHECK(sharedResource->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+                    OutputDebugStringA(fmt("%ld AcquireSync to HOST\n", args->sourceImage).c_str());
+                    // XXX test CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
+                    // CHECK(keyedMutex->Release());
+                }
+                cache->remoteImagesAcquired.insert(args->sourceImage);
+                int which = cache->acquired[0];
+                cache->acquired.erase(cache->acquired.begin());
+
+                ID3D11DeviceContext* d3dContext;
+                gSavedD3DDevice->GetImmediateContext(&d3dContext);
+                d3dContext->CopyResource(cache->swapchainImages[which], sharedResource);
+                hdr->result = downchain->ReleaseSwapchainImage(args->swapchain, args->releaseInfo);
+                break;
+            }
+
             case IPC_XR_DESTROY_SESSION: { 
-                continueIPC = false;
+                auto args = ipcbuf.getAndAdvance<IPCXrDestroySession>();
+                hdr->result = Overlay_xrDestroySession(args->session);
+                exitIPC = true;
+                break;
             }
 
             default:
@@ -241,10 +376,12 @@ DWORD WINAPI ThreadBody(LPVOID)
                 break;
         }
 
+        OutputDebugStringA(fmt("Completing procedure %d\n", hdr->requestType).c_str());
+
         hdr->makePointersRelative(ipcbuf.base);
         IPCFinishHostResponse();
 
-    } while(continueIPC);
+    } while(!exitIPC);
     OutputDebugStringA("**OVERLAY** exited IPC loop\n");
 
     // gOverlaySession was saved off when we proxied the IPC call to CreateSession
@@ -408,22 +545,16 @@ XrResult Overlay_xrCreateSession(
 
         gSavedMainSession = *session;
         gSavedD3DDevice = d3dbinding->device;
-
         ID3D11Multithread* d3dMultithread;
         CHECK(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
         d3dMultithread->SetMultithreadProtected(TRUE);
+        d3dMultithread->Release();
 
         // Let overlay session continue
         ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);
 		 
     } else {
 
-        // Wait on main session
-        DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, 10000);
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA("**OVERLAY** overlay create session timeout\n");
-            DebugBreak();
-        }
         // TODO should store any kind of failure in main XrCreateSession and then fall through here
         *session = kOverlayFakeSession;
         gOverlaySession = *session; // XXX as loop is transferred to IPC
