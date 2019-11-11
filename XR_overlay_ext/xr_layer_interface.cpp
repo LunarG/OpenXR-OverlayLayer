@@ -18,34 +18,6 @@
 
 #include <d3d11_4.h>
 
-const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
-DWORD gOverlayWorkerThreadId;
-HANDLE gOverlayWorkerThread;
-LPCSTR kOverlayCreateSessionSemaName = "XR_EXT_overlay_overlay_create_session_sema";
-HANDLE gOverlayCreateSessionSema;
-LPCSTR kOverlayWaitFrameSemaName = "XR_EXT_overlay_overlay_wait_frame_sema";
-HANDLE gOverlayWaitFrameSema;
-LPCSTR kMainDestroySessionSemaName = "XR_EXT_overlay_main_destroy_session_sema";
-HANDLE gMainDestroySessionSema;
-
-ID3D11Device *gSavedD3DDevice;
-XrInstance gSavedInstance;
-unsigned int overlaySessionStandin;
-XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
-XrSession gSavedMainSession;
-XrSession gOverlaySession;
-bool gExitOverlay = false;
-bool gSerializeEverything = true;
-
-enum { MAX_OVERLAY_LAYER_COUNT = 2 };
-
-XrFrameState gSavedWaitFrameState;
-
-HANDLE gOverlayCallMutex = NULL;      // handle to sync object
-LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
-
-static XrGeneratedDispatchTable *downchain = nullptr;
-
 static std::string fmt(const char* fmt, ...)
 {
     va_list args;
@@ -106,6 +78,96 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
+const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
+DWORD gOverlayWorkerThreadId;
+HANDLE gOverlayWorkerThread;
+LPCSTR kOverlayCreateSessionSemaName = "XR_EXT_overlay_overlay_create_session_sema";
+bool gMainSessionCreated = false;
+HANDLE gOverlayCreateSessionSema;
+LPCSTR kOverlayWaitFrameSemaName = "XR_EXT_overlay_overlay_wait_frame_sema";
+HANDLE gOverlayWaitFrameSema;
+LPCSTR kMainDestroySessionSemaName = "XR_EXT_overlay_main_destroy_session_sema";
+HANDLE gMainDestroySessionSema;
+
+ID3D11Device *gSavedD3DDevice;
+XrInstance gSavedInstance;
+unsigned int overlaySessionStandin;
+XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
+XrSession gSavedMainSession;
+XrSession gOverlaySession;
+bool gExitOverlay = false;
+bool gExitIPCLoop = false;
+bool gSerializeEverything = true;
+
+enum { MAX_OVERLAY_LAYER_COUNT = 2 };
+
+XrFrameState gSavedWaitFrameState;
+
+struct SwapchainCachedData
+{
+    XrSwapchain swapchain;
+    std::vector<ID3D11Texture2D*> swapchainImages;
+    std::set<HANDLE> remoteImagesAcquired;
+    std::map<HANDLE, ID3D11Texture2D*> handleTextureMap;
+    std::vector<uint32_t>   acquired;
+
+    SwapchainCachedData(XrSwapchain swapchain_, const std::vector<ID3D11Texture2D*>& swapchainImages_) :
+        swapchain(swapchain_),
+        swapchainImages(swapchainImages_)
+    {}
+
+    ~SwapchainCachedData()
+    {
+        for(HANDLE acquired : remoteImagesAcquired) {
+            IDXGIKeyedMutex* keyedMutex;
+            {
+                ID3D11Texture2D *sharedTexture = getSharedTexture(acquired);
+                CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+            }
+            CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+        }
+        remoteImagesAcquired.clear();
+        for(auto shared : handleTextureMap) {
+            shared.second->Release();
+            CloseHandle(shared.first);
+        }
+        handleTextureMap.clear();
+    }
+
+    ID3D11Texture2D* getSharedTexture(HANDLE sourceHandle)
+    {
+        ID3D11Texture2D *sharedTexture;
+
+        ID3D11Device1 *device1;
+        CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
+        auto it = handleTextureMap.find(sourceHandle);
+        if(it == handleTextureMap.end()) {
+#if USE_NTHANDLE
+            CHECK(device1->OpenSharedResource1(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
+#else
+            CHECK(device1->OpenSharedResource(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
+#endif
+            handleTextureMap[sourceHandle] = sharedTexture;
+        } else  {
+            sharedTexture = it->second;
+        }
+
+        return sharedTexture;
+    }
+};
+
+typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
+std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
+
+
+uint32_t gOverlayQuadLayerCount = 0;
+XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
+
+HANDLE gOverlayCallMutex = NULL;      // handle to sync object
+LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
+
+static XrGeneratedDispatchTable *downchain = nullptr;
+
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
 #endif
@@ -160,49 +222,10 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
-struct SwapchainCachedData
-{
-    XrSwapchain swapchain;
-    std::vector<ID3D11Texture2D*> swapchainImages;
-    std::set<HANDLE> remoteImagesAcquired;
-    std::map<HANDLE, ID3D11Texture2D*> handleTextureMap;
-    std::vector<uint32_t>   acquired;
-
-    SwapchainCachedData(XrSwapchain swapchain_, const std::vector<ID3D11Texture2D*>& swapchainImages_) :
-        swapchain(swapchain_),
-        swapchainImages(swapchainImages_)
-    {}
-
-    ID3D11Texture2D* getSharedTexture(HANDLE sourceHandle)
-    {
-        ID3D11Texture2D *sharedTexture;
-
-        ID3D11Device1 *device1;
-        CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
-        auto it = handleTextureMap.find(sourceHandle);
-        if(it == handleTextureMap.end()) {
-#if USE_NTHANDLE
-            CHECK(device1->OpenSharedResource1(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
-#else
-            CHECK(device1->OpenSharedResource(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
-#endif
-            handleTextureMap[sourceHandle] = sharedTexture;
-        } else  {
-            sharedTexture = it->second;
-        }
-
-        return sharedTexture;
-    }
-};
-
-typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
-std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
-
 DWORD WINAPI ThreadBody(LPVOID)
 {
     void *shmem = IPCGetSharedMemory();
 
-    bool exitIPC = false;
     do {
         IPCWaitForGuestRequest(); // XXX TODO check response
 
@@ -219,10 +242,12 @@ DWORD WINAPI ThreadBody(LPVOID)
                 auto args = ipcbuf.getAndAdvance<IPCXrHandshake>();
 
                 // Wait on main session
-                DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, 10000);
-                if(waitresult == WAIT_TIMEOUT) {
-                    OutputDebugStringA("**OVERLAY** create session timeout\n");
-                    DebugBreak();
+                if(!gMainSessionCreated) {
+                    DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, INFINITE);
+                    if(waitresult == WAIT_TIMEOUT) {
+                        OutputDebugStringA("**OVERLAY** create session timeout\n");
+                        DebugBreak();
+                    }
                 }
 
                 hdr->result = XR_SUCCESS;
@@ -269,6 +294,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 auto args = ipcbuf.getAndAdvance<IPCXrCreateSwapchain>();
                 hdr->result = Overlay_xrCreateSwapchain(args->session, args->createInfo, args->swapchain);
                 if(hdr->result == XR_SUCCESS) {
+
                     uint32_t count;
                     CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, 0, &count, nullptr));
 
@@ -360,7 +386,7 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_DESTROY_SESSION: { 
                 auto args = ipcbuf.getAndAdvance<IPCXrDestroySession>();
                 hdr->result = Overlay_xrDestroySession(args->session);
-                exitIPC = true;
+                gSwapchainMap.clear();
                 break;
             }
 
@@ -373,7 +399,7 @@ DWORD WINAPI ThreadBody(LPVOID)
         hdr->makePointersRelative(ipcbuf.base);
         IPCFinishHostResponse();
 
-    } while(!exitIPC);
+    } while(!gExitIPCLoop);
 
     return 0;
 }
@@ -479,6 +505,7 @@ XrResult Overlay_xrDestroySession(
     if(session == kOverlayFakeSession) {
         // overlay session
 
+        gOverlayQuadLayerCount = 0;
         ReleaseSemaphore(gMainDestroySessionSema, 1, nullptr);
         result = XR_SUCCESS;
 
@@ -493,6 +520,7 @@ XrResult Overlay_xrDestroySession(
             DebugBreak();
         }
         result = downchain->DestroySession(session);
+        gExitIPCLoop = true;
     }
 
     return result;
@@ -538,6 +566,7 @@ XrResult Overlay_xrCreateSession(
         d3dMultithread->Release();
 
         // Let overlay session continue
+        gMainSessionCreated = true;
         ReleaseSemaphore(gOverlayCreateSessionSema, 1, nullptr);
 		 
     } else {
@@ -717,9 +746,6 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
     }
     return result;
 }
-
-uint32_t gOverlayQuadLayerCount = 0;
-XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
 
 XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info) 
 { 
