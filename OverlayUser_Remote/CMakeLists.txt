@@ -6,6 +6,8 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release"
     CACHE STRING "Configuration types" FORCE)
 
 add_executable(OverlayUser_Remote
+  image1.c 
+  image2.c
   overlay_remote.cpp
 )
 
@@ -67,6 +69,10 @@ endif ()
 # Link libraries
 set_property(TARGET OverlayUser_Remote
   APPEND PROPERTY LINK_LIBRARIES
+  "$<$<CONFIG:Debug>:d3d11>"
+  "$<$<CONFIG:Release>:d3d11>"
+  "$<$<CONFIG:Debug>:dxgi>"
+  "$<$<CONFIG:Release>:dxgi>"
   "$<$<CONFIG:Debug>:XR_overlay_ext>"
   "$<$<CONFIG:Release>:XR_overlay_ext>"
 )
