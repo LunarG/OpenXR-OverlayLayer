@@ -85,6 +85,8 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
 
 #define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
 
+#define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
+
 #define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
 
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
@@ -133,12 +135,13 @@ typedef std::unique_ptr<LocalSession> LocalSessionPtr;
 
 std::map<XrSession, LocalSessionPtr> gLocalSessionMap;
 
+DWORD gHostProcessId;
+
 struct LocalSwapchain
 {
     XrSwapchain             swapchain;
     std::vector<ID3D11Texture2D*> swapchainTextures;
     std::vector<HANDLE>          swapchainHandles;
-    std::vector<IDXGIKeyedMutex*>          swapchainKeyedMutexes;
     std::vector<uint32_t>   acquired;
     bool                    waited;
 
@@ -146,7 +149,6 @@ struct LocalSwapchain
         swapchain(sc),
         swapchainTextures(count),
         swapchainHandles(count),
-		swapchainKeyedMutexes(count),
         waited(false)
     {
         for(int i = 0; i < count; i++) {
@@ -156,45 +158,50 @@ struct LocalSwapchain
             desc.MipLevels = desc.ArraySize = 1;
             desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // static_cast<DXGI_FORMAT>(createInfo->format);
             desc.SampleDesc.Count = 1;
-            desc.SampleDesc.Quality = 0; // D3D11_STANDARD_MULTISAMPLE_PATTERN;
+            desc.SampleDesc.Quality = 0;
             desc.Usage = D3D11_USAGE_DEFAULT;
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
-            desc.CPUAccessFlags = 0; // D3D11_CPU_ACCESS_WRITE;
-#ifdef USE_NTHANDLE
+            desc.CPUAccessFlags = 0;
+
+#if USE_NTHANDLE
             desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 #else
             desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 #endif
 
             CHECK(d3d11->CreateTexture2D(&desc, NULL, &swapchainTextures[i]));
+
             {
                 IDXGIResource1* sharedResource = NULL;
                 CHECK(swapchainTextures[i]->QueryInterface(__uuidof(IDXGIResource1), (LPVOID*) &sharedResource));
-#ifdef USE_NTHANDLE
+
+                HANDLE thisProcessHandle;
+                CHECK_NOT_NULL(thisProcessHandle = GetCurrentProcess());
+                HANDLE hostProcessHandle;
+                CHECK_NOT_NULL(hostProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, gHostProcessId));
+
+#if USE_NTHANDLE
+
+                HANDLE handle;
+
                 CHECK(sharedResource->CreateSharedHandle(NULL,
                     DXGI_SHARED_RESOURCE_READ, // GENERIC_ALL | DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
-                    NULL, &swapchainHandles[i]));
+                    NULL, &handle));
+                
+                CHECK_LAST_ERROR(DuplicateHandle(thisProcessHandle, handle, hostProcessHandle, &swapchainHandles[i], 0, TRUE, DUPLICATE_SAME_ACCESS));
+
 #else
+
                 CHECK(sharedResource->GetSharedHandle(&swapchainHandles[i]));
+
 #endif
                 // CHECK(sharedResource->Release());
-            }
 
-#if 0
-            {
-                ID3D11Texture2D *sharedResource1;
-                ID3D11Device1 *device1;
-                CHECK(d3d11->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
-#ifdef USE_NTHANDLE
-                CHECK(device1->OpenSharedResource1(swapchainHandles[i], __uuidof(ID3D11Texture2D), (LPVOID*) &sharedResource1));
-#else
-                CHECK(device1->OpenSharedResource(swapchainHandles[i], __uuidof(ID3D11Texture2D), (LPVOID*) &sharedResource1));
-#endif
-                CHECK(device1->Release());
+                IDXGIKeyedMutex* keyedMutex;
+                CHECK(swapchainTextures[i]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+                CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
+                CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
             }
-#endif
-
-            CHECK(swapchainTextures[i]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&swapchainKeyedMutexes[i]));
         }
     }
 
@@ -669,6 +676,8 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
     dst->adapterLUID = IPCSerializeNoCopy(ipcbuf, header, src->adapterLUID);
     header->addOffsetToPointer(ipcbuf.base, &dst->adapterLUID);
+    dst->hostProcessId = IPCSerializeNoCopy(ipcbuf, header, src->hostProcessId);
+    header->addOffsetToPointer(ipcbuf.base, &dst->hostProcessId);
 
     return dst;
 }
@@ -678,17 +687,19 @@ void IPCCopyOut(IPCXrHandshake* dst, const IPCXrHandshake* src)
 {
     IPCCopyOut(dst->instance, src->instance);
     IPCCopyOut(dst->adapterLUID, src->adapterLUID);
+    IPCCopyOut(dst->hostProcessId, src->hostProcessId);
 }
 
 XrResult ipcxrHandshake(
     XrInstance *instance,
-    LUID *luid)
+    LUID *luid,
+    DWORD *hostProcessId)
 {
     OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake args {instance, luid};
+    IPCXrHandshake args {instance, luid, hostProcessId};
     IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
@@ -994,8 +1005,11 @@ XrResult ipcxrWaitSwapchainImage(
     // IPCCopyOut(&args, argsSerialized);
 
     localSwapchain->waited = true;
-    OutputDebugStringA(fmt("%ld (%d) AcquireSync% to REMOTE\n", localSwapchain->swapchainHandles[wasWaited], wasWaited).c_str());
-    // XXX test CHECK(localSwapchain->swapchainKeyedMutexes[wasWaited]->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
+    OutputDebugStringA(fmt("%08X (%d) AcquireSync to REMOTE\n", localSwapchain->swapchainHandles[wasWaited], wasWaited).c_str());
+    IDXGIKeyedMutex* keyedMutex;
+    CHECK(localSwapchain->swapchainTextures[wasWaited]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+    CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
+    // keyedMutex->Release();
 
     OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
@@ -1017,10 +1031,12 @@ XrResult ipcxrReleaseSwapchainImage(
 
     auto& localSwapchain = gLocalSwapchainMap[swapchain];
 
-    localSwapchain->acquired.erase(gLocalSwapchainMap[swapchain]->acquired.begin());
+    localSwapchain->acquired.erase(localSwapchain->acquired.begin());
 
-    OutputDebugStringA(fmt("%ld (%d) ReleaseSync to HOST\n", localSwapchain->swapchainHandles[beingReleased], beingReleased).c_str());
-    // XXX test CHECK(localSwapchain->swapchainKeyedMutexes[beingReleased]->ReleaseSync(KEYED_MUTEX_IPC_HOST));
+    IDXGIKeyedMutex* keyedMutex;
+    CHECK(localSwapchain->swapchainTextures[beingReleased]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+    OutputDebugStringA(fmt("%08X (%d) ReleaseSync to HOST\n", localSwapchain->swapchainHandles[beingReleased], beingReleased).c_str());
+    CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_HOST));
 
     HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[beingReleased];
     IPCXrReleaseSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
@@ -1111,7 +1127,7 @@ int main( void )
 
     XrInstance instance;
     LUID adapterLUID;
-    CHECK_XR(ipcxrHandshake(&instance, &adapterLUID));
+    CHECK_XR(ipcxrHandshake(&instance, &adapterLUID, &gHostProcessId));
     printf("LUID = %08X%08X\n", adapterLUID.HighPart, adapterLUID.LowPart);
 
     IDXGIFactory1 * pFactory;
@@ -1123,7 +1139,7 @@ int main( void )
     while(!found && (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)) { 
         DXGI_ADAPTER_DESC desc;
         CHECK(pAdapter->GetDesc(&desc));
-        printf("%d : %ls desc.LUID = %08X%08X\n", i, desc.Description, desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
+        // printf("%d : %ls desc.LUID = %08X%08X\n", i, desc.Description, desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
         if((desc.AdapterLuid.LowPart == adapterLUID.LowPart) && (desc.AdapterLuid.HighPart == adapterLUID.HighPart)) {
             found = true;
         }
@@ -1135,9 +1151,9 @@ int main( void )
     ID3D11Device* d3d11Device;
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1};
     D3D_FEATURE_LEVEL featureLevel;
-    CHECK(D3D11CreateDevice(pAdapter, D3D_DRIVER_TYPE_UNKNOWN, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG,
-		levels, 1,
-        D3D11_SDK_VERSION, &d3d11Device, &featureLevel, NULL));
+    CHECK(D3D11CreateDevice(pAdapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG, levels,
+        1, D3D11_SDK_VERSION, &d3d11Device, &featureLevel, NULL));
     if (featureLevel != D3D_FEATURE_LEVEL_11_1)
     {
         OutputDebugStringA("Direct3D Feature Level 11.1 not created\n");
@@ -1279,6 +1295,7 @@ int main( void )
             releaseInfo.next = nullptr;
             CHECK_XR(ipcxrReleaseSwapchainImage(sc, &releaseInfo));
         }
+        d3dContext->Flush();
         XrCompositionLayerQuad layers[2];
         XrCompositionLayerBaseHeader* layerPointers[2];
         for(uint32_t eye = 0; eye < 2; eye++) {

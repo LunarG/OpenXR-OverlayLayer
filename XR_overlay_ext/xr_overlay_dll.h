@@ -29,9 +29,12 @@
 #define XR_OVERLAY_EXT_API __declspec(dllimport)
 #endif
 
+// #error BLORK
+#define USE_NTHANDLE 1
+
 enum {
     KEYED_MUTEX_IPC_REMOTE = 0,
-    KEYED_MUTEX_IPC_HOST = 0, // 1, XXX test
+    KEYED_MUTEX_IPC_HOST = 1,
 };
 
 typedef struct XrSessionCreateInfoOverlayEXT
@@ -45,6 +48,7 @@ typedef struct XrSessionCreateInfoOverlayEXT
 struct IPCXrHandshake {
     XrInstance *instance;
     LUID *adapterLUID;
+    DWORD *hostProcessId;
 };
 
 struct IPCXrCreateSession {

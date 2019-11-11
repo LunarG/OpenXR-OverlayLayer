@@ -165,6 +165,7 @@ struct SwapchainCachedData
     XrSwapchain swapchain;
     std::vector<ID3D11Texture2D*> swapchainImages;
     std::set<HANDLE> remoteImagesAcquired;
+    std::map<HANDLE, ID3D11Texture2D*> handleTextureMap;
     std::vector<uint32_t>   acquired;
 
     SwapchainCachedData(XrSwapchain swapchain_, const std::vector<ID3D11Texture2D*>& swapchainImages_) :
@@ -172,6 +173,26 @@ struct SwapchainCachedData
         swapchainImages(swapchainImages_)
     {}
 
+    ID3D11Texture2D* getSharedTexture(HANDLE sourceHandle)
+    {
+        ID3D11Texture2D *sharedTexture;
+
+        ID3D11Device1 *device1;
+        CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
+        auto it = handleTextureMap.find(sourceHandle);
+        if(it == handleTextureMap.end()) {
+#if USE_NTHANDLE
+            CHECK(device1->OpenSharedResource1(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
+#else
+            CHECK(device1->OpenSharedResource(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
+#endif
+            handleTextureMap[sourceHandle] = sharedTexture;
+        } else  {
+            sharedTexture = it->second;
+        }
+
+        return sharedTexture;
+    }
 };
 
 typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
@@ -224,9 +245,11 @@ DWORD WINAPI ThreadBody(LPVOID)
 
                     *(args->adapterLUID) = desc.AdapterLuid;
 
-					// CHECK(adapter->Release());
+                    *(args->hostProcessId) = GetCurrentProcessId();
 
-					// CHECK(dxgiDevice->Release());
+                    // CHECK(adapter->Release());
+
+                    // CHECK(dxgiDevice->Release());
                 }
 
                 break;
@@ -309,22 +332,12 @@ DWORD WINAPI ThreadBody(LPVOID)
                 if(cache->remoteImagesAcquired.find(args->sourceImage) != cache->remoteImagesAcquired.end()) {
                     IDXGIKeyedMutex* keyedMutex;
                     {
-                        ID3D11Resource *sharedResource;
-                        {
-                            ID3D11Device1 *device1;
-                            CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
-#ifdef USE_NTHANDLE
-                            CHECK(device1->OpenSharedResource1(args->sourceImage, __uuidof(ID3D11Resource), (LPVOID*) &sharedResource));
-#else
-                            CHECK(device1->OpenSharedResource(args->sourceImage, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedResource));
-#endif
-                           // CHECK(device1->Release());
-                        }
-                        CHECK(sharedResource->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+                        ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
+                        CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
                     }
-                    OutputDebugStringA(fmt("%ld ReleaseSync to REMOTE\n", args->sourceImage).c_str());
+                    OutputDebugStringA(fmt("%08X ReleaseSync to REMOTE\n", args->sourceImage).c_str());
                     cache->remoteImagesAcquired.erase(args->sourceImage);
-                    // XXX test CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+                    CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
                     // CHECK(keyedMutex->Release());
                 }
                 break;
@@ -334,31 +347,23 @@ DWORD WINAPI ThreadBody(LPVOID)
                 auto args = ipcbuf.getAndAdvance<IPCXrReleaseSwapchainImage>();
                 auto& cache = gSwapchainMap[args->swapchain];
 
-                ID3D11Texture2D *sharedResource;
-                {
-                    ID3D11Device1 *device1;
-                    CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
-#ifdef USE_NTHANDLE
-                    CHECK(device1->OpenSharedResource1(args->sourceImage, __uuidof(ID3D11Texture2D), (LPVOID*)&sharedResource));
-#else
-                    CHECK(device1->OpenSharedResource(args->sourceImage, __uuidof(ID3D11Texture2D), (LPVOID*)&sharedResource));
-#endif
-                    // CHECK(device1->Release());
-                }
+                ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
+
                 {
                     IDXGIKeyedMutex* keyedMutex;
-                    CHECK(sharedResource->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-                    OutputDebugStringA(fmt("%ld AcquireSync to HOST\n", args->sourceImage).c_str());
-                    // XXX test CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
+                    CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+                    OutputDebugStringA(fmt("%08X AcquireSync to HOST\n", args->sourceImage).c_str());
+                    CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
                     // CHECK(keyedMutex->Release());
                 }
+
                 cache->remoteImagesAcquired.insert(args->sourceImage);
                 int which = cache->acquired[0];
                 cache->acquired.erase(cache->acquired.begin());
 
                 ID3D11DeviceContext* d3dContext;
                 gSavedD3DDevice->GetImmediateContext(&d3dContext);
-                d3dContext->CopyResource(cache->swapchainImages[which], sharedResource);
+                d3dContext->CopyResource(cache->swapchainImages[which], sharedTexture);
                 hdr->result = downchain->ReleaseSwapchainImage(args->swapchain, args->releaseInfo);
                 break;
             }
