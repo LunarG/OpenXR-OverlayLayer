@@ -21,19 +21,47 @@
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
 DWORD gOverlayWorkerThreadId;
 HANDLE gOverlayWorkerThread;
-LPCSTR kOverlayCreateSessionSemaName = "XR_EXT_overlay_overlay_create_session_sema";
-HANDLE gOverlayCreateSessionSema;
-LPCSTR kOverlayWaitFrameSemaName = "XR_EXT_overlay_overlay_wait_frame_sema";
-HANDLE gOverlayWaitFrameSema;
-LPCSTR kMainDestroySessionSemaName = "XR_EXT_overlay_main_destroy_session_sema";
-HANDLE gMainDestroySessionSema;
+
+// XXX XXX XXX
+// This is incomplete work to add support for multiple sessions and one
+// overlay session per main session
+// CreateSession should be nearly correct for handling these structures.
+// ThreadBody needs to be moved to a separate layer or removed from this layer, anyway.
+struct MainSession
+{
+    // XrInstance instance;
+    // XrSystemId system;
+    XrSession session;
+    ID3D11Device* d3d11Device;
+};
+
+std::pair<XrInstance, XrSystemId> InstanceSystem;
+std::map<InstanceSystem, MainSession> gSessionsByInstanceSystem;
+
+struct OverlaySessionDescriptor
+{
+    XrInstance instance;
+    XrSystemId system;
+    XrSession mainSession;
+    ID3D11Device* d3d11Device;
+    HANDLE createSessionSema;
+    HANDLE waitFrameSema;
+    HANDLE destroySessionSema;
+    OverlaySessionDescriptor(XrInstance instance_, XrSystemId system_, const MainSession& src) :
+        instance(instance_),
+        system(system_),
+        mainSession(src.session),
+        d3d11Device(src.d3d11Device)
+    {}
+};
+
+typedef std::shared_ptr<OverlaySessionDescriptor> OverlaySessionDescriptorPtr;
+std::map<OverlaySessionDescriptor*, OverlaySessionDescriptorPtr> gOverlaySessionsByPointer;
+std::map<XrSession, OverlaySessionDescriptorPtr> gOverlaySessionsByMainSession;
 
 ID3D11Device *gSavedD3DDevice;
 XrInstance gSavedInstance;
-unsigned int overlaySessionStandin;
-XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
 XrSession gSavedMainSession;
-XrSession gOverlaySession;
 bool gExitOverlay = false;
 bool gSerializeEverything = true;
 
@@ -198,7 +226,9 @@ struct SwapchainCachedData
 typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
 std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
 
-DWORD WINAPI ThreadBody(LPVOID)
+
+
+DWORD WINAPI ThreadBody(LPVOID )
 {
     void *shmem = IPCGetSharedMemory();
 
@@ -476,7 +506,9 @@ XrResult Overlay_xrDestroySession(
 {
     XrResult result;
 
-    if(session == kOverlayFakeSession) {
+    auto overlaySessionIt = gOverlaySessionsByPointer.find(reinterpret_cast<OverlaySessionDescriptor*>(session));
+    if(overlaySessionIt != gOverlaySessionsByPointer.end()) {
+        session is overlay
         // overlay session
 
         ReleaseSemaphore(gMainDestroySessionSema, 1, nullptr);
@@ -505,6 +537,7 @@ XrResult Overlay_xrCreateSession(
 {
     XrResult result;
 
+    // Walk the structure chain and pick out relevant, known extensions
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
     const XrSessionCreateInfoOverlayEXT* cio = nullptr;
     const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
@@ -519,19 +552,18 @@ XrResult Overlay_xrCreateSession(
     }
 
     // TODO handle the case where Main session passes the
-    // overlaycreateinfo but overlaySession = FALSE
+    // overlaycreateinfo but overlaySession = FALSE,
+    // remake chain without InfoOverlayEXT
     if(cio == nullptr) {
 
         // Main session
-
-        // TODO : remake chain without InfoOverlayEXT
 
         result = downchain->CreateSession(instance, createInfo, session);
         if(result != XR_SUCCESS)
             return result;
 
-        gSavedMainSession = *session;
-        gSavedD3DDevice = d3dbinding->device;
+        gSessionsByInstanceSystem[InstanceSystem(instance, createInfo->system)] = {*session, d3dbinding->device};
+
         ID3D11Multithread* d3dMultithread;
         CHECK(gSavedD3DDevice->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&d3dMultithread)));
         d3dMultithread->SetMultithreadProtected(TRUE);
@@ -543,8 +575,25 @@ XrResult Overlay_xrCreateSession(
     } else {
 
         // TODO should store any kind of failure in main XrCreateSession and then fall through here
-        *session = kOverlayFakeSession;
-        gOverlaySession = *session; // XXX as loop is transferred to IPC
+
+        // TODO should be able to make an overlay session separate from
+        // main session that either renders even without main session or
+        // waits in lifecycle for main session
+
+        // XXX for now, fail to make an Overlay session if no Main session has been Created.
+
+        InstanceSystem src {instance, createInfo->system};
+        auto sessionIt = gSessionsByInstanceSystem.find(src);
+        if(sessionIt == gSessionsByInstanceSystem.end()) {
+            return XR_ERROR_SESSION_NOT_READY;
+        }
+
+        auto mainSession = sessionIt->second();
+
+        OverlaySessionDescriptorPtr overlaySession (new OverlaySessionDescriptor(instance, mainSession.session, mainSession.d3d11Device));
+        gOverlaySessionsByPointer[session.get()] = overlaySession;
+
+        *session = reinterpret_cast<XrSession>(session.get());
         result = XR_SUCCESS;
     }
 
