@@ -162,12 +162,7 @@ struct LocalSwapchain
             desc.Usage = D3D11_USAGE_DEFAULT;
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
             desc.CPUAccessFlags = 0;
-
-#if USE_NTHANDLE
             desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
-#else
-            desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
-#endif
 
             CHECK(d3d11->CreateTexture2D(&desc, NULL, &swapchainTextures[i]));
 
@@ -180,8 +175,6 @@ struct LocalSwapchain
                 HANDLE hostProcessHandle;
                 CHECK_NOT_NULL(hostProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, gHostProcessId));
 
-#if USE_NTHANDLE
-
                 HANDLE handle;
 
                 CHECK(sharedResource->CreateSharedHandle(NULL,
@@ -190,17 +183,10 @@ struct LocalSwapchain
                 
                 CHECK_LAST_ERROR(DuplicateHandle(thisProcessHandle, handle, hostProcessHandle, &swapchainHandles[i], 0, TRUE, DUPLICATE_SAME_ACCESS));
 
-#else
-
-                CHECK(sharedResource->GetSharedHandle(&swapchainHandles[i]));
-
-#endif
-                // CHECK(sharedResource->Release());
-
-                IDXGIKeyedMutex* keyedMutex;
-                CHECK(swapchainTextures[i]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-                CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
-                CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+                // IDXGIKeyedMutex* keyedMutex;
+                // CHECK(swapchainTextures[i]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+                // CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
+                // CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
             }
         }
     }
@@ -414,7 +400,7 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
             }
 
             case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
-                // We know what this is but do not send it through.  Skip it.
+                // We know what this is but do not send it through because we process it locally.
                 srcbase = srcbase->next;
                 skipped = true;
                 break;
@@ -695,7 +681,6 @@ XrResult ipcxrHandshake(
     LUID *luid,
     DWORD *hostProcessId)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
@@ -711,7 +696,6 @@ XrResult ipcxrHandshake(
 
     IPCCopyOut(&args, argsSerialized);
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -720,8 +704,6 @@ XrResult ipcxrCreateSession(
     const XrSessionCreateInfo* createInfo,
     XrSession* session)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
-
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
     const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
     while(p != nullptr) {
@@ -732,10 +714,8 @@ XrResult ipcxrCreateSession(
     }
 
     if(!d3dbinding) {
-        OutputDebugStringA("CreateSession called with no D3D11Device\n");
         return XR_ERROR_GRAPHICS_DEVICE_INVALID; // ?
     }
-
 
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_SESSION};
@@ -756,7 +736,6 @@ XrResult ipcxrCreateSession(
         gLocalSessionMap[*session] = LocalSessionPtr(new LocalSession(*session, d3dbinding->device));
     }
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -765,7 +744,6 @@ XrResult ipcxrCreateReferenceSpace(
     const XrReferenceSpaceCreateInfo*           createInfo,
     XrSpace*                                    space)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_REFERENCE_SPACE};
 
@@ -781,7 +759,6 @@ XrResult ipcxrCreateReferenceSpace(
 
     IPCCopyOut(&args, argsSerialized);
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -791,7 +768,6 @@ XrResult ipcxrEnumerateSwapchainFormats(
     uint32_t*                                   formatCountOutput,
     int64_t*                                    formats)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS};
 
@@ -808,7 +784,6 @@ XrResult ipcxrEnumerateSwapchainFormats(
 
     // TODO intersect with {RGB,RGBA,BGRA,BGR}8
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -837,7 +812,6 @@ XrResult ipcxrCreateSwapchain(
     const XrSwapchainCreateInfo*                createInfo,
     XrSwapchain*                                swapchain)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     if(createInfo->sampleCount != 1) {
         return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
     }
@@ -876,7 +850,6 @@ XrResult ipcxrCreateSwapchain(
         gLocalSwapchainMap[*swapchain] = LocalSwapchainPtr(new LocalSwapchain(*swapchain, swapchainCount, localSession->d3d11, createInfo));
     }
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -884,7 +857,6 @@ XrResult ipcxrBeginFrame(
     XrSession                                   session,
     const XrFrameBeginInfo*                     frameBeginInfo)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_BEGIN_FRAME};
 
@@ -899,7 +871,6 @@ XrResult ipcxrBeginFrame(
 
     // IPCCopyOut(&args, argsSerialized);
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -908,7 +879,6 @@ XrResult ipcxrWaitFrame(
     const XrFrameWaitInfo*                      frameWaitInfo,
     XrFrameState*                               frameState)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_WAIT_FRAME};
 
@@ -923,7 +893,6 @@ XrResult ipcxrWaitFrame(
 
     IPCCopyOut(&args, argsSerialized);
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -931,7 +900,6 @@ XrResult ipcxrEndFrame(
     XrSession                                  session,
     const XrFrameEndInfo*                      frameEndInfo)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_END_FRAME};
 
@@ -946,7 +914,6 @@ XrResult ipcxrEndFrame(
 
     // IPCCopyOut(&args, argsSerialized);
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -955,7 +922,6 @@ XrResult ipcxrAcquireSwapchainImage(
     const XrSwapchainImageAcquireInfo*          acquireInfo,
     uint32_t*                                   index)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE};
 
@@ -972,8 +938,6 @@ XrResult ipcxrAcquireSwapchainImage(
 
     gLocalSwapchainMap[swapchain]->acquired.push_back(*index);
 
-    OutputDebugStringA(fmt("acquired %u\n", *index).c_str());
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -981,7 +945,6 @@ XrResult ipcxrWaitSwapchainImage(
     XrSwapchain                                 swapchain,
     const XrSwapchainImageWaitInfo*             waitInfo)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     auto& localSwapchain = gLocalSwapchainMap[swapchain];
     if(localSwapchain->waited) {
         return XR_ERROR_CALL_ORDER_INVALID;
@@ -1005,13 +968,11 @@ XrResult ipcxrWaitSwapchainImage(
     // IPCCopyOut(&args, argsSerialized);
 
     localSwapchain->waited = true;
-    OutputDebugStringA(fmt("%08X (%d) AcquireSync to REMOTE\n", localSwapchain->swapchainHandles[wasWaited], wasWaited).c_str());
     IDXGIKeyedMutex* keyedMutex;
     CHECK(localSwapchain->swapchainTextures[wasWaited]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
     CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
     // keyedMutex->Release();
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -1019,7 +980,6 @@ XrResult ipcxrReleaseSwapchainImage(
     XrSwapchain                                 swapchain,
     const XrSwapchainImageReleaseInfo*             waitInfo)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     if(!gLocalSwapchainMap[swapchain]->waited)
         return XR_ERROR_CALL_ORDER_INVALID;
 
@@ -1027,7 +987,6 @@ XrResult ipcxrReleaseSwapchainImage(
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_RELEASE_SWAPCHAIN_IMAGE};
 
     uint32_t beingReleased = gLocalSwapchainMap[swapchain]->acquired[0];
-    OutputDebugStringA(fmt("releasing %d\n", beingReleased).c_str());
 
     auto& localSwapchain = gLocalSwapchainMap[swapchain];
 
@@ -1035,7 +994,6 @@ XrResult ipcxrReleaseSwapchainImage(
 
     IDXGIKeyedMutex* keyedMutex;
     CHECK(localSwapchain->swapchainTextures[beingReleased]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-    OutputDebugStringA(fmt("%08X (%d) ReleaseSync to HOST\n", localSwapchain->swapchainHandles[beingReleased], beingReleased).c_str());
     CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_HOST));
 
     HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[beingReleased];
@@ -1053,7 +1011,6 @@ XrResult ipcxrReleaseSwapchainImage(
 
     gLocalSwapchainMap[swapchain]->waited = false;
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -1063,12 +1020,10 @@ XrResult ipcxrEnumerateSwapchainImages(
         uint32_t* imageCountOutput,
         XrSwapchainImageBaseHeader* images)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     auto& localSwapchain = gLocalSwapchainMap[swapchain];
 
     if(imageCapacityInput == 0) {
         *imageCountOutput = (uint32_t)localSwapchain->swapchainTextures.size();
-        OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
         return XR_SUCCESS;
     }
 
@@ -1086,14 +1041,12 @@ XrResult ipcxrEnumerateSwapchainImages(
 
     *imageCountOutput = toWrite;
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return XR_SUCCESS;
 }
 
 XrResult ipcxrDestroySession(
     XrSession                                 session)
 {
-    OutputDebugStringA(fmt("enter %s\n", __func__).c_str());
     IPCBuffer ipcbuf = IPCGetBuffer();
     IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_DESTROY_SESSION};
 
@@ -1111,7 +1064,6 @@ XrResult ipcxrDestroySession(
         gLocalSessionMap.erase(session);
     }
 
-    OutputDebugStringA(fmt("exit %s\n", __func__).c_str());
     return header->result;
 }
 
@@ -1224,7 +1176,6 @@ int main( void )
         }
         CHECK_XR(ipcxrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
     }
-    OutputDebugStringA("**OVERLAY** success in thread creating swapchain\n");
 
     ID3D11DeviceContext* d3dContext;
     d3d11Device->GetImmediateContext(&d3dContext);
@@ -1274,7 +1225,6 @@ int main( void )
 
         XrFrameState waitFrameState;
         ipcxrWaitFrame(session, nullptr, &waitFrameState);
-        OutputDebugStringA("**OVERLAY** exited overlay session xrWaitFrame\n");
         ipcxrBeginFrame(session, nullptr);
         for(int eye = 0; eye < 2; eye++) {
             uint32_t index;

@@ -205,13 +205,10 @@ DWORD WINAPI ThreadBody(LPVOID)
     bool exitIPC = false;
     do {
         IPCWaitForGuestRequest(); // XXX TODO check response
-        OutputDebugStringA("**OVERLAY** success in waiting for guest request\n");
 
         IPCBuffer ipcbuf = IPCGetBuffer();
         IPCXrHeader *hdr;
         hdr = ipcbuf.getAndAdvance<IPCXrHeader>();
-
-        OutputDebugStringA(fmt("RPC for procedure %d\n", hdr->requestType).c_str());
 
         hdr->makePointersAbsolute(ipcbuf.base);
 
@@ -224,7 +221,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 // Wait on main session
                 DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, 10000);
                 if(waitresult == WAIT_TIMEOUT) {
-                    OutputDebugStringA("**OVERLAY** overlay create session timeout\n");
+                    OutputDebugStringA("**OVERLAY** create session timeout\n");
                     DebugBreak();
                 }
 
@@ -241,15 +238,10 @@ DWORD WINAPI ThreadBody(LPVOID)
 
                     DXGI_ADAPTER_DESC desc;
                     CHECK(adapter->GetDesc(&desc));
-                    printf("%ls desc.LUID = %08X%08X\n", desc.Description, desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
 
                     *(args->adapterLUID) = desc.AdapterLuid;
 
                     *(args->hostProcessId) = GetCurrentProcessId();
-
-                    // CHECK(adapter->Release());
-
-                    // CHECK(dxgiDevice->Release());
                 }
 
                 break;
@@ -279,6 +271,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 if(hdr->result == XR_SUCCESS) {
                     uint32_t count;
                     CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, 0, &count, nullptr));
+
                     std::vector<XrSwapchainImageD3D11KHR> swapchainImages(count);
                     std::vector<ID3D11Texture2D*> swapchainTextures(count);
                     for(uint32_t i = 0; i < count; i++) {
@@ -335,10 +328,8 @@ DWORD WINAPI ThreadBody(LPVOID)
                         ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
                         CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
                     }
-                    OutputDebugStringA(fmt("%08X ReleaseSync to REMOTE\n", args->sourceImage).c_str());
                     cache->remoteImagesAcquired.erase(args->sourceImage);
                     CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
-                    // CHECK(keyedMutex->Release());
                 }
                 break;
             }
@@ -352,9 +343,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 {
                     IDXGIKeyedMutex* keyedMutex;
                     CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-                    OutputDebugStringA(fmt("%08X AcquireSync to HOST\n", args->sourceImage).c_str());
                     CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
-                    // CHECK(keyedMutex->Release());
                 }
 
                 cache->remoteImagesAcquired.insert(args->sourceImage);
@@ -381,17 +370,11 @@ DWORD WINAPI ThreadBody(LPVOID)
                 break;
         }
 
-        OutputDebugStringA(fmt("Completing procedure %d\n", hdr->requestType).c_str());
-
         hdr->makePointersRelative(ipcbuf.base);
         IPCFinishHostResponse();
 
     } while(!exitIPC);
-    OutputDebugStringA("**OVERLAY** exited IPC loop\n");
 
-    // gOverlaySession was saved off when we proxied the IPC call to CreateSession
-
-    OutputDebugStringA("**OVERLAY** destroyed session, exiting\n");
     return 0;
 }
 
@@ -408,7 +391,7 @@ void CreateOverlaySessionThread()
 
     CHECK_NOT_NULL(gOverlayWorkerThread =
         CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId));
-    OutputDebugStringA("**OVERLAY** success\n");
+    OutputDebugStringA("**OVERLAY** success creating IPC thread\n");
 }
 
 XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance) 
@@ -509,7 +492,6 @@ XrResult Overlay_xrDestroySession(
             OutputDebugStringA("**OVERLAY** main destroy session timeout\n");
             DebugBreak();
         }
-        OutputDebugStringA("**OVERLAY** main destroy session okay\n");
         result = downchain->DestroySession(session);
     }
 
@@ -699,8 +681,6 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
         result = downchain->WaitFrame(session, info, state);
 
         ReleaseMutex(gOverlayCallMutex);
-
-        OutputDebugStringA("**OVERLAY** main session wait frame returned\n");
 
         gSavedWaitFrameState = *state;
         ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
