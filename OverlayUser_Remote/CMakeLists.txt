@@ -9,6 +9,7 @@ add_executable(OverlayUser_Remote
   image1.c 
   image2.c
   overlay_remote.cpp
+  remote_openxr.cpp
 )
 
 set_target_properties(OverlayUser_Remote PROPERTIES FOLDER "Users")
