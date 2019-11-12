@@ -540,6 +540,16 @@ XrResult Overlay_xrCreateSession(
         if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
             cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(p);
         }
+        if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XCB_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WAYLAND_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR)) {
+            return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+        }
         if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
             d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
         }

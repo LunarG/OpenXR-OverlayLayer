@@ -1071,17 +1071,16 @@ const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 
 int main( void )
 {
-    //DebugBreak();
-
-    // WCHAR cBuf[MAX_PATH];
-    // GetSharedMem(cBuf, MAX_PATH);
-    // printf("Child process read from shared memory: %S\n", cBuf);
+    bool sawFirstSuccessfulFrame = false;
 
     XrInstance instance;
     LUID adapterLUID;
     CHECK_XR(ipcxrHandshake(&instance, &adapterLUID, &gHostProcessId));
-    printf("LUID = %08X%08X\n", adapterLUID.HighPart, adapterLUID.LowPart);
+    std::cout << "Remote process handshake succeeded!\n";
 
+    // Give us our best chance of success of sharing our Remote
+    // swapchainImages by creating our D3D device on the same adapter as
+    // the Host application's device
     IDXGIFactory1 * pFactory;
     CHECK(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)(&pFactory)));
 
@@ -1091,7 +1090,6 @@ int main( void )
     while(!found && (pFactory->EnumAdapters(i, &pAdapter) != DXGI_ERROR_NOT_FOUND)) { 
         DXGI_ADAPTER_DESC desc;
         CHECK(pAdapter->GetDesc(&desc));
-        // printf("%d : %ls desc.LUID = %08X%08X\n", i, desc.Description, desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
         if((desc.AdapterLuid.LowPart == adapterLUID.LowPart) && (desc.AdapterLuid.HighPart == adapterLUID.HighPart)) {
             found = true;
         }
@@ -1126,6 +1124,7 @@ int main( void )
 
     XrSession session;
     CHECK_XR(ipcxrCreateSession(instance, &sessionCreateInfo, &session));
+    std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
     XrSpace viewSpace;
     XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
@@ -1149,7 +1148,6 @@ int main( void )
             DebugBreak();
         }
         chosenFormat = *formatFound;
-        printf("%d formats returned, chosen format is %lld\n", count, chosenFormat);
     }
 
     XrSwapchain swapchains[2];
@@ -1205,10 +1203,13 @@ int main( void )
         d3dContext->Unmap(sourceImages[i], 0);
     }
 
+    std::cout << "Created Swapchain and enumerated SwapchainImages and made local\n";
+    std::cout << "    images as texture sources!\n";
+
     // Spawn a thread to wait for a keypress
     static bool quit = false;
     auto exitPollingThread = std::thread{[] {
-        printf("Press any key to shutdown...");
+        std::cout << "Press ENTER to exit...";
         getchar();
         quit = true;
     }};
@@ -1245,7 +1246,9 @@ int main( void )
             releaseInfo.next = nullptr;
             CHECK_XR(ipcxrReleaseSwapchainImage(sc, &releaseInfo));
         }
+
         d3dContext->Flush();
+
         XrCompositionLayerQuad layers[2];
         XrCompositionLayerBaseHeader* layerPointers[2];
         for(uint32_t eye = 0; eye < 2; eye++) {
@@ -1266,12 +1269,15 @@ int main( void )
         frameEndInfo.layerCount = 2;
         frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
         frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; // XXX ignored
-        ipcxrEndFrame(session, &frameEndInfo);
-        printf("Frame\n");
+        CHECK_XR(ipcxrEndFrame(session, &frameEndInfo));
+        
+        if(!sawFirstSuccessfulFrame) {
+            sawFirstSuccessfulFrame = true;
+            std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
+        }
     }
 
     CHECK_XR(ipcxrDestroySession(session));
-
 
     return 0;
 }
