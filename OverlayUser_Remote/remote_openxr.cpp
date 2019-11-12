@@ -144,17 +144,17 @@ struct LocalSwapchain
                     NULL, &handle));
                 
                 CHECK_LAST_ERROR(DuplicateHandle(thisProcessHandle, handle, hostProcessHandle, &swapchainHandles[i], 0, TRUE, DUPLICATE_SAME_ACCESS));
-
-                // IDXGIKeyedMutex* keyedMutex;
-                // CHECK(swapchainTextures[i]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-                // CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
-                // CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+                CHECK_LAST_ERROR(CloseHandle(handle));
             }
         }
     }
 
     ~LocalSwapchain()
     {
+        for(int i = 0; i < swapchainTextures.size(); i++) {
+            swapchainTextures[i]->Release();
+        }
+
         // Need to acquire back from remote side?
     }
 };
@@ -162,6 +162,9 @@ struct LocalSwapchain
 typedef std::unique_ptr<LocalSwapchain> LocalSwapchainPtr;
 
 std::map<XrSwapchain, LocalSwapchainPtr> gLocalSwapchainMap;
+
+
+// Serialization helpers ----------------------------------------------------
 
 // MUST BE DEFAULT ONLY FOR OBJECTS WITH NO POINTERS IN THEM
 template <typename T>
@@ -245,6 +248,8 @@ void IPCCopyOut(T* dst, const T* src, size_t count)
     }
 }
 
+// Serialization of XR structs ----------------------------------------------
+
 template <>
 XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const XrBaseInStructure* srcbase)
 {
@@ -259,6 +264,33 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
         }
 
         switch(srcbase->type) {
+
+            // Should copy only non-pointers instead of "*dst = *src"
+
+            case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
+                auto src = reinterpret_cast<const XrViewConfigurationView*>(srcbase);
+                auto dst = new(ipcbuf) XrViewConfigurationView;
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                *dst = *src;
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
+                auto dst = new(ipcbuf) XrViewConfigurationProperties;
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                *dst = *src;
+                break;
+            }
+
+            case XR_TYPE_SESSION_BEGIN_INFO: {
+                auto src = reinterpret_cast<const XrSessionBeginInfo*>(srcbase);
+                auto dst = new(ipcbuf) XrSessionBeginInfo;
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                dst->type = src->type;
+                dst->primaryViewConfigurationType = src->primaryViewConfigurationType;
+                break;
+            }
 
             case XR_TYPE_SWAPCHAIN_CREATE_INFO: {
                 auto src = reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase);
@@ -349,7 +381,7 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 auto src = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase);
                 auto dst = new(ipcbuf) XrSessionCreateInfoOverlayEXT;
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                *dst = *src; // sloppy, should copy just non-pointers
+                *dst = *src;
                 break;
             }
 
@@ -357,7 +389,7 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 auto src = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase);
                 auto dst = new(ipcbuf) XrReferenceSpaceCreateInfo;
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                *dst = *src; // sloppy, should copy just non-pointers
+                *dst = *src;
                 break;
             }
 
@@ -385,12 +417,15 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
     return dstbase;
 }
 
+// CopyOut XR structs -------------------------------------------------------
+
 template <>
 void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
 {
     bool skipped = true;
 
-    while (skipped) {
+    do {
+        skipped = false;
 
         if(!srcbase) {
             return;
@@ -398,15 +433,25 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
 
         switch(dstbase->type) {
 
-#if 0 // SessionCreateInfo is only ever "in" but here for reference.
-            case XR_TYPE_SESSION_CREATE_INFO: {
-                // XrSessionCreateInfo* src = reinterpret_cast<const XrSessionCreateInfo*>(srcbase);
-                // XrSessionCreateInfo* dst = reinterpret_cast<const XrSessionCreateInfo*>(dstbase);
-                // Nothing to copy out, proceed to next
-                skipped = false;
+            case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrViewConfigurationProperties*>(dstbase);
+                dst->viewConfigurationType = src->viewConfigurationType;
+                dst->fovMutable = src->fovMutable;
                 break;
             }
-#endif
+
+            case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
+                auto src = reinterpret_cast<const XrViewConfigurationView*>(srcbase);
+                auto dst = reinterpret_cast<XrViewConfigurationView*>(dstbase);
+                dst->recommendedImageRectWidth = src->recommendedImageRectWidth;
+                dst->maxImageRectWidth = src->maxImageRectWidth;
+                dst->recommendedImageRectHeight = src->recommendedImageRectHeight;
+                dst->maxImageRectHeight = src->maxImageRectHeight;
+                dst->recommendedSwapchainSampleCount = src->recommendedSwapchainSampleCount;
+                dst->maxSwapchainSampleCount = src->maxSwapchainSampleCount;
+                break;
+            }
 
             default: {
                 // I don't know what this is, drop it and keep going
@@ -414,6 +459,7 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
                 OutputDebugStringA(str.data());
 
                 dstbase = dstbase->next;
+                skipped = true;
 
                 // Don't increment srcbase.  Unknown structs were
                 // dropped during serialization, so keep going until we
@@ -423,10 +469,12 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
                 break;
             }
         }
-    }
+    } while(skipped);
 
     IPCCopyOut(dstbase->next, srcbase->next);
 }
+
+// xrEnumerateSwapchainFormats ----------------------------------------------
 
 template <>
 IPCXrEnumerateSwapchainFormats* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEnumerateSwapchainFormats* src)
@@ -442,6 +490,93 @@ IPCXrEnumerateSwapchainFormats* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* hea
 
     return dst;
 }
+
+template <>
+void IPCCopyOut(IPCXrEnumerateSwapchainFormats* dst, const IPCXrEnumerateSwapchainFormats* src)
+{
+    IPCCopyOut(dst->formatCountOutput, src->formatCountOutput);
+    if (src->formats) {
+        IPCCopyOut(dst->formats, src->formats, *src->formatCountOutput);
+    }
+}
+
+XrResult xrEnumerateSwapchainFormats(
+    XrSession                                   session,
+    uint32_t                                    formatCapacityInput,
+    uint32_t*                                   formatCountOutput,
+    int64_t*                                    formats)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS};
+
+    IPCXrEnumerateSwapchainFormats args {session, formatCapacityInput, formatCountOutput, formats};
+
+    IPCXrEnumerateSwapchainFormats* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    // TODO intersect with {RGB,RGBA,BGRA,BGR}8
+
+    return header->result;
+}
+
+// xrEnumerateViewConfigurations --------------------------------------------
+
+template <>
+IPCXrEnumerateViewConfigurations* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEnumerateViewConfigurations* src)
+{
+    auto dst = new(ipcbuf) IPCXrEnumerateViewConfigurations;
+
+    dst->instance = src->instance;
+    dst->systemId = src->systemId;
+    dst->viewConfigurationTypeCapacityInput = src->viewConfigurationTypeCapacityInput;
+    dst->viewConfigurationTypeCountOutput = IPCSerializeNoCopy(ipcbuf, header, src->viewConfigurationTypeCountOutput);
+    header->addOffsetToPointer(ipcbuf.base, &dst->viewConfigurationTypeCountOutput);
+    dst->viewConfigurationTypes = IPCSerializeNoCopy(ipcbuf, header, src->viewConfigurationTypes, src->viewConfigurationTypeCapacityInput);
+    header->addOffsetToPointer(ipcbuf.base, &dst->viewConfigurationTypes);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrEnumerateViewConfigurations* dst, const IPCXrEnumerateViewConfigurations* src)
+{
+    IPCCopyOut(dst->viewConfigurationTypeCountOutput, src->viewConfigurationTypeCountOutput);
+    if (src->viewConfigurationTypes) {
+        IPCCopyOut(dst->viewConfigurationTypes, src->viewConfigurationTypes, *src->viewConfigurationTypeCountOutput);
+    }
+}
+
+XrResult xrEnumerateViewConfigurations(
+    XrInstance                                  instance,
+    XrSystemId                                  systemId,
+    uint32_t                                    viewConfigurationTypeCapacityInput,
+    uint32_t*                                   viewConfigurationTypeCountOutput,
+    XrViewConfigurationType*                    viewConfigurationTypes)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_VIEW_CONFIGURATIONS};
+
+    IPCXrEnumerateViewConfigurations args {instance, systemId, viewConfigurationTypeCapacityInput, viewConfigurationTypeCountOutput, viewConfigurationTypes};
+
+    IPCXrEnumerateViewConfigurations* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrCreateSwapchain --------------------------------------------------------
 
 template <>
 IPCXrCreateSwapchain* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrCreateSwapchain* src)
@@ -463,6 +598,61 @@ IPCXrCreateSwapchain* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const
 }
 
 template <>
+void IPCCopyOut(IPCXrCreateSwapchain* dst, const IPCXrCreateSwapchain* src)
+{
+    IPCCopyOut(dst->swapchain, src->swapchain);
+    IPCCopyOut(dst->swapchainCount, src->swapchainCount);
+}
+
+XrResult xrCreateSwapchain(
+    XrSession                                   session,
+    const XrSwapchainCreateInfo*                createInfo,
+    XrSwapchain*                                swapchain)
+{
+    if(createInfo->sampleCount != 1) {
+        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+    }
+    if(createInfo->mipCount != 1) {
+        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
+    }
+    if(createInfo->arraySize != 1) {
+        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
+    }
+    if((createInfo->usageFlags & ~(XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)) != 0) {
+        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
+    }
+    if(createInfo->createFlags != 0) {
+        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
+    }
+
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_SWAPCHAIN};
+
+    int32_t swapchainCount;    
+    IPCXrCreateSwapchain args {session, createInfo, swapchain, &swapchainCount};
+
+    IPCXrCreateSwapchain* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    if(header->result == XR_SUCCESS) {
+
+        auto& localSession = gLocalSessionMap[session];
+
+        gLocalSwapchainMap[*swapchain] = LocalSwapchainPtr(new LocalSwapchain(*swapchain, swapchainCount, localSession->d3d11, createInfo));
+    }
+
+    return header->result;
+}
+
+// xrWaitFrame --------------------------------------------------------------
+
+template <>
 IPCXrWaitFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrWaitFrame* src)
 {
     auto dst = new(ipcbuf) IPCXrWaitFrame;
@@ -479,6 +669,36 @@ IPCXrWaitFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 }
 
 template <>
+void IPCCopyOut(IPCXrWaitFrame* dst, const IPCXrWaitFrame* src)
+{
+    IPCCopyOut(dst->frameState, src->frameState);
+}
+
+XrResult xrWaitFrame(
+    XrSession                                   session,
+    const XrFrameWaitInfo*                      frameWaitInfo,
+    XrFrameState*                               frameState)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_WAIT_FRAME};
+
+    IPCXrWaitFrame args {session, frameWaitInfo, frameState};
+
+    IPCXrWaitFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrBeginFrame -------------------------------------------------------------
+
+template <>
 IPCXrBeginFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrBeginFrame* src)
 {
     auto dst = new(ipcbuf) IPCXrBeginFrame;
@@ -490,6 +710,29 @@ IPCXrBeginFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCX
 
     return dst;
 }
+
+XrResult xrBeginFrame(
+    XrSession                                   session,
+    const XrFrameBeginInfo*                     frameBeginInfo)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_BEGIN_FRAME};
+
+    IPCXrBeginFrame args {session, frameBeginInfo};
+
+    IPCXrBeginFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    return header->result;
+}
+
+// xrEndFrame ---------------------------------------------------------------
 
 template <>
 IPCXrEndFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEndFrame* src)
@@ -503,6 +746,29 @@ IPCXrEndFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrE
 
     return dst;
 }
+
+XrResult xrEndFrame(
+    XrSession                                  session,
+    const XrFrameEndInfo*                      frameEndInfo)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_END_FRAME};
+
+    IPCXrEndFrame args {session, frameEndInfo};
+
+    IPCXrEndFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    return header->result;
+}
+
+// xrAcquireSwapchainImage --------------------------------------------------
 
 template <>
 IPCXrAcquireSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrAcquireSwapchainImage* src)
@@ -521,6 +787,38 @@ IPCXrAcquireSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header,
 }
 
 template <>
+void IPCCopyOut(IPCXrAcquireSwapchainImage* dst, const IPCXrAcquireSwapchainImage* src)
+{
+    IPCCopyOut(dst->index, src->index);
+}
+
+XrResult xrAcquireSwapchainImage(
+    XrSwapchain                                 swapchain,
+    const XrSwapchainImageAcquireInfo*          acquireInfo,
+    uint32_t*                                   index)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE};
+
+    IPCXrAcquireSwapchainImage args {swapchain, acquireInfo, index};
+
+    IPCXrAcquireSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    gLocalSwapchainMap[swapchain]->acquired.push_back(*index);
+
+    return header->result;
+}
+
+// xrWaitSwapchainImage -----------------------------------------------------
+
+template <>
 IPCXrWaitSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrWaitSwapchainImage* src)
 {
     auto dst = new(ipcbuf) IPCXrWaitSwapchainImage;
@@ -534,6 +832,43 @@ IPCXrWaitSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, co
 
     return dst;
 }
+
+XrResult xrWaitSwapchainImage(
+    XrSwapchain                                 swapchain,
+    const XrSwapchainImageWaitInfo*             waitInfo)
+{
+    auto& localSwapchain = gLocalSwapchainMap[swapchain];
+    if(localSwapchain->waited) {
+        return XR_ERROR_CALL_ORDER_INVALID;
+    }
+
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_WAIT_SWAPCHAIN_IMAGE};
+
+    uint32_t wasWaited = localSwapchain->acquired[0];
+    HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[wasWaited];
+    IPCXrWaitSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
+
+    IPCXrWaitSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    localSwapchain->waited = true;
+    IDXGIKeyedMutex* keyedMutex;
+    CHECK(localSwapchain->swapchainTextures[wasWaited]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+    CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
+    keyedMutex->Release();
+
+    return header->result;
+}
+
+// xrReleaseSwapchainImage --------------------------------------------------
 
 template <>
 IPCXrReleaseSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrReleaseSwapchainImage* src)
@@ -550,6 +885,46 @@ IPCXrReleaseSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header,
     return dst;
 }
 
+XrResult xrReleaseSwapchainImage(
+    XrSwapchain                                 swapchain,
+    const XrSwapchainImageReleaseInfo*             waitInfo)
+{
+    if(!gLocalSwapchainMap[swapchain]->waited)
+        return XR_ERROR_CALL_ORDER_INVALID;
+
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_RELEASE_SWAPCHAIN_IMAGE};
+
+    uint32_t beingReleased = gLocalSwapchainMap[swapchain]->acquired[0];
+
+    auto& localSwapchain = gLocalSwapchainMap[swapchain];
+
+    localSwapchain->acquired.erase(localSwapchain->acquired.begin());
+
+    IDXGIKeyedMutex* keyedMutex;
+    CHECK(localSwapchain->swapchainTextures[beingReleased]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+    CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_HOST));
+
+    HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[beingReleased];
+    IPCXrReleaseSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
+
+    IPCXrReleaseSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    gLocalSwapchainMap[swapchain]->waited = false;
+
+    return header->result;
+}
+
+// xrDestroySession ---------------------------------------------------------
+
 template <>
 IPCXrDestroySession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrDestroySession* src)
 {
@@ -560,14 +935,32 @@ IPCXrDestroySession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const 
     return dst;
 }
 
-template <>
-void IPCCopyOut(IPCXrEnumerateSwapchainFormats* dst, const IPCXrEnumerateSwapchainFormats* src)
+XrResult xrDestroySession(
+    XrSession                                 session)
 {
-    IPCCopyOut(dst->formatCountOutput, src->formatCountOutput);
-    if (src->formats) {
-        IPCCopyOut(dst->formats, src->formats, *src->formatCountOutput);
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_DESTROY_SESSION};
+
+    IPCXrDestroySession args {session};
+
+    IPCXrDestroySession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    if(header->result == XR_SUCCESS) {
+        gLocalSessionMap.erase(session);
     }
+
+    return header->result;
 }
+
+// xrCreateSession ----------------------------------------------------------
 
 template <>
 IPCXrCreateSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrCreateSession* src)
@@ -591,6 +984,47 @@ void IPCCopyOut(IPCXrCreateSession* dst, const IPCXrCreateSession* src)
     IPCCopyOut(dst->session, src->session);
 }
 
+XrResult xrCreateSession(
+    XrInstance instance,
+    const XrSessionCreateInfo* createInfo,
+    XrSession* session)
+{
+    const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
+    const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
+    while(p != nullptr) {
+        if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+            d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
+        }
+        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
+    }
+
+    if(!d3dbinding) {
+        return XR_ERROR_GRAPHICS_DEVICE_INVALID; // ?
+    }
+
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_SESSION};
+
+    IPCXrCreateSession args {instance, createInfo, session};
+
+    IPCXrCreateSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    header->makePointersRelative(ipcbuf.base);
+
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    if(header->result == XR_SUCCESS) {
+        gLocalSessionMap[*session] = LocalSessionPtr(new LocalSession(*session, d3dbinding->device));
+    }
+
+    return header->result;
+}
+
+// xrCreateReferenceSpace ---------------------------------------------------
 
 template <>
 IPCXrCreateReferenceSpace* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrCreateReferenceSpace* src)
@@ -613,6 +1047,31 @@ void IPCCopyOut(IPCXrCreateReferenceSpace* dst, const IPCXrCreateReferenceSpace*
 {
     IPCCopyOut(dst->space, src->space);
 }
+
+XrResult xrCreateReferenceSpace(
+    XrSession                                   session,
+    const XrReferenceSpaceCreateInfo*           createInfo,
+    XrSpace*                                    space)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_REFERENCE_SPACE};
+
+    IPCXrCreateReferenceSpace args {session, createInfo, space};
+
+    IPCXrCreateReferenceSpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    header->makePointersRelative(ipcbuf.base);
+
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// ipcxrHandshake -----------------------------------------------------------
 
 template <>
 IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrHandshake* src)
@@ -668,192 +1127,247 @@ XrResult ipcxrHandshake(
     return header->result;
 }
 
-XrResult xrCreateSession(
-    XrInstance instance,
-    const XrSessionCreateInfo* createInfo,
-    XrSession* session)
+// xrDestroySwapchain -------------------------------------------------------
+
+template <>
+IPCXrDestroySwapchain* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrDestroySwapchain* src)
 {
-    const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
-    const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
-    while(p != nullptr) {
-        if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
-            d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
+    auto dst = new(ipcbuf) IPCXrDestroySwapchain;
+
+    dst->swapchain = src->swapchain;
+
+    return dst;
+}
+
+XrResult xrDestroySwapchain(
+    XrSwapchain                                 swapchain)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_DESTROY_SWAPCHAIN};
+
+    IPCXrDestroySwapchain args {swapchain};
+
+    IPCXrDestroySwapchain* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    gLocalSwapchainMap.erase(gLocalSwapchainMap.find(swapchain));
+
+    return header->result;
+}
+
+// xrDestroySpace -----------------------------------------------------------
+
+template <>
+IPCXrDestroySpace* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrDestroySpace* src)
+{
+    auto dst = new(ipcbuf) IPCXrDestroySpace;
+
+    dst->space = src->space;
+
+    return dst;
+}
+
+XrResult xrDestroySpace(
+    XrSpace                                     space)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_DESTROY_SPACE};
+
+    IPCXrDestroySpace args {space};
+
+    IPCXrDestroySpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    return header->result;
+}
+
+// xrEndSession -------------------------------------------------------------
+
+template <>
+IPCXrEndSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEndSession* src)
+{
+    auto dst = new(ipcbuf) IPCXrEndSession;
+
+    dst->session = src->session;
+
+    return dst;
+}
+
+XrResult xrEndSession(
+    XrSession                                   session)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_END_SESSION};
+
+    IPCXrEndSession args {session};
+
+    IPCXrEndSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    return header->result;
+}
+
+// xrBeginSession -----------------------------------------------------------
+
+template <>
+IPCXrBeginSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrBeginSession* src)
+{
+    auto dst = new(ipcbuf) IPCXrBeginSession;
+
+    dst->session = src->session;
+
+    dst->beginInfo = reinterpret_cast<const XrSessionBeginInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->beginInfo)));
+    header->addOffsetToPointer(ipcbuf.base, &dst->beginInfo);
+
+    return dst;
+}
+
+XrResult xrBeginSession(
+    XrSession                                   session,
+    const XrSessionBeginInfo*                   beginInfo)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_BEGIN_SESSION};
+
+    IPCXrBeginSession args {session, beginInfo};
+
+    IPCXrBeginSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    return header->result;
+}
+
+// xrGetViewConfigurationProperties -----------------------------------------
+
+template <>
+IPCXrGetViewConfigurationProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrGetViewConfigurationProperties* src)
+{
+    auto dst = new(ipcbuf) IPCXrGetViewConfigurationProperties;
+
+    dst->instance = src->instance;
+    dst->systemId = src->systemId;
+    dst->viewConfigurationType = src->viewConfigurationType;
+
+    dst->configurationProperties = reinterpret_cast<XrViewConfigurationProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->configurationProperties)));
+    header->addOffsetToPointer(ipcbuf.base, &dst->configurationProperties);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrGetViewConfigurationProperties* dst, const IPCXrGetViewConfigurationProperties* src)
+{
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->configurationProperties),
+            reinterpret_cast<const XrBaseOutStructure*>(src->configurationProperties)
+            );
+}
+
+XrResult xrGetViewConfigurationProperties(
+    XrInstance                                  instance,
+    XrSystemId                                  systemId,
+    XrViewConfigurationType                     viewConfigurationType,
+    XrViewConfigurationProperties*              configurationProperties)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_GET_VIEW_CONFIGURATION_PROPERTIES};
+
+    IPCXrGetViewConfigurationProperties args {instance, systemId, viewConfigurationType, configurationProperties};
+
+    IPCXrGetViewConfigurationProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrEnumerateViewConfigurationViews ----------------------------------------
+
+template <>
+IPCXrEnumerateViewConfigurationViews* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEnumerateViewConfigurationViews* src)
+{
+    auto dst = new(ipcbuf) IPCXrEnumerateViewConfigurationViews;
+
+    dst->instance = src->instance;
+    dst->systemId = src->systemId;
+    dst->viewConfigurationType = src->viewConfigurationType;
+    dst->viewCapacityInput = src->viewCapacityInput;
+
+    dst->viewCountOutput = IPCSerializeNoCopy(ipcbuf, header, src->viewCountOutput);
+    header->addOffsetToPointer(ipcbuf.base, &dst->viewCountOutput);
+
+    if(dst->viewCapacityInput > 0) {
+        dst->views = new(ipcbuf) XrViewConfigurationView[dst->viewCapacityInput];
+        header->addOffsetToPointer(ipcbuf.base, &dst->views);
+        for(uint32_t i = 0; i < dst->viewCapacityInput; i++) {
+            dst->views[i].type = src->views[i].type;
+            dst->views[i].next = IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->views[i].next));
+            header->addOffsetToPointer(ipcbuf.base, &dst->views[i].next);
         }
-        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
     }
 
-    if(!d3dbinding) {
-        return XR_ERROR_GRAPHICS_DEVICE_INVALID; // ?
-    }
-
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_SESSION};
-
-    IPCXrCreateSession args {instance, createInfo, session};
-
-    IPCXrCreateSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-    header->makePointersRelative(ipcbuf.base);
-
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-
-    header->makePointersAbsolute(ipcbuf.base);
-
-    IPCCopyOut(&args, argsSerialized);
-
-    if(header->result == XR_SUCCESS) {
-        gLocalSessionMap[*session] = LocalSessionPtr(new LocalSession(*session, d3dbinding->device));
-    }
-
-    return header->result;
-}
-
-XrResult xrCreateReferenceSpace(
-    XrSession                                   session,
-    const XrReferenceSpaceCreateInfo*           createInfo,
-    XrSpace*                                    space)
-{
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_REFERENCE_SPACE};
-
-    IPCXrCreateReferenceSpace args {session, createInfo, space};
-
-    IPCXrCreateReferenceSpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-    header->makePointersRelative(ipcbuf.base);
-
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-
-    header->makePointersAbsolute(ipcbuf.base);
-
-    IPCCopyOut(&args, argsSerialized);
-
-    return header->result;
-}
-
-XrResult xrEnumerateSwapchainFormats(
-    XrSession                                   session,
-    uint32_t                                    formatCapacityInput,
-    uint32_t*                                   formatCountOutput,
-    int64_t*                                    formats)
-{
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS};
-
-    IPCXrEnumerateSwapchainFormats args {session, formatCapacityInput, formatCountOutput, formats};
-
-    IPCXrEnumerateSwapchainFormats* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    IPCCopyOut(&args, argsSerialized);
-
-    // TODO intersect with {RGB,RGBA,BGRA,BGR}8
-
-    return header->result;
+    return dst;
 }
 
 template <>
-void IPCCopyOut(IPCXrCreateSwapchain* dst, const IPCXrCreateSwapchain* src)
+void IPCCopyOut(IPCXrEnumerateViewConfigurationViews* dst, const IPCXrEnumerateViewConfigurationViews* src)
 {
-    IPCCopyOut(dst->swapchain, src->swapchain);
-    IPCCopyOut(dst->swapchainCount, src->swapchainCount);
+    IPCCopyOut(dst->viewCountOutput, src->viewCountOutput);
+    uint32_t toCopy = std::min(src->viewCapacityInput, (uint32_t)*src->viewCountOutput);
+    for(uint32_t i = 0; i < toCopy; i++) {
+        IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(&dst->views[i]),
+            reinterpret_cast<const XrBaseOutStructure*>(&src->views[i])
+            );
+    }
 }
 
-template <>
-void IPCCopyOut(IPCXrAcquireSwapchainImage* dst, const IPCXrAcquireSwapchainImage* src)
-{
-    IPCCopyOut(dst->index, src->index);
-}
-
-template <>
-void IPCCopyOut(IPCXrWaitFrame* dst, const IPCXrWaitFrame* src)
-{
-    IPCCopyOut(dst->frameState, src->frameState);
-}
-
-
-XrResult xrCreateSwapchain(
-    XrSession                                   session,
-    const XrSwapchainCreateInfo*                createInfo,
-    XrSwapchain*                                swapchain)
-{
-    if(createInfo->sampleCount != 1) {
-        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-    }
-    if(createInfo->mipCount != 1) {
-        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
-    }
-    if(createInfo->arraySize != 1) {
-        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
-    }
-    if((createInfo->usageFlags & ~(XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)) != 0) {
-        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
-    }
-    if(createInfo->createFlags != 0) {
-        return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED; 
-    }
-
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_SWAPCHAIN};
-
-    int32_t swapchainCount;    
-    IPCXrCreateSwapchain args {session, createInfo, swapchain, &swapchainCount};
-
-    IPCXrCreateSwapchain* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    IPCCopyOut(&args, argsSerialized);
-
-    if(header->result == XR_SUCCESS) {
-
-        auto& localSession = gLocalSessionMap[session];
-
-        gLocalSwapchainMap[*swapchain] = LocalSwapchainPtr(new LocalSwapchain(*swapchain, swapchainCount, localSession->d3d11, createInfo));
-    }
-
-    return header->result;
-}
-
-XrResult xrBeginFrame(
-    XrSession                                   session,
-    const XrFrameBeginInfo*                     frameBeginInfo)
+XrResult xrEnumerateViewConfigurationViews(
+    XrInstance                                  instance,
+    XrSystemId                                  systemId,
+    XrViewConfigurationType                     viewConfigurationType,
+    uint32_t                                    viewCapacityInput,
+    uint32_t*                                   viewCountOutput,
+    XrViewConfigurationView*                    views)
 {
     IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_BEGIN_FRAME};
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_VIEW_CONFIGURATION_VIEWS};
 
-    IPCXrBeginFrame args {session, frameBeginInfo};
+    IPCXrEnumerateViewConfigurationViews args {instance, systemId, viewConfigurationType, viewCapacityInput, viewCountOutput, views};
 
-    IPCXrBeginFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    // IPCCopyOut(&args, argsSerialized);
-
-    return header->result;
-}
-
-XrResult xrWaitFrame(
-    XrSession                                   session,
-    const XrFrameWaitInfo*                      frameWaitInfo,
-    XrFrameState*                               frameState)
-{
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_WAIT_FRAME};
-
-    IPCXrWaitFrame args {session, frameWaitInfo, frameState};
-
-    IPCXrWaitFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    IPCXrEnumerateViewConfigurationViews* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishGuestRequest();
@@ -865,123 +1379,8 @@ XrResult xrWaitFrame(
     return header->result;
 }
 
-XrResult xrEndFrame(
-    XrSession                                  session,
-    const XrFrameEndInfo*                      frameEndInfo)
-{
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_END_FRAME};
-
-    IPCXrEndFrame args {session, frameEndInfo};
-
-    IPCXrEndFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    // IPCCopyOut(&args, argsSerialized);
-
-    return header->result;
-}
-
-XrResult xrAcquireSwapchainImage(
-    XrSwapchain                                 swapchain,
-    const XrSwapchainImageAcquireInfo*          acquireInfo,
-    uint32_t*                                   index)
-{
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE};
-
-    IPCXrAcquireSwapchainImage args {swapchain, acquireInfo, index};
-
-    IPCXrAcquireSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    IPCCopyOut(&args, argsSerialized);
-
-    gLocalSwapchainMap[swapchain]->acquired.push_back(*index);
-
-    return header->result;
-}
-
-XrResult xrWaitSwapchainImage(
-    XrSwapchain                                 swapchain,
-    const XrSwapchainImageWaitInfo*             waitInfo)
-{
-    auto& localSwapchain = gLocalSwapchainMap[swapchain];
-    if(localSwapchain->waited) {
-        return XR_ERROR_CALL_ORDER_INVALID;
-    }
-
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_WAIT_SWAPCHAIN_IMAGE};
-
-    uint32_t wasWaited = localSwapchain->acquired[0];
-    HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[wasWaited];
-    IPCXrWaitSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
-
-    IPCXrWaitSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    // IPCCopyOut(&args, argsSerialized);
-
-    localSwapchain->waited = true;
-    IDXGIKeyedMutex* keyedMutex;
-    CHECK(localSwapchain->swapchainTextures[wasWaited]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-    CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_REMOTE, INFINITE));
-    // keyedMutex->Release();
-
-    return header->result;
-}
-
-XrResult xrReleaseSwapchainImage(
-    XrSwapchain                                 swapchain,
-    const XrSwapchainImageReleaseInfo*             waitInfo)
-{
-    if(!gLocalSwapchainMap[swapchain]->waited)
-        return XR_ERROR_CALL_ORDER_INVALID;
-
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_RELEASE_SWAPCHAIN_IMAGE};
-
-    uint32_t beingReleased = gLocalSwapchainMap[swapchain]->acquired[0];
-
-    auto& localSwapchain = gLocalSwapchainMap[swapchain];
-
-    localSwapchain->acquired.erase(localSwapchain->acquired.begin());
-
-    IDXGIKeyedMutex* keyedMutex;
-    CHECK(localSwapchain->swapchainTextures[beingReleased]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-    CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_HOST));
-
-    HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[beingReleased];
-    IPCXrReleaseSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
-
-    IPCXrReleaseSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    // IPCCopyOut(&args, argsSerialized);
-
-    gLocalSwapchainMap[swapchain]->waited = false;
-
-    return header->result;
-}
+// xrEnumerateSwapchainImages -----------------------------------------------
+// (Not serialized, handled locally)
 
 XrResult xrEnumerateSwapchainImages(
         XrSwapchain swapchain,
@@ -1011,28 +1410,5 @@ XrResult xrEnumerateSwapchainImages(
     *imageCountOutput = toWrite;
 
     return XR_SUCCESS;
-}
-
-XrResult xrDestroySession(
-    XrSession                                 session)
-{
-    IPCBuffer ipcbuf = IPCGetBuffer();
-    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_DESTROY_SESSION};
-
-    IPCXrDestroySession args {session};
-
-    IPCXrDestroySession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-    header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
-
-    IPCWaitForHostResponse();
-    header->makePointersAbsolute(ipcbuf.base);
-
-    if(header->result == XR_SUCCESS) {
-        gLocalSessionMap.erase(session);
-    }
-
-    return header->result;
 }
 

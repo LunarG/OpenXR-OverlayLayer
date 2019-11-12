@@ -271,11 +271,14 @@ int main( void )
     // Spawn a thread to wait for a keypress
     static bool quit = false;
     auto exitPollingThread = std::thread{[] {
-        std::cout << "Press ENTER to exit...";
+        std::cout << "Press ENTER to exit...\n";
         getchar();
         quit = true;
     }};
     exitPollingThread.detach();
+
+    XrSessionBeginInfo beginInfo = {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+    CHECK_XR(xrBeginSession(session, &beginInfo));
 
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
@@ -338,6 +341,14 @@ int main( void )
             std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
         }
     }
+
+    CHECK_XR(xrEndSession(session));
+
+    for(int eye = 0; eye < 2; eye++) {
+        CHECK_XR(xrDestroySwapchain(swapchains[eye]));
+    }
+
+    CHECK_XR(xrDestroySpace(viewSpace));
 
     CHECK_XR(xrDestroySession(session));
 

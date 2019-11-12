@@ -117,6 +117,47 @@ struct IPCXrDestroySession {
     XrSession                                   session;
 };
 
+struct IPCXrEnumerateViewConfigurations {
+    XrInstance                                  instance;
+    XrSystemId                                  systemId;
+    uint32_t                                    viewConfigurationTypeCapacityInput;
+    uint32_t*                                   viewConfigurationTypeCountOutput;
+    XrViewConfigurationType*                    viewConfigurationTypes;
+};
+
+struct IPCXrEnumerateViewConfigurationViews {
+    XrInstance                                  instance;
+    XrSystemId                                  systemId;
+    XrViewConfigurationType                     viewConfigurationType;
+    uint32_t                                    viewCapacityInput;
+    uint32_t*                                   viewCountOutput;
+    XrViewConfigurationView*                    views;
+};
+
+struct IPCXrGetViewConfigurationProperties {
+    XrInstance                                  instance;
+    XrSystemId                                  systemId;
+    XrViewConfigurationType                     viewConfigurationType;
+    XrViewConfigurationProperties*              configurationProperties;
+};
+
+struct IPCXrDestroySwapchain {
+    XrSwapchain                                 swapchain;
+};
+
+struct IPCXrDestroySpace {
+    XrSpace                                 space;
+};
+
+struct IPCXrBeginSession {
+    XrSession                                   session;
+    const XrSessionBeginInfo*                   beginInfo;
+};
+
+struct IPCXrEndSession {
+    XrSession                                   session;
+};
+
 // no RPC struct for EnumerateSwapchainImages
 
 #define MAX_POINTER_FIXUP_COUNT 128
@@ -303,6 +344,13 @@ enum {
     IPC_XR_WAIT_SWAPCHAIN_IMAGE,
     IPC_XR_RELEASE_SWAPCHAIN_IMAGE,
     IPC_XR_DESTROY_SESSION,
+    IPC_XR_ENUMERATE_VIEW_CONFIGURATIONS,
+    IPC_XR_ENUMERATE_VIEW_CONFIGURATION_VIEWS,
+    IPC_XR_GET_VIEW_CONFIGURATION_PROPERTIES,
+    IPC_XR_DESTROY_SWAPCHAIN,
+    IPC_XR_DESTROY_SPACE,
+    IPC_XR_BEGIN_SESSION,
+    IPC_XR_END_SESSION,
 };
 
 enum IPCWaitResult {
@@ -348,7 +396,12 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrCreateSession(XrInstance instance, const X
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySession(XrSession session);
 XR_OVERLAY_EXT_API XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images);
 XR_OVERLAY_EXT_API XrResult Overlay_xrCreateReferenceSpace(XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space);
-XrResult Overlay_xrEnumerateSwapchainFormats(XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats);
+XR_OVERLAY_EXT_API XrResult Overlay_xrEnumerateSwapchainFormats(XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats);
+XR_OVERLAY_EXT_API XrResult Overlay_xrBeginSession(XrSession session, const XrSessionBeginInfo* beginInfo);
+XR_OVERLAY_EXT_API XrResult Overlay_xrEndSession(XrSession session);
+XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySpace(XrSpace space);
+XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain);
+
 
 // Function used to negotiate an interface betewen the loader and a layer.
 XR_OVERLAY_EXT_API XrResult Overlay_xrNegotiateLoaderApiLayerInterface(const XrNegotiateLoaderInfo *li, const char *ln, XrNegotiateApiLayerRequest *lr);
