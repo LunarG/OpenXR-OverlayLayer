@@ -125,6 +125,7 @@ struct SwapchainCachedData
                 CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
             }
             CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+            // keyedMutex->Release();
         }
         remoteImagesAcquired.clear();
         for(auto shared : handleTextureMap) {
@@ -151,6 +152,7 @@ struct SwapchainCachedData
         } else  {
             sharedTexture = it->second;
         }
+        // device1->Release();
 
         return sharedTexture;
     }
@@ -296,6 +298,8 @@ DWORD WINAPI ThreadBody(LPVOID)
                     *(args->adapterLUID) = desc.AdapterLuid;
 
                     *(args->hostProcessId) = GetCurrentProcessId();
+
+                    // dxgiDevice->Release();
                 }
 
                 break;
@@ -385,6 +389,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                     }
                     cache->remoteImagesAcquired.erase(args->sourceImage);
                     CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+                    // keyedMutex->Release();
                 }
                 break;
             }
@@ -399,6 +404,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                     IDXGIKeyedMutex* keyedMutex;
                     CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
                     CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
+                    // keyedMutex->Release();
                 }
 
                 cache->remoteImagesAcquired.insert(args->sourceImage);

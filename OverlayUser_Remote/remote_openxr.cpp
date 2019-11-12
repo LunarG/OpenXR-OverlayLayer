@@ -145,6 +145,7 @@ struct LocalSwapchain
                 
                 CHECK_LAST_ERROR(DuplicateHandle(thisProcessHandle, handle, hostProcessHandle, &swapchainHandles[i], 0, TRUE, DUPLICATE_SAME_ACCESS));
                 CHECK_LAST_ERROR(CloseHandle(handle));
+                // sharedResource->Release();
             }
         }
     }
@@ -152,7 +153,7 @@ struct LocalSwapchain
     ~LocalSwapchain()
     {
         for(int i = 0; i < swapchainTextures.size(); i++) {
-            swapchainTextures[i]->Release();
+            // swapchainTextures[i]->Release();
         }
 
         // Need to acquire back from remote side?
@@ -904,6 +905,7 @@ XrResult xrReleaseSwapchainImage(
     IDXGIKeyedMutex* keyedMutex;
     CHECK(localSwapchain->swapchainTextures[beingReleased]->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
     CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_HOST));
+    // keyedMutex->Release();
 
     HANDLE sharedResourceHandle = localSwapchain->swapchainHandles[beingReleased];
     IPCXrReleaseSwapchainImage args {swapchain, waitInfo, sharedResourceHandle};
