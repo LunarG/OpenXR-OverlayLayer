@@ -47,6 +47,7 @@ typedef struct XrSessionCreateInfoOverlayEXT
 
 struct IPCXrHandshake {
     XrInstance *instance;
+    XrSystemId *systemId;
     LUID *adapterLUID;
     DWORD *hostProcessId;
 };

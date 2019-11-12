@@ -660,6 +660,8 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
     // TODO don't bother copying instance in here because out only
     dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
+    dst->systemId = IPCSerializeNoCopy(ipcbuf, header, src->systemId);
+    header->addOffsetToPointer(ipcbuf.base, &dst->systemId);
     dst->adapterLUID = IPCSerializeNoCopy(ipcbuf, header, src->adapterLUID);
     header->addOffsetToPointer(ipcbuf.base, &dst->adapterLUID);
     dst->hostProcessId = IPCSerializeNoCopy(ipcbuf, header, src->hostProcessId);
@@ -672,19 +674,21 @@ template <>
 void IPCCopyOut(IPCXrHandshake* dst, const IPCXrHandshake* src)
 {
     IPCCopyOut(dst->instance, src->instance);
+    IPCCopyOut(dst->systemId, src->systemId);
     IPCCopyOut(dst->adapterLUID, src->adapterLUID);
     IPCCopyOut(dst->hostProcessId, src->hostProcessId);
 }
 
 XrResult ipcxrHandshake(
     XrInstance *instance,
+    XrSystemId *systemId,
     LUID *luid,
     DWORD *hostProcessId)
 {
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake args {instance, luid, hostProcessId};
+    IPCXrHandshake args {instance, systemId, luid, hostProcessId};
     IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
@@ -1074,8 +1078,9 @@ int main( void )
     bool sawFirstSuccessfulFrame = false;
 
     XrInstance instance;
+    XrSystemId systemId;
     LUID adapterLUID;
-    CHECK_XR(ipcxrHandshake(&instance, &adapterLUID, &gHostProcessId));
+    CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &gHostProcessId));
     std::cout << "Remote process handshake succeeded!\n";
 
     // Give us our best chance of success of sharing our Remote
@@ -1120,6 +1125,7 @@ int main( void )
     d3dBinding.next = &sessionCreateInfoOverlay;
 
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
+    sessionCreateInfo.systemId = systemId;
     sessionCreateInfo.next = &d3dBinding;
 
     XrSession session;

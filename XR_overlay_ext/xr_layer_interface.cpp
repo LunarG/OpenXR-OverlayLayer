@@ -91,6 +91,7 @@ HANDLE gMainDestroySessionSema;
 
 ID3D11Device *gSavedD3DDevice;
 XrInstance gSavedInstance;
+XrSystemId gSavedSystemId;
 unsigned int overlaySessionStandin;
 XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
 XrSession gSavedMainSession;
@@ -253,6 +254,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 hdr->result = XR_SUCCESS;
 
                 *(args->instance) = gSavedInstance;
+                *(args->systemId) = gSavedSystemId;
 
                 {
                     IDXGIDevice * dxgiDevice;
@@ -568,6 +570,7 @@ XrResult Overlay_xrCreateSession(
         if(result != XR_SUCCESS)
             return result;
 
+        gSavedSystemId = createInfo->systemId;
         gSavedMainSession = *session;
         gSavedD3DDevice = d3dbinding->device;
         ID3D11Multithread* d3dMultithread;
