@@ -19,7 +19,7 @@ LPCWSTR kHostResponseSemaName = TEXT("LUNARG_XR_IPC_host_response_sema");
 HANDLE gGuestRequestSema;
 HANDLE gHostResponseSema;
 
-static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100000; // 1000 // XXX debugging
+static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100;
 static const DWORD HOST_RESPONSE_WAIT_MILLIS = 100000; // 1000 // XXX debugging
 
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
@@ -60,11 +60,42 @@ void IPCFinishGuestRequest()
 }
 
 // Call from Host to get complete request in shmem
-bool IPCWaitForGuestRequest()
+IPCWaitResult IPCWaitForGuestRequest()
 {
-    WaitForSingleObject(gGuestRequestSema, GUEST_REQUEST_WAIT_MILLIS);
-    // XXX TODO something sane on very long timeout
-	return true;
+    DWORD result;
+    do {
+        result = WaitForSingleObject(gGuestRequestSema, GUEST_REQUEST_WAIT_MILLIS);
+    } while(result == WAIT_TIMEOUT);
+
+    if(result == WAIT_OBJECT_0) {
+        return IPC_GUEST_REQUEST_READY;
+    }
+    return IPC_WAIT_ERROR;
+}
+
+// Call from Host to get complete request in shmem
+IPCWaitResult IPCWaitForGuestRequestOrTermination(HANDLE remoteProcessHandle)
+{
+    HANDLE handles[2];
+
+    handles[0] = gGuestRequestSema;
+    handles[1] = remoteProcessHandle;
+
+    DWORD result;
+
+    do {
+        result = WaitForMultipleObjects(2, handles, FALSE, GUEST_REQUEST_WAIT_MILLIS);
+    } while(result == WAIT_TIMEOUT);
+
+    if(result == WAIT_OBJECT_0 + 0) {
+        return IPC_GUEST_REQUEST_READY;
+    }
+
+    if(result == WAIT_OBJECT_0 + 1) {
+        return IPC_REMOTE_PROCESS_TERMINATED;
+    }
+
+    return IPC_WAIT_ERROR;
 }
 
 // Call from Host when response in shmem is complete

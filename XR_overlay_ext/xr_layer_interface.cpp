@@ -96,7 +96,6 @@ unsigned int overlaySessionStandin;
 XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
 XrSession gSavedMainSession;
 XrSession gOverlaySession;
-bool gExitOverlay = false;
 bool gExitIPCLoop = false;
 bool gSerializeEverything = true;
 
@@ -226,9 +225,33 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
 DWORD WINAPI ThreadBody(LPVOID)
 {
     void *shmem = IPCGetSharedMemory();
+    bool connectionIsActive = false;
+    HANDLE remoteProcessHandle = 0;
 
     do {
-        IPCWaitForGuestRequest(); // XXX TODO check response
+        // XXX Super Awkward, should probably have a separate Handshake loop
+        IPCWaitResult result;
+        if(connectionIsActive) {
+            result = IPCWaitForGuestRequestOrTermination(remoteProcessHandle);
+        } else {
+            result = IPCWaitForGuestRequest();
+        }
+
+        if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+
+            gSwapchainMap.clear();
+            gOverlayQuadLayerCount = 0;
+            connectionIsActive = false;
+            continue;
+
+        } else if(result == IPC_WAIT_ERROR) {
+
+            gSwapchainMap.clear();
+            gOverlayQuadLayerCount = 0;
+            connectionIsActive = false;
+            OutputDebugStringA("IPC Wait Error\n");
+            break;
+        }
 
         IPCBuffer ipcbuf = IPCGetBuffer();
         IPCXrHeader *hdr;
@@ -252,6 +275,10 @@ DWORD WINAPI ThreadBody(LPVOID)
                 }
 
                 hdr->result = XR_SUCCESS;
+
+                connectionIsActive = true;
+                DWORD remote = args->remoteProcessId;
+                CHECK_NOT_NULL(remoteProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, args->remoteProcessId));
 
                 *(args->instance) = gSavedInstance;
                 *(args->systemId) = gSavedSystemId;
@@ -514,7 +541,6 @@ XrResult Overlay_xrDestroySession(
     } else {
         // main session
 
-        gExitOverlay = true;
         ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
         DWORD waitresult = WaitForSingleObject(gMainDestroySessionSema, 1000000);
         if(waitresult == WAIT_TIMEOUT) {

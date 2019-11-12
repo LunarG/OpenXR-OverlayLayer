@@ -46,6 +46,7 @@ typedef struct XrSessionCreateInfoOverlayEXT
 } XrSessionCreateInfoOverlayEXT;
 
 struct IPCXrHandshake {
+    DWORD remoteProcessId; 
     XrInstance *instance;
     XrSystemId *systemId;
     LUID *adapterLUID;
@@ -304,6 +305,12 @@ enum {
     IPC_XR_DESTROY_SESSION,
 };
 
+enum IPCWaitResult {
+    IPC_GUEST_REQUEST_READY,
+    IPC_REMOTE_PROCESS_TERMINATED,
+    IPC_WAIT_ERROR,
+};
+
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer();
 
 #ifdef __cplusplus    // If used by C++ code, 
@@ -316,7 +323,8 @@ XR_OVERLAY_EXT_API bool UnmapSharedMemory();
 XR_OVERLAY_EXT_API void SetSharedMem(LPCWSTR lpszBuf);
 XR_OVERLAY_EXT_API void GetSharedMem(LPWSTR lpszBuf, size_t cchSize);
 XR_OVERLAY_EXT_API void* IPCGetSharedMemory();
-XR_OVERLAY_EXT_API bool IPCWaitForGuestRequest();
+XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequest();
+XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequestOrTermination(HANDLE remoteProcessHandle);
 XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
 XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
 XR_OVERLAY_EXT_API void IPCFinishHostResponse();

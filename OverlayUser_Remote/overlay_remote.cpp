@@ -657,6 +657,7 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 {
     IPCXrHandshake *dst = new(ipcbuf) IPCXrHandshake;
 
+    dst->remoteProcessId = src->remoteProcessId;
     // TODO don't bother copying instance in here because out only
     dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
@@ -688,7 +689,7 @@ XrResult ipcxrHandshake(
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake args {instance, systemId, luid, hostProcessId};
+    IPCXrHandshake args {GetCurrentProcessId(), instance, systemId, luid, hostProcessId};
     IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
