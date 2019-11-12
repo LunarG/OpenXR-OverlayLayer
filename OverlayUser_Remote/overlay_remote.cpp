@@ -202,7 +202,7 @@ int main( void )
         CHECK_XR(xrEnumerateSwapchainFormats(session, 0, &count, nullptr));
         std::vector<int64_t> runtimeFormats(count);
         CHECK_XR(xrEnumerateSwapchainFormats(session, (uint32_t)count, &count, runtimeFormats.data()));
-        std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
+        std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM }; // , DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
         auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
         if(formatFound == runtimeFormats.end()) {
             OutputDebugStringA("No supported swapchain format found\n");
@@ -212,14 +212,45 @@ int main( void )
         chosenFormat = *formatFound;
     }
 
+    uint32_t recommendedWidth, recommendedHeight;
+    {
+        uint32_t count;
+        CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, 0, &count, nullptr));
+        std::vector<XrViewConfigurationType> viewConfigurations(count);
+        CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, count, &count, viewConfigurations.data()));
+        bool found = false;
+        for(uint32_t i = 0; i < count; i++) {
+            if(viewConfigurations[i] == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
+            found = true;
+        }
+        if(!found) {
+            std::cerr << "Failed to find XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO in " << count << " view configurations\n";
+            abort();
+        }
+
+        XrViewConfigurationProperties configurationProperties = {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
+        CHECK_XR(xrGetViewConfigurationProperties(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &configurationProperties));
+
+        CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &count, nullptr));
+        std::vector<XrViewConfigurationView> viewConfigurationViews(count);
+        for(uint32_t i = 0; i < count; i++) {
+            viewConfigurationViews[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+            viewConfigurationViews[i].next = nullptr;
+        }
+        CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, count, &count, viewConfigurationViews.data()));
+        // Be lazy and set recommended sizes to left eye
+        recommendedWidth = viewConfigurationViews[0].recommendedImageRectWidth;
+        recommendedHeight = viewConfigurationViews[0].recommendedImageRectHeight;
+    }
+
     XrSwapchain swapchains[2];
     XrSwapchainImageD3D11KHR *swapchainImages[2];
     for(int eye = 0; eye < 2; eye++) {
         XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
         swapchainCreateInfo.arraySize = 1;
         swapchainCreateInfo.format = chosenFormat;
-        swapchainCreateInfo.width = 512;
-        swapchainCreateInfo.height = 512;
+        swapchainCreateInfo.width = recommendedWidth;
+        swapchainCreateInfo.height = recommendedHeight;
         swapchainCreateInfo.mipCount = 1;
         swapchainCreateInfo.faceCount = 1;
         swapchainCreateInfo.sampleCount = 1;
@@ -243,8 +274,8 @@ int main( void )
     ID3D11Texture2D* sourceImages[2];
     for(int i = 0; i < 2; i++) {
         D3D11_TEXTURE2D_DESC desc;
-        desc.Width = 512;
-        desc.Height = 512;
+        desc.Width = recommendedWidth;
+        desc.Height = recommendedHeight;
         desc.MipLevels = desc.ArraySize = 1;
         desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         desc.SampleDesc.Count = 1;
@@ -258,10 +289,19 @@ int main( void )
 
         D3D11_MAPPED_SUBRESOURCE mapped;
         CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
-        if(i == 0)
-            memcpy(mapped.pData, Image2Bytes, 512 * 512 * 4);
-        else
-            memcpy(mapped.pData, Image1Bytes, 512 * 512 * 4);
+
+        unsigned char *imageBytes = (i == 0) ? Image1Bytes : Image2Bytes;
+        int width = (i == 0) ? Image1Width : Image2Width;
+        int height = (i == 0) ? Image1Height : Image2Height;
+        for(uint32_t y = 0; y < recommendedHeight; y++)
+            for(uint32_t x = 0; x < recommendedWidth; x++) {
+                int srcX = x * width / recommendedWidth;
+                int srcY = y * height / recommendedHeight;
+                unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + 4 * (recommendedWidth * y + x);
+                unsigned char *src = imageBytes + 4 * (width * srcY + srcX);
+                for(int i = 0; i < 4; i++)
+                    dst[i] = src[i];
+            }
         d3dContext->Unmap(sourceImages[i], 0);
     }
 
@@ -276,6 +316,7 @@ int main( void )
         quit = true;
     }};
     exitPollingThread.detach();
+
 
     XrSessionBeginInfo beginInfo = {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
     CHECK_XR(xrBeginSession(session, &beginInfo));
@@ -317,7 +358,7 @@ int main( void )
         XrCompositionLayerQuad layers[2];
         XrCompositionLayerBaseHeader* layerPointers[2];
         for(uint32_t eye = 0; eye < 2; eye++) {
-            XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {512, 512}}, 0};
+            XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
             layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
             layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
             layers[eye].next = nullptr;
