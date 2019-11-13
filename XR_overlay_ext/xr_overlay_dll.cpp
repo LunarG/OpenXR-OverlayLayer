@@ -11,17 +11,21 @@ static LPVOID shared_mem = NULL;        // pointer to shared memory
 static HANDLE shared_mem_handle = NULL; // handle to file mapping
 static HANDLE mutex_handle = NULL;      // handle to sync object
 
-LPCWSTR kSharedMemName = TEXT("XR_EXT_overlay_shared_mem");
-LPCWSTR kSharedMutexName = TEXT("XR_EXT_overlay_mutex");
-LPCWSTR kHost = TEXT("XR_EXT_overlay_mutex");
+LPCWSTR kSharedMemName = TEXT("XR_EXT_overlay_shared_mem");     // Shared Memory known name
+LPCWSTR kSharedMutexName = TEXT("XR_EXT_overlay_mutex");        // Shared Memory sync mutex known name
+
+// Semaphore for releasing Host when a Remote RPC has been assembled
 LPCWSTR kGuestRequestSemaName = TEXT("LUNARG_XR_IPC_guest_request_sema");
-LPCWSTR kHostResponseSemaName = TEXT("LUNARG_XR_IPC_host_response_sema");
 HANDLE gGuestRequestSema;
+
+// Semaphore for releasing Remote when a Host RPC response has been assembled
+LPCWSTR kHostResponseSemaName = TEXT("LUNARG_XR_IPC_host_response_sema");
 HANDLE gHostResponseSema;
 
 static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100;
-static const DWORD HOST_RESPONSE_WAIT_MILLIS = 100000; // 1000 // XXX debugging
+static const DWORD HOST_RESPONSE_WAIT_MILLIS = 10000;
 
+// Get the shared memory wrapped in a convenient structure
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
 {
     return IPCBuffer(shared_mem, mem_size);
@@ -112,7 +116,6 @@ bool IPCWaitForHostResponse()
 	return true;
 }
 
-
 // Set up shared memory using a named file-mapping object. 
 bool MapSharedMemory(UINT32 req_memsize)
 { 
@@ -174,49 +177,6 @@ bool UnmapSharedMemory()
     return err;
 } 
 
-
-// SetSharedMem sets the contents of the shared memory 
-// 
-void SetSharedMem(LPCWSTR lpszBuf) 
-{ 
-    WaitForSingleObject(mutex_handle, INFINITE);
-    LPWSTR lpszTmp; 
-    DWORD dwCount = 1;  // reserve for null terminator
- 
-    // Get the address of the shared memory block
-    lpszTmp = (LPWSTR) shared_mem; 
- 
-    // Copy the null-terminated string into shared memory
-    while (*lpszBuf && (dwCount < mem_size)) 
-    {
-        *lpszTmp++ = *lpszBuf++; 
-        dwCount++;
-    }
-    *lpszTmp = '\0'; 
-
-    ReleaseMutex(mutex_handle);
-} 
- 
-// GetSharedMem gets the contents of the shared memory
-// 
-void GetSharedMem(LPWSTR lpszBuf, size_t cchSize) 
-{ 
-    WaitForSingleObject(mutex_handle, INFINITE);
-
-    LPWSTR lpszTmp; 
- 
-    if (cchSize >= mem_size) cchSize = mem_size - 1;
-
-    // Get the address of the shared memory block
-    lpszTmp = (LPWSTR) shared_mem; 
- 
-    // Copy from shared memory into the caller's buffer
-    while (*lpszTmp && --cchSize) 
-        *lpszBuf++ = *lpszTmp++; 
-    *lpszBuf = '\0'; 
-
-    ReleaseMutex(mutex_handle);
-}
 
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,

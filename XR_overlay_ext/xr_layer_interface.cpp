@@ -63,12 +63,6 @@ static void CheckResult(HRESULT result, const char* what, const char *file, int 
     }
 }
 
-#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
-
-#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
-
-#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
-
 static void CheckXrResult(XrResult a, const char* what, const char *file, int line)
 {
     if(a != XR_SUCCESS) {
@@ -78,31 +72,67 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
+
+// Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
+#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
+
+// Use this macro to test if functions succeeded that also update LastError
+#define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
+
+// Use this macro to test Direct3D functions
+#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
+
+// Use this macro to test OpenXR functions
+#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
+
+// Supports only a single overlay / RPC session at this time
+
 const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
+
 DWORD gOverlayWorkerThreadId;
 HANDLE gOverlayWorkerThread;
+
+// Semaphore for blocking Overlay CreateSession until Main CreateSession has occurred
 LPCSTR kOverlayCreateSessionSemaName = "XR_EXT_overlay_overlay_create_session_sema";
 bool gMainSessionCreated = false;
 HANDLE gOverlayCreateSessionSema;
+
+// Semaphore for blocking Overlay WaitFrame while Main WaitFrame is occuring
 LPCSTR kOverlayWaitFrameSemaName = "XR_EXT_overlay_overlay_wait_frame_sema";
 HANDLE gOverlayWaitFrameSema;
+
+// Semaphore for blocking Main DestroySession until Overlay DestroySession has occurred
 LPCSTR kMainDestroySessionSemaName = "XR_EXT_overlay_main_destroy_session_sema";
 HANDLE gMainDestroySessionSema;
 
+// Main Session context that we hold on to for processing and interleaving
+// Overlay Session commands
+XrSession gSavedMainSession;
 ID3D11Device *gSavedD3DDevice;
 XrInstance gSavedInstance;
 XrSystemId gSavedSystemId;
 unsigned int overlaySessionStandin;
 XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
-XrSession gSavedMainSession;
-XrSession gOverlaySession;
+
 bool gExitIPCLoop = false;
 bool gSerializeEverything = true;
 
 enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 
+// WaitFrame state from Main Session for handing back to Overlay Session
 XrFrameState gSavedWaitFrameState;
 
+// Quad layers from Overlay Session to overlay on Main Session's layers
+uint32_t gOverlayQuadLayerCount = 0;
+XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
+
+// Mutex synchronizing access to Main session and Overlay session commands
+HANDLE gOverlayCallMutex = NULL;      // handle to sync object
+LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
+
+static XrGeneratedDispatchTable *downchain = nullptr;
+
+// Bookkeeping of SwapchainImages for copying remote SwapchainImages on ReleaseSwapchainImage
 struct SwapchainCachedData
 {
     XrSwapchain swapchain;
@@ -150,11 +180,7 @@ struct SwapchainCachedData
         CHECK(gSavedD3DDevice->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1));
         auto it = handleTextureMap.find(sourceHandle);
         if(it == handleTextureMap.end()) {
-#if USE_NTHANDLE
             CHECK(device1->OpenSharedResource1(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
-#else
-            CHECK(device1->OpenSharedResource(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture));
-#endif
             handleTextureMap[sourceHandle] = sharedTexture;
         } else  {
             sharedTexture = it->second;
@@ -167,15 +193,6 @@ struct SwapchainCachedData
 
 typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
 std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
-
-
-uint32_t gOverlayQuadLayerCount = 0;
-XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
-
-HANDLE gOverlayCallMutex = NULL;      // handle to sync object
-LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
-
-static XrGeneratedDispatchTable *downchain = nullptr;
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -564,21 +581,6 @@ XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, cons
     return result;
 }
 
-/*
-
-Final
-    add "external synchronization" around all funcs needing external synch
-    add special conditional "always synchronize" in case runtime misbehaves
-    catch and pass all functions
-    run with validation layer?
-*/
-
-// TODO catch PollEvent
-// if not overlay
-//     normal
-// else if overlay
-//     transmit STOPPING
-
 XrResult Overlay_xrGetSystemProperties(
     XrInstance instance,
     XrSystemId systemId,
@@ -813,7 +815,6 @@ XrResult Overlay_xrCreateSession(
 
         // TODO should store any kind of failure in main XrCreateSession and then fall through here
         *session = kOverlayFakeSession;
-        gOverlaySession = *session; // XXX as loop is transferred to IPC
         result = XR_SUCCESS;
     }
 

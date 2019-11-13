@@ -19,6 +19,7 @@
 #include <dxgi1_2.h>
 #include <d3d11_1.h>
 
+// Fun images for page-flipping the overlay layer
 extern "C" {
 	extern int Image2Width;
 	extern int Image2Height;
@@ -83,13 +84,18 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
+// Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
 #define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
 
+// Use this macro to test if functions succeeded that also update LastError
 #define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
 
+// Use this macro to test Direct3D functions
 #define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
 
+// Use this macro to test OpenXR functions
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
+
 
 namespace Math {
 namespace Pose {
@@ -117,6 +123,7 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
 }  // namespace Pose
 }  // namespace Math
 
+// Special IPC handshake function
 XrResult ipcxrHandshake(
 	XrInstance *instance,
 	XrSystemId *systemId,
@@ -125,21 +132,8 @@ XrResult ipcxrHandshake(
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 
-int main( void )
+ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
 {
-    bool sawFirstSuccessfulFrame = false;
-
-    // RPC Initialization not generic to OpenXR
-    XrInstance instance;
-    XrSystemId systemId;
-    LUID adapterLUID;
-	DWORD hostProcessId;
-    CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &hostProcessId));
-    std::cout << "Remote process handshake succeeded!\n";
-
-    // Give us our best chance of success of sharing our Remote
-    // swapchainImages by creating our D3D device on the same adapter as
-    // the Host application's device
     IDXGIFactory1 * pFactory;
     CHECK(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)(&pFactory)));
 
@@ -168,9 +162,11 @@ int main( void )
         OutputDebugStringA("Direct3D Feature Level 11.1 not created\n");
         abort();
     }
+    return d3d11Device;
+}
 
-    // From here should be fairly generic OpenXR code
-
+void CreateOverlaySession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session)
+{
     XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
     sessionCreateInfoOverlay.next = nullptr;
     sessionCreateInfoOverlay.overlaySession = XR_TRUE;
@@ -184,67 +180,67 @@ int main( void )
     sessionCreateInfo.systemId = systemId;
     sessionCreateInfo.next = &d3dBinding;
 
-    XrSession session;
-    CHECK_XR(xrCreateSession(instance, &sessionCreateInfo, &session));
-    std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
+    CHECK_XR(xrCreateSession(instance, &sessionCreateInfo, session));
+}
 
-    XrSpace viewSpace;
+void CreateViewSpace(XrSession session, const XrPosef& pose, XrSpace* viewSpace)
+{
     XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     createSpaceInfo.next = nullptr;
     createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
     // Render head-locked 1.5m in front of device.
-    createSpaceInfo.poseInReferenceSpace = Math::Pose::Translation({-1.0f, 0.5f, -1.5f});
-    CHECK_XR(xrCreateReferenceSpace(session, &createSpaceInfo, &viewSpace));
+    createSpaceInfo.poseInReferenceSpace = pose;
+    CHECK_XR(xrCreateReferenceSpace(session, &createSpaceInfo, viewSpace));
+}
 
-    uint64_t chosenFormat;
-    {
-        uint32_t count;
-        CHECK_XR(xrEnumerateSwapchainFormats(session, 0, &count, nullptr));
-        std::vector<int64_t> runtimeFormats(count);
-        CHECK_XR(xrEnumerateSwapchainFormats(session, (uint32_t)count, &count, runtimeFormats.data()));
-        std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM }; // , DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
-        auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
-        if(formatFound == runtimeFormats.end()) {
-            OutputDebugStringA("No supported swapchain format found\n");
-            // XXX Do something smarter here
-            DebugBreak();
-        }
-        chosenFormat = *formatFound;
+void ChooseSwapchainFormat(XrSession session, uint64_t* chosenFormat)
+{
+    uint32_t count;
+    CHECK_XR(xrEnumerateSwapchainFormats(session, 0, &count, nullptr));
+    std::vector<int64_t> runtimeFormats(count);
+    CHECK_XR(xrEnumerateSwapchainFormats(session, (uint32_t)count, &count, runtimeFormats.data()));
+    std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM }; // , DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
+    auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
+    if(formatFound == runtimeFormats.end()) {
+        OutputDebugStringA("No supported swapchain format found\n");
+        DebugBreak();
+    }
+    *chosenFormat = *formatFound;
+}
+
+void FindRecommendedDimensions(XrInstance instance, XrSystemId systemId, int32_t* recommendedWidth, int32_t* recommendedHeight)
+{
+    uint32_t count;
+    CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, 0, &count, nullptr));
+    std::vector<XrViewConfigurationType> viewConfigurations(count);
+    CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, count, &count, viewConfigurations.data()));
+    bool found = false;
+    for(uint32_t i = 0; i < count; i++) {
+        if(viewConfigurations[i] == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
+        found = true;
+    }
+    if(!found) {
+        std::cerr << "Failed to find XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO in " << count << " view configurations\n";
+        abort();
     }
 
-    uint32_t recommendedWidth, recommendedHeight;
-    {
-        uint32_t count;
-        CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, 0, &count, nullptr));
-        std::vector<XrViewConfigurationType> viewConfigurations(count);
-        CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, count, &count, viewConfigurations.data()));
-        bool found = false;
-        for(uint32_t i = 0; i < count; i++) {
-            if(viewConfigurations[i] == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
-            found = true;
-        }
-        if(!found) {
-            std::cerr << "Failed to find XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO in " << count << " view configurations\n";
-            abort();
-        }
+    XrViewConfigurationProperties configurationProperties = {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
+    CHECK_XR(xrGetViewConfigurationProperties(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &configurationProperties));
 
-        XrViewConfigurationProperties configurationProperties = {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
-        CHECK_XR(xrGetViewConfigurationProperties(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &configurationProperties));
-
-        CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &count, nullptr));
-        std::vector<XrViewConfigurationView> viewConfigurationViews(count);
-        for(uint32_t i = 0; i < count; i++) {
-            viewConfigurationViews[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
-            viewConfigurationViews[i].next = nullptr;
-        }
-        CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, count, &count, viewConfigurationViews.data()));
-        // Be lazy and set recommended sizes to left eye
-        recommendedWidth = viewConfigurationViews[0].recommendedImageRectWidth;
-        recommendedHeight = viewConfigurationViews[0].recommendedImageRectHeight;
+    CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &count, nullptr));
+    std::vector<XrViewConfigurationView> viewConfigurationViews(count);
+    for(uint32_t i = 0; i < count; i++) {
+        viewConfigurationViews[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+        viewConfigurationViews[i].next = nullptr;
     }
+    CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, count, &count, viewConfigurationViews.data()));
+    // Be lazy and set recommended sizes to left eye
+    *recommendedWidth = viewConfigurationViews[0].recommendedImageRectWidth;
+    *recommendedHeight = viewConfigurationViews[0].recommendedImageRectHeight;
+}
 
-    XrSwapchain swapchains[2];
-    XrSwapchainImageD3D11KHR *swapchainImages[2];
+void CreateSwapchainsAndGetImages(XrSession session, uint64_t chosenFormat, int32_t recommendedWidth, int32_t recommendedHeight, XrSwapchain swapchains[2], XrSwapchainImageD3D11KHR *swapchainImages[2])
+{
     for(int eye = 0; eye < 2; eye++) {
         XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
         swapchainCreateInfo.arraySize = 1;
@@ -267,11 +263,10 @@ int main( void )
         }
         CHECK_XR(xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
     }
+}
 
-    ID3D11DeviceContext* d3dContext;
-    d3d11Device->GetImmediateContext(&d3dContext);
-
-    ID3D11Texture2D* sourceImages[2];
+void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, ID3D11Texture2D* sourceImages[2])
+{
     for(int i = 0; i < 2; i++) {
         D3D11_TEXTURE2D_DESC desc;
         desc.Width = recommendedWidth;
@@ -293,8 +288,8 @@ int main( void )
         unsigned char *imageBytes = (i == 0) ? Image1Bytes : Image2Bytes;
         int width = (i == 0) ? Image1Width : Image2Width;
         int height = (i == 0) ? Image1Height : Image2Height;
-        for(uint32_t y = 0; y < recommendedHeight; y++)
-            for(uint32_t x = 0; x < recommendedWidth; x++) {
+        for(int32_t y = 0; y < recommendedHeight; y++)
+            for(int32_t x = 0; x < recommendedWidth; x++) {
                 int srcX = x * width / recommendedWidth;
                 int srcY = y * height / recommendedHeight;
                 unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + 4 * (recommendedWidth * y + x);
@@ -304,6 +299,49 @@ int main( void )
             }
         d3dContext->Unmap(sourceImages[i], 0);
     }
+}
+
+int main( void )
+{
+    bool sawFirstSuccessfulFrame = false;
+
+    // RPC Initialization not generic to OpenXR
+    XrInstance instance;
+    XrSystemId systemId;
+    LUID adapterLUID;
+    DWORD hostProcessId;
+    CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &hostProcessId));
+    std::cout << "Remote process handshake succeeded!\n";
+
+    // Give us our best chance of success of sharing our Remote
+    // swapchainImages by creating our D3D device on the same adapter as
+    // the Host application's device
+    ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(adapterLUID);
+
+    // From here should be fairly generic OpenXR code
+
+    XrSession session;
+    CreateOverlaySession(d3d11Device, instance, systemId, &session);
+    std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
+
+    XrSpace viewSpace;
+    CreateViewSpace(session, Math::Pose::Translation({-1.0f, 0.5f, -1.5f}), &viewSpace);
+
+    uint64_t chosenFormat;
+    ChooseSwapchainFormat(session, &chosenFormat);
+
+    int32_t recommendedWidth, recommendedHeight;
+    FindRecommendedDimensions(instance, systemId, &recommendedWidth, &recommendedHeight);
+
+    XrSwapchain swapchains[2];
+    XrSwapchainImageD3D11KHR *swapchainImages[2];
+    CreateSwapchainsAndGetImages(session, chosenFormat, recommendedWidth, recommendedHeight, swapchains, swapchainImages);
+
+    ID3D11DeviceContext* d3dContext;
+    d3d11Device->GetImmediateContext(&d3dContext);
+
+    ID3D11Texture2D* sourceImages[2];
+    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, sourceImages);
 
     std::cout << "Created Swapchain and enumerated SwapchainImages and made local\n";
     std::cout << "    images as texture sources!\n";
@@ -317,10 +355,12 @@ int main( void )
     }};
     exitPollingThread.detach();
 
-
     XrSessionBeginInfo beginInfo = {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
     CHECK_XR(xrBeginSession(session, &beginInfo));
 
+    // OpenXR Frame loop
+    // XXX Should be checking events to enter/exit session but at time
+    // of writing the RPC layer does not support events
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
     while(!quit) {

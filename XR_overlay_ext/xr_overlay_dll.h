@@ -29,14 +29,12 @@
 #define XR_OVERLAY_EXT_API __declspec(dllimport)
 #endif
 
-// #error BLORK
-#define USE_NTHANDLE 1
-
 enum {
     KEYED_MUTEX_IPC_REMOTE = 0,
     KEYED_MUTEX_IPC_HOST = 1,
 };
 
+// Stand in while Overlay is not defined in openxr.h
 typedef struct XrSessionCreateInfoOverlayEXT
 {
     XrStructureType             type;
@@ -44,6 +42,13 @@ typedef struct XrSessionCreateInfoOverlayEXT
     XrBool32                    overlaySession;
     uint32_t                    sessionLayersPlacement;
 } XrSessionCreateInfoOverlayEXT;
+
+enum {
+    // XXX need to do this with an enum generated from ext as part of build
+    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
+};
+
+// Structs containing RPC arguments -----------------------------------------
 
 struct IPCXrHandshake {
     DWORD remoteProcessId; 
@@ -162,6 +167,9 @@ struct IPCXrEndSession {
 
 #define MAX_POINTER_FIXUP_COUNT 128
 
+// Header laid into the shared memory tracking the RPC type, the result,
+// and all pointers inside the shared memory which have to be fixed up
+// passing from Remote to Host and then back
 struct IPCXrHeader
 {
     uint64_t requestType;
@@ -220,6 +228,9 @@ static size_t pad(size_t s)
     return (s + memberAlignment - 1) / memberAlignment * memberAlignment;
 }
 
+// Convenience object representing the shared memory buffer after the
+// header, allowing apps to allocate bytes and then fill them or to read
+// bytes and step over them
 struct IPCBuffer
 {
     unsigned char *base;
@@ -303,6 +314,7 @@ struct IPCBuffer
     void deallocate (void *) {}
 };
 
+// New and delete for the buffer above
 inline void* operator new (std::size_t size, IPCBuffer& buffer)
 {
     return buffer.allocate(size);
@@ -313,24 +325,7 @@ inline void operator delete(void* p, IPCBuffer& buffer)
     buffer.deallocate(p);
 }
 
-
-template <typename T>
-T unpack(unsigned char*& ptr)
-{
-    T tmp = *reinterpret_cast<T*>(ptr);
-    ptr += sizeof(T);
-	return tmp;
-}
-
-template <typename T>
-bool pack(unsigned char*& ptr, const T& v)
-{
-    // XXX TODO - don't overflow the buffer - also pass and check size
-    *reinterpret_cast<T*>(ptr) = v;
-    ptr += sizeof(T);
-    return true;
-}
-
+// RPC types implemented
 enum {
     IPC_HANDSHAKE = 1,
     IPC_XR_CREATE_SESSION,
@@ -368,8 +363,7 @@ extern "C" {          // we need to export the C interface
 // Shared memory entry points
 XR_OVERLAY_EXT_API bool MapSharedMemory(UINT32 size);
 XR_OVERLAY_EXT_API bool UnmapSharedMemory();
-XR_OVERLAY_EXT_API void SetSharedMem(LPCWSTR lpszBuf);
-XR_OVERLAY_EXT_API void GetSharedMem(LPWSTR lpszBuf, size_t cchSize);
+
 XR_OVERLAY_EXT_API void* IPCGetSharedMemory();
 XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequest();
 XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequestOrTermination(HANDLE remoteProcessHandle);
@@ -377,10 +371,6 @@ XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
 XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
 XR_OVERLAY_EXT_API void IPCFinishHostResponse();
 
-enum {
-    // XXX need to do this with an enum generated from ext as part of build
-    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
-};
 
 
 // Exported entry points

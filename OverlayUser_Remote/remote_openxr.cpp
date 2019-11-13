@@ -71,14 +71,19 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
+// Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
 #define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
 
+// Use this macro to test if functions succeeded that also update LastError
 #define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
 
+// Use this macro to test Direct3D functions
 #define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
 
+// Use this macro to test OpenXR functions
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
+// Local bookkeeping information associated with an XrSession (Mostly just a place to cache D3D11 device)
 struct LocalSession
 {
     XrSession       session;
@@ -94,11 +99,12 @@ struct LocalSession
 };
 
 typedef std::unique_ptr<LocalSession> LocalSessionPtr;
-
 std::map<XrSession, LocalSessionPtr> gLocalSessionMap;
 
+// The Id of the RPC Host Process
 DWORD gHostProcessId;
 
+// Local "Swapchain" in Xr parlance - others would call it RenderTarget
 struct LocalSwapchain
 {
     XrSwapchain             swapchain;
@@ -139,10 +145,12 @@ struct LocalSwapchain
 
                 HANDLE handle;
 
+                // Get the Shared Handle for the texture. This is still local to this process but is an actual HANDLE
                 CHECK(sharedResource->CreateSharedHandle(NULL,
                     DXGI_SHARED_RESOURCE_READ, // GENERIC_ALL | DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
                     NULL, &handle));
                 
+                // Duplicate the handle so "Host" RPC service process can use it
                 CHECK_LAST_ERROR(DuplicateHandle(thisProcessHandle, handle, hostProcessHandle, &swapchainHandles[i], 0, TRUE, DUPLICATE_SAME_ACCESS));
                 CHECK_LAST_ERROR(CloseHandle(handle));
                 sharedResource->Release();
@@ -152,16 +160,14 @@ struct LocalSwapchain
 
     ~LocalSwapchain()
     {
+        // XXX Need to AcquireSync from remote side?
         for(int i = 0; i < swapchainTextures.size(); i++) {
             swapchainTextures[i]->Release();
         }
-
-        // Need to acquire back from remote side?
     }
 };
 
 typedef std::unique_ptr<LocalSwapchain> LocalSwapchainPtr;
-
 std::map<XrSwapchain, LocalSwapchainPtr> gLocalSwapchainMap;
 
 
@@ -1397,16 +1403,11 @@ XrResult xrEnumerateSwapchainImages(
         return XR_SUCCESS;
     }
 
+    // (If storage is provided) Give back the "local" swapchainimages (rendertarget) for rendering
     auto sci = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
     uint32_t toWrite = std::min(imageCapacityInput, (uint32_t)localSwapchain->swapchainTextures.size());
     for(uint32_t i = 0; i < toWrite; i++) {
-        if(sci[i].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR) {
-            // XXX TODO something smart here - validation failure only?
-            DebugBreak();
-        } else {
-            sci[i].texture = localSwapchain->swapchainTextures[i];
-            // ignore next since we don't understand anything else
-        }
+        sci[i].texture = localSwapchain->swapchainTextures[i];
     }
 
     *imageCountOutput = toWrite;
