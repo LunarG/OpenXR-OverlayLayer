@@ -124,7 +124,7 @@ struct LocalSwapchain
             desc.Width = createInfo->width;
             desc.Height = createInfo->height;
             desc.MipLevels = desc.ArraySize = 1;
-            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // static_cast<DXGI_FORMAT>(createInfo->format);
+            desc.Format = static_cast<DXGI_FORMAT>(createInfo->format);
             desc.SampleDesc.Count = 1;
             desc.SampleDesc.Quality = 0;
             desc.Usage = D3D11_USAGE_DEFAULT;
@@ -526,8 +526,6 @@ XrResult xrEnumerateSwapchainFormats(
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
-
-    // TODO intersect with {RGB,RGBA,BGRA,BGR}8
 
     return header->result;
 }

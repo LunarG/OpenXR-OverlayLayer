@@ -119,6 +119,8 @@ bool gSerializeEverything = true;
 
 enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 
+const int OVERLAY_WAITFRAME_FIRSTWAIT_MILLIS = 10000;
+
 // WaitFrame state from Main Session for handing back to Overlay Session
 XrFrameState gSavedWaitFrameState;
 
@@ -936,7 +938,7 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
         // Wait on main session
         // TODO - make first wait be long and subsequent waits be short,
         // since it looks like WaitFrame may wait a long time on runtime.
-        DWORD waitresult = WaitForSingleObject(gOverlayWaitFrameSema, 10000);
+        DWORD waitresult = WaitForSingleObject(gOverlayWaitFrameSema, OVERLAY_WAITFRAME_FIRSTWAIT_MILLIS);
         if(waitresult == WAIT_TIMEOUT) {
             OutputDebugStringA("**OVERLAY** overlay session wait frame timeout\n");
             DebugBreak();
