@@ -125,6 +125,7 @@ XrFrameState gSavedWaitFrameState;
 // Quad layers from Overlay Session to overlay on Main Session's layers
 uint32_t gOverlayQuadLayerCount = 0;
 XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
+std::set<XrSwapchain> gSwapchainsDestroyPending;
 
 // Mutex synchronizing access to Main session and Overlay session commands
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
@@ -488,13 +489,7 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_DESTROY_SWAPCHAIN: {
                 auto args = ipcbuf.getAndAdvance<IPCXrDestroySwapchain>();
                 hdr->result = Overlay_xrDestroySwapchain(args->swapchain);
-                DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-                if(waitresult == WAIT_TIMEOUT) {
-                    OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-                    DebugBreak();
-                }
                 gSwapchainMap.erase(args->swapchain);
-                ReleaseMutex(gOverlayCallMutex);
                 break;
             }
 
@@ -719,19 +714,28 @@ XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
 {
     XrResult result;
 
-    if(gSerializeEverything) {
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-            DebugBreak();
+    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+    if(waitresult == WAIT_TIMEOUT) {
+        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+        DebugBreak();
+    }
+
+    bool isSubmitted = false;
+    // XXX there's probably an elegant C++ find with lambda that would do this:
+    for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
+        if(gOverlayQuadLayers[i].subImage.swapchain == swapchain) {
+            isSubmitted = true;
         }
     }
 
-    result = downchain->DestroySwapchain(swapchain);
-
-    if(gSerializeEverything) {
-        ReleaseMutex(gOverlayCallMutex);
+    if(isSubmitted) {
+        gSwapchainsDestroyPending.insert(swapchain);
+        result = XR_SUCCESS;
+    } else {
+        result = downchain->DestroySwapchain(swapchain);
     }
+
+    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
@@ -989,7 +993,7 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
 }
 
 XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info) 
-{ 
+{
     XrResult result;
 
     DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
@@ -1036,6 +1040,21 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         info2.layerCount = info->layerCount + gOverlayQuadLayerCount;
         info2.layers = layers2.get();
         result = downchain->EndFrame(session, &info2);
+
+        // XXX there's probably an elegant C++ find with lambda that would do this:
+        auto copyOfPendingDestroys = gSwapchainsDestroyPending;
+        for(auto swapchain : copyOfPendingDestroys) {
+            bool isSubmitted = false;
+            for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
+                if(gOverlayQuadLayers[i].subImage.swapchain == swapchain) {
+                    isSubmitted = true;
+                }
+            }
+            if(!isSubmitted) {
+                result = downchain->DestroySwapchain(swapchain);
+                gSwapchainsDestroyPending.erase(swapchain);
+            }
+        }
     }
 
     ReleaseMutex(gOverlayCallMutex);
