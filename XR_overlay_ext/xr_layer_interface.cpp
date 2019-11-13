@@ -126,6 +126,7 @@ XrFrameState gSavedWaitFrameState;
 uint32_t gOverlayQuadLayerCount = 0;
 XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
 std::set<XrSwapchain> gSwapchainsDestroyPending;
+std::set<XrSpace> gSpacesDestroyPending;
 
 // Mutex synchronizing access to Main session and Overlay session commands
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
@@ -752,7 +753,20 @@ XrResult Overlay_xrDestroySpace(XrSpace space)
         }
     }
 
-    result = downchain->DestroySpace(space);
+    bool isSubmitted = false;
+    // XXX there's probably an elegant C++ find with lambda that would do this:
+    for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
+        if(gOverlayQuadLayers[i].space == space) {
+            isSubmitted = true;
+        }
+    }
+
+    if(isSubmitted) {
+        gSpacesDestroyPending.insert(space);
+        result = XR_SUCCESS;
+    } else {
+        result = downchain->DestroySpace(space);
+    }
 
     if(gSerializeEverything) {
         ReleaseMutex(gOverlayCallMutex);
@@ -1042,8 +1056,8 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         result = downchain->EndFrame(session, &info2);
 
         // XXX there's probably an elegant C++ find with lambda that would do this:
-        auto copyOfPendingDestroys = gSwapchainsDestroyPending;
-        for(auto swapchain : copyOfPendingDestroys) {
+        auto copyOfPendingDestroySwapchains = gSwapchainsDestroyPending;
+        for(auto swapchain : copyOfPendingDestroySwapchains) {
             bool isSubmitted = false;
             for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
                 if(gOverlayQuadLayers[i].subImage.swapchain == swapchain) {
@@ -1053,6 +1067,19 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
             if(!isSubmitted) {
                 result = downchain->DestroySwapchain(swapchain);
                 gSwapchainsDestroyPending.erase(swapchain);
+            }
+        }
+        auto copyOfPendingDestroySpaces = gSpacesDestroyPending;
+        for(auto space : copyOfPendingDestroySpaces) {
+            bool isSubmitted = false;
+            for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
+                if(gOverlayQuadLayers[i].space == space) {
+                    isSubmitted = true;
+                }
+            }
+            if(!isSubmitted) {
+                result = downchain->DestroySpace(space);
+                gSpacesDestroyPending.erase(space);
             }
         }
     }
