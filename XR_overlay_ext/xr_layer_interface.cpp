@@ -721,13 +721,10 @@ XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
         DebugBreak();
     }
 
-    bool isSubmitted = false;
-    // XXX there's probably an elegant C++ find with lambda that would do this:
-    for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
-        if(gOverlayQuadLayers[i].subImage.swapchain == swapchain) {
-            isSubmitted = true;
-        }
-    }
+    auto foundIt = std::find_if(gOverlayQuadLayers, gOverlayQuadLayers + gOverlayQuadLayerCount, 
+            [swapchain](const XrCompositionLayerQuad& x){return x.subImage.swapchain == swapchain;});
+
+    bool isSubmitted = (foundIt != (gOverlayQuadLayers + gOverlayQuadLayerCount));
 
     if(isSubmitted) {
         gSwapchainsDestroyPending.insert(swapchain);
@@ -1058,27 +1055,33 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         // XXX there's probably an elegant C++ find with lambda that would do this:
         auto copyOfPendingDestroySwapchains = gSwapchainsDestroyPending;
         for(auto swapchain : copyOfPendingDestroySwapchains) {
-            bool isSubmitted = false;
-            for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
-                if(gOverlayQuadLayers[i].subImage.swapchain == swapchain) {
-                    isSubmitted = true;
-                }
-            }
+            auto foundIt = std::find_if(gOverlayQuadLayers, gOverlayQuadLayers + gOverlayQuadLayerCount, 
+                [swapchain](const XrCompositionLayerQuad& x){return x.subImage.swapchain == swapchain;});
+
+            bool isSubmitted = (foundIt != (gOverlayQuadLayers + gOverlayQuadLayerCount));
+
             if(!isSubmitted) {
                 result = downchain->DestroySwapchain(swapchain);
+                if(result != XR_SUCCESS) {
+                    ReleaseMutex(gOverlayCallMutex);
+                    return result;
+                }
                 gSwapchainsDestroyPending.erase(swapchain);
             }
         }
         auto copyOfPendingDestroySpaces = gSpacesDestroyPending;
         for(auto space : copyOfPendingDestroySpaces) {
-            bool isSubmitted = false;
-            for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
-                if(gOverlayQuadLayers[i].space == space) {
-                    isSubmitted = true;
-                }
-            }
+            auto foundIt = std::find_if(gOverlayQuadLayers, gOverlayQuadLayers + gOverlayQuadLayerCount, 
+                [space](const XrCompositionLayerQuad& x){return x.space == space;});
+
+            bool isSubmitted = (foundIt != (gOverlayQuadLayers + gOverlayQuadLayerCount));
+
             if(!isSubmitted) {
                 result = downchain->DestroySpace(space);
+                if(result != XR_SUCCESS) {
+                    ReleaseMutex(gOverlayCallMutex);
+                    return result;
+                }
                 gSpacesDestroyPending.erase(space);
             }
         }
