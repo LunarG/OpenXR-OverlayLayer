@@ -1047,11 +1047,13 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         XrFrameEndInfo info2 = *info;
         std::unique_ptr<const XrCompositionLayerBaseHeader*> layers2(new const XrCompositionLayerBaseHeader*[info->layerCount + gOverlayQuadLayerCount]);
         memcpy(layers2.get(), info->layers, sizeof(const XrCompositionLayerBaseHeader*) * info->layerCount);
-        for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++)
-            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&gOverlayQuadLayers);
+        for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
+            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&gOverlayQuadLayers[i]);
+	}
 
         info2.layerCount = info->layerCount + gOverlayQuadLayerCount;
         info2.layers = layers2.get();
+
         result = downchain->EndFrame(session, &info2);
 
         // XXX there's probably an elegant C++ find with lambda that would do this:
@@ -1088,6 +1090,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
             }
         }
     }
+
 
     ReleaseMutex(gOverlayCallMutex);
     return result;
