@@ -313,6 +313,8 @@ int main( void )
     CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &hostProcessId));
     std::cout << "Remote process handshake succeeded!\n";
 
+    // XXX Should query D3D11 Graphics Requirements here to get LUID, and hide that in the remote functionality
+
     // Give us our best chance of success of sharing our Remote
     // swapchainImages by creating our D3D device on the same adapter as
     // the Host application's device
@@ -324,14 +326,17 @@ int main( void )
     CreateOverlaySession(d3d11Device, instance, systemId, &session);
     std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
+    XrPosef pose = Math::Pose::Translation({-0.25f, 0.125f, -1.5f}); // ({-1.0f, 0.5f, -1.5f});
+
     XrSpace viewSpace;
-    CreateViewSpace(session, Math::Pose::Translation({-1.0f, 0.5f, -1.5f}), &viewSpace);
+    CreateViewSpace(session, Math::Pose::Identity(), &viewSpace);
 
     uint64_t chosenFormat;
     ChooseSwapchainFormat(session, &chosenFormat);
 
     int32_t recommendedWidth, recommendedHeight;
     FindRecommendedDimensions(instance, systemId, &recommendedWidth, &recommendedHeight);
+    std::cout << "Recommended view image dimensions are " << recommendedWidth << " by " << recommendedHeight << "\n";
 
     XrSwapchain swapchains[2];
     XrSwapchainImageD3D11KHR *swapchainImages[2];
@@ -361,6 +366,7 @@ int main( void )
     // OpenXR Frame loop
     // XXX Should be checking events to enter/exit session but at time
     // of writing the RPC layer does not support events
+
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
     while(!quit) {
@@ -397,25 +403,55 @@ int main( void )
 
         XrCompositionLayerQuad layers[2];
         XrCompositionLayerBaseHeader* layerPointers[2];
-        for(uint32_t eye = 0; eye < 2; eye++) {
-            XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-            layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
-            layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-            layers[eye].next = nullptr;
-            layers[eye].layerFlags = 0;
-            layers[eye].space = viewSpace;
-            layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
-            layers[eye].subImage = fullImage;
-            layers[eye].pose = Math::Pose::Identity();
-            layers[eye].size = {0.33f, 0.33f};
-        }
-        XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-        frameEndInfo.next = nullptr;
-        frameEndInfo.layers = layerPointers;
-        frameEndInfo.layerCount = 2;
-        frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-        frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE; // XXX ignored
-        CHECK_XR(xrEndFrame(session, &frameEndInfo));
+
+	bool useSeparateLeftRightEyes = true;
+
+	if(useSeparateLeftRightEyes) {
+
+	    for(uint32_t eye = 0; eye < 2; eye++) {
+		XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+		layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
+		layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+		layers[eye].next = nullptr;
+		layers[eye].layerFlags = 0;
+		layers[eye].space = viewSpace;
+		layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+		layers[eye].subImage = fullImage;
+		layers[eye].pose = pose;
+		layers[eye].size = {0.33f, 0.33f};
+	    }
+	    XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
+	    frameEndInfo.next = nullptr;
+	    frameEndInfo.layers = layerPointers;
+	    frameEndInfo.layerCount = 2;
+	    frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
+	    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+
+	    CHECK_XR(xrEndFrame(session, &frameEndInfo));
+
+	} else {
+
+	    XrSwapchainSubImage fullImage = {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+	    layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
+	    layers[0].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+	    layers[0].next = nullptr;
+	    layers[0].layerFlags = 0;
+	    layers[0].space = viewSpace;
+	    layers[0].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	    layers[0].subImage = fullImage;
+	    layers[0].pose = pose;
+	    layers[0].size = {0.33f, 0.33f};
+
+	    XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
+	    frameEndInfo.next = nullptr;
+	    frameEndInfo.layers = layerPointers;
+	    frameEndInfo.layerCount = 1;
+	    frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
+	    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+
+	    CHECK_XR(xrEndFrame(session, &frameEndInfo));
+
+	}
         
         if(!sawFirstSuccessfulFrame) {
             sawFirstSuccessfulFrame = true;
