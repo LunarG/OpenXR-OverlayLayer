@@ -357,6 +357,12 @@ DWORD WINAPI ThreadBody(LPVOID)
                 break;
             }
 
+            case IPC_XR_GET_INSTANCE_PROPERTIES: {
+                auto args = ipcbuf.getAndAdvance<IPCXrGetInstanceProperties>();
+                hdr->result = downchain->GetInstanceProperties(args->instance, args->properties);
+                break;
+            }
+
             case IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS: { 
                 auto args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
                 hdr->result = Overlay_xrEnumerateSwapchainFormats(args->session, args->formatCapacityInput, args->formatCountOutput, args->formats);

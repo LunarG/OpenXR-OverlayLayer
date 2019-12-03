@@ -313,6 +313,13 @@ int main( void )
     CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &hostProcessId));
     std::cout << "Remote process handshake succeeded!\n";
 
+    XrInstanceProperties properties = {XR_TYPE_INSTANCE_PROPERTIES, nullptr};
+    CHECK_XR(xrGetInstanceProperties(instance, &properties));
+    std::cout << "Runtime \"" << properties.runtimeName << "\", version ";
+    std::cout << XR_VERSION_MAJOR(properties.runtimeVersion) << ".";
+    std::cout << XR_VERSION_MINOR(properties.runtimeVersion) << ".";
+    std::cout << XR_VERSION_PATCH(properties.runtimeVersion) << ".\n";
+
     // XXX Should query D3D11 Graphics Requirements here to get LUID, and hide that in the remote functionality
 
     // Give us our best chance of success of sharing our Remote

@@ -154,6 +154,11 @@ struct IPCXrDestroySpace {
     XrSpace                                 space;
 };
 
+struct IPCXrGetInstanceProperties {
+    XrInstance                                  instance;
+    XrInstanceProperties*                       properties;
+};
+
 struct IPCXrBeginSession {
     XrSession                                   session;
     const XrSessionBeginInfo*                   beginInfo;
@@ -346,6 +351,7 @@ enum {
     IPC_XR_DESTROY_SPACE,
     IPC_XR_BEGIN_SESSION,
     IPC_XR_END_SESSION,
+    IPC_XR_GET_INSTANCE_PROPERTIES,
 };
 
 enum IPCWaitResult {
