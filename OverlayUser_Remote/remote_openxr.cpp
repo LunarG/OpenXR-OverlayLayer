@@ -262,6 +262,19 @@ enum SerializationType {
     SERIALIZE_ONLY_TYPE_NEXT,   // XR command will fill (aka output)
 };
 
+template <class XR_STRUCT>
+XrBaseInStructure* AllocateAndCopy(IPCBuffer& ipcbuf, const XR_STRUCT* srcbase, SerializationType serializationType)
+{
+    auto src = reinterpret_cast<const XR_STRUCT*>(srcbase);
+    auto dst = new(ipcbuf) XR_STRUCT;
+    if(serializationType == SERIALIZE_EVERYTHING) {
+        *dst = *src;
+    } else {
+        dst->type = src->type;
+    }
+    return reinterpret_cast<XrBaseInStructure*>(dst);
+}
+
 XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const XrBaseInStructure* srcbase, SerializationType serializationType)
 {
     XrBaseInStructure *dstbase = nullptr;
@@ -279,110 +292,47 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
             // Should copy only non-pointers instead of "*dst = *src"
 
             case XR_TYPE_FRAME_STATE: {
-                auto src = reinterpret_cast<const XrFrameState*>(srcbase);
-                auto dst = new(ipcbuf) XrFrameState;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameState*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_INSTANCE_PROPERTIES: {
-                auto src = reinterpret_cast<const XrInstanceProperties*>(srcbase);
-                auto dst = new(ipcbuf) XrInstanceProperties;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrInstanceProperties*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
-                auto src = reinterpret_cast<const XrViewConfigurationView*>(srcbase);
-                auto dst = new(ipcbuf) XrViewConfigurationView;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrViewConfigurationView*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
-                auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
-                auto dst = new(ipcbuf) XrViewConfigurationProperties;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrViewConfigurationProperties*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_SESSION_BEGIN_INFO: {
-                auto src = reinterpret_cast<const XrSessionBeginInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSessionBeginInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSessionBeginInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_CREATE_INFO: {
-                auto src = reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSwapchainCreateInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_FRAME_WAIT_INFO: {
-                auto src = reinterpret_cast<const XrFrameWaitInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrFrameWaitInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameWaitInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_FRAME_BEGIN_INFO: {
-                auto src = reinterpret_cast<const XrFrameBeginInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrFrameBeginInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameBeginInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_COMPOSITION_LAYER_QUAD: {
-                auto src = reinterpret_cast<const XrCompositionLayerQuad*>(srcbase);
-                auto dst = new(ipcbuf) XrCompositionLayerQuad;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrCompositionLayerQuad*>(srcbase), serializationType));
                 break;
             }
 
@@ -408,74 +358,32 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
             }
 
             case XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO: {
-                auto src = reinterpret_cast<const XrSwapchainImageAcquireInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSwapchainImageAcquireInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainImageAcquireInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO: {
-                auto src = reinterpret_cast<const XrSwapchainImageWaitInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSwapchainImageWaitInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainImageWaitInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO: {
-                auto src = reinterpret_cast<const XrSwapchainImageReleaseInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSwapchainImageReleaseInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainImageReleaseInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_SESSION_CREATE_INFO: {
-                auto src = reinterpret_cast<const XrSessionCreateInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrSessionCreateInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSessionCreateInfo*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT: {
-                auto src = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase);
-                auto dst = new(ipcbuf) XrSessionCreateInfoOverlayEXT;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase), serializationType));
                 break;
             }
 
             case XR_TYPE_REFERENCE_SPACE_CREATE_INFO: {
-                auto src = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrReferenceSpaceCreateInfo;
-                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
-                if(serializationType == SERIALIZE_EVERYTHING) {
-                    *dst = *src;
-                } else {
-                    dst->type = src->type;
-                }
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase), serializationType));
                 break;
             }
 
