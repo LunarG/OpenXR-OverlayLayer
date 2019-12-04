@@ -159,6 +159,12 @@ struct IPCXrGetInstanceProperties {
     XrInstanceProperties*                       properties;
 };
 
+struct IPCXrGetSystemProperties {
+    XrInstance                                  instance;
+    XrSystemId                                  system;
+    XrSystemProperties*                       properties;
+};
+
 struct IPCXrBeginSession {
     XrSession                                   session;
     const XrSessionBeginInfo*                   beginInfo;
@@ -352,6 +358,7 @@ enum {
     IPC_XR_BEGIN_SESSION,
     IPC_XR_END_SESSION,
     IPC_XR_GET_INSTANCE_PROPERTIES,
+    IPC_XR_GET_SYSTEM_PROPERTIES,
 };
 
 enum IPCWaitResult {

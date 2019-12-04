@@ -296,6 +296,11 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 break;
             }
 
+            case XR_TYPE_SYSTEM_PROPERTIES: {
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSystemProperties*>(srcbase), serializationType));
+                break;
+            }
+
             case XR_TYPE_INSTANCE_PROPERTIES: {
                 dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrInstanceProperties*>(srcbase), serializationType));
                 break;
@@ -443,6 +448,16 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
                 break;
             }
 
+            case XR_TYPE_SYSTEM_PROPERTIES: {
+                auto src = reinterpret_cast<const XrSystemProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrSystemProperties*>(dstbase);
+                dst->systemId = src->systemId;
+                dst->vendorId = src->vendorId;
+                dst->graphicsProperties = src->graphicsProperties;
+                dst->trackingProperties = src->trackingProperties;
+                strncpy_s(dst->systemName, src->systemName, XR_MAX_SYSTEM_NAME_SIZE);
+                break;
+            }
 
             case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
                 auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
@@ -619,6 +634,53 @@ XrResult xrGetInstanceProperties (
     IPCXrGetInstanceProperties args {instance, properties};
 
     IPCXrGetInstanceProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrGetSystemProperties ----------------------------------------------------
+
+template <>
+IPCXrGetSystemProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrGetSystemProperties* src)
+{
+    auto dst = new(ipcbuf) IPCXrGetSystemProperties;
+
+    dst->instance = src->instance;
+	dst->system = src->system;
+
+    dst->properties = reinterpret_cast<XrSystemProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), SERIALIZE_ONLY_TYPE_NEXT));
+    header->addOffsetToPointer(ipcbuf.base, &dst->properties);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrGetSystemProperties* dst, const IPCXrGetSystemProperties* src)
+{
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->properties),
+            reinterpret_cast<const XrBaseOutStructure*>(src->properties)
+            );
+}
+
+XrResult xrGetSystemProperties (
+    XrInstance                                   instance,
+    XrSystemId                                   system,
+    XrSystemProperties*                        properties)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_GET_SYSTEM_PROPERTIES};
+
+    IPCXrGetSystemProperties args {instance, system, properties};
+
+    IPCXrGetSystemProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishGuestRequest();

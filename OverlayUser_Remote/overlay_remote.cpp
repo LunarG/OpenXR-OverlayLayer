@@ -370,6 +370,20 @@ int main( void )
     XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
     CHECK_XR(xrBeginSession(session, &beginInfo));
 
+    XrSystemProperties systemProperties { XR_TYPE_SYSTEM_PROPERTIES };
+    CHECK_XR(xrGetSystemProperties(instance, systemId, &systemProperties));
+    std::cout << "System \"" << systemProperties.systemName << "\", vendorId " << systemProperties.vendorId << "\n";
+
+    bool useSeparateLeftRightEyes;
+    if(systemProperties.graphicsProperties.maxLayerCount >= 2) {
+        useSeparateLeftRightEyes = true;
+    } else if(systemProperties.graphicsProperties.maxLayerCount >= 1) {
+        useSeparateLeftRightEyes = false;
+    } else {
+        std::cerr << "xrGetSystemProperties reports maxLayerCount 0, no way to display a compositor layer\n";
+        abort();
+    }
+
     // OpenXR Frame loop
     // XXX Should be checking events to enter/exit session but at time
     // of writing the RPC layer does not support events
@@ -410,8 +424,6 @@ int main( void )
 
         XrCompositionLayerQuad layers[2];
         XrCompositionLayerBaseHeader* layerPointers[2];
-
-	bool useSeparateLeftRightEyes = true;
 
 	if(useSeparateLeftRightEyes) {
 

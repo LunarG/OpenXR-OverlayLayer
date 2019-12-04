@@ -363,6 +363,14 @@ DWORD WINAPI ThreadBody(LPVOID)
                 break;
             }
 
+            case IPC_XR_GET_SYSTEM_PROPERTIES: {
+                auto args = ipcbuf.getAndAdvance<IPCXrGetSystemProperties>();
+                hdr->result = downchain->GetSystemProperties(args->instance, args->system, args->properties);
+                // Remote only gets the overlay layers
+                args->properties->graphicsProperties.maxLayerCount = MAX_OVERLAY_LAYER_COUNT;
+                break;
+            }
+
             case IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS: { 
                 auto args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
                 hdr->result = Overlay_xrEnumerateSwapchainFormats(args->session, args->formatCapacityInput, args->formatCountOutput, args->formats);
