@@ -426,6 +426,23 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
         }
 
         switch(dstbase->type) {
+            case XR_TYPE_FRAME_STATE: {
+                auto src = reinterpret_cast<const XrFrameState*>(srcbase);
+                auto dst = reinterpret_cast<XrFrameState*>(dstbase);
+                dst->predictedDisplayTime = src->predictedDisplayTime;
+                dst->predictedDisplayPeriod = src->predictedDisplayPeriod;
+                dst->shouldRender = src->shouldRender;
+                break;
+            }
+
+            case XR_TYPE_INSTANCE_PROPERTIES: {
+                auto src = reinterpret_cast<const XrInstanceProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrInstanceProperties*>(dstbase);
+                dst->runtimeVersion = src->runtimeVersion;
+                strncpy_s(dst->runtimeName, src->runtimeName, XR_MAX_RUNTIME_NAME_SIZE);
+                break;
+            }
+
 
             case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
                 auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
@@ -586,7 +603,10 @@ IPCXrGetInstanceProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header,
 template <>
 void IPCCopyOut(IPCXrGetInstanceProperties* dst, const IPCXrGetInstanceProperties* src)
 {
-    IPCCopyOut(dst->properties, src->properties);
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->properties),
+            reinterpret_cast<const XrBaseOutStructure*>(src->properties)
+            );
 }
 
 XrResult xrGetInstanceProperties (
@@ -705,7 +725,10 @@ IPCXrWaitFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 template <>
 void IPCCopyOut(IPCXrWaitFrame* dst, const IPCXrWaitFrame* src)
 {
-    IPCCopyOut(dst->frameState, src->frameState);
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->frameState),
+            reinterpret_cast<const XrBaseOutStructure*>(src->frameState)
+            );
 }
 
 XrResult xrWaitFrame(
