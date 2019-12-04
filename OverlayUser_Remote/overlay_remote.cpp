@@ -224,7 +224,7 @@ void FindRecommendedDimensions(XrInstance instance, XrSystemId systemId, int32_t
         abort();
     }
 
-    XrViewConfigurationProperties configurationProperties = {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
+    XrViewConfigurationProperties configurationProperties {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
     CHECK_XR(xrGetViewConfigurationProperties(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &configurationProperties));
 
     CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &count, nullptr));
@@ -313,7 +313,7 @@ int main( void )
     CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &hostProcessId));
     std::cout << "Remote process handshake succeeded!\n";
 
-    XrInstanceProperties properties = {XR_TYPE_INSTANCE_PROPERTIES, nullptr};
+    XrInstanceProperties properties {XR_TYPE_INSTANCE_PROPERTIES, nullptr};
     CHECK_XR(xrGetInstanceProperties(instance, &properties));
     std::cout << "Runtime \"" << properties.runtimeName << "\", version ";
     std::cout << XR_VERSION_MAJOR(properties.runtimeVersion) << ".";
@@ -367,7 +367,7 @@ int main( void )
     }};
     exitPollingThread.detach();
 
-    XrSessionBeginInfo beginInfo = {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+    XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
     CHECK_XR(xrBeginSession(session, &beginInfo));
 
     // OpenXR Frame loop
@@ -383,7 +383,7 @@ int main( void )
             then = std::chrono::steady_clock::now();
         }
 
-        XrFrameState waitFrameState;
+		XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
         xrWaitFrame(session, nullptr, &waitFrameState);
         xrBeginFrame(session, nullptr);
         for(int eye = 0; eye < 2; eye++) {
@@ -416,7 +416,7 @@ int main( void )
 	if(useSeparateLeftRightEyes) {
 
 	    for(uint32_t eye = 0; eye < 2; eye++) {
-		XrSwapchainSubImage fullImage = {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+		XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
 		layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
 		layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
 		layers[eye].next = nullptr;
@@ -438,7 +438,7 @@ int main( void )
 
 	} else {
 
-	    XrSwapchainSubImage fullImage = {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+	    XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
 	    layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
 	    layers[0].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
 	    layers[0].next = nullptr;
