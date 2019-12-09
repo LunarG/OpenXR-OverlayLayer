@@ -10,13 +10,12 @@
 #include <cstring>
 #include <cstdio>
 
-#define XR_USE_GRAPHICS_API_D3D11 1
+#include <d3d11_4.h>
+#include <d3d12.h>
 
 #include "xr_overlay_dll.h"
 #include "xr_generated_dispatch_table.h"
 #include "xr_linear.h"
-
-#include <d3d11_4.h>
 
 static std::string fmt(const char* fmt, ...)
 {
@@ -109,6 +108,8 @@ HANDLE gMainDestroySessionSema;
 // Overlay Session commands
 XrSession gSavedMainSession;
 ID3D11Device *gSavedD3DDevice;
+XrGraphicsRequirementsD3D11KHR gGraphicsRequirementsD3D11Saved; // XXX this is a struct and as such needs to be deep copied
+bool gGetGraphicsRequirementsD3D11KHRWasCalled = false;
 XrInstance gSavedInstance;
 XrSystemId gSavedSystemId;
 unsigned int overlaySessionStandin;
@@ -122,11 +123,11 @@ enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 const int OVERLAY_WAITFRAME_FIRSTWAIT_MILLIS = 10000;
 
 // WaitFrame state from Main Session for handing back to Overlay Session
-XrFrameState gSavedWaitFrameState;
+XrFrameState gSavedWaitFrameState; // XXX this is a struct and as such needs to be deep copied
 
 // Quad layers from Overlay Session to overlay on Main Session's layers
 uint32_t gOverlayQuadLayerCount = 0;
-XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT];
+XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT]; // XXX this is a struct and as such needs to be deep copied
 std::set<XrSwapchain> gSwapchainsDestroyPending;
 std::set<XrSpace> gSpacesDestroyPending;
 
@@ -525,6 +526,12 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_END_SESSION: {
                 auto args = ipcbuf.getAndAdvance<IPCXrEndSession>();
                 hdr->result = Overlay_xrEndSession(args->session);
+                break;
+            }
+
+            case IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR: {
+                auto args = ipcbuf.getAndAdvance<IPCXrGetD3D11GraphicsRequirementsKHR>();
+                hdr->result = Overlay_xrGetD3D11GraphicsRequirementsKHR(args->instance, args->systemId, args->graphicsRequirements);
                 break;
             }
 
@@ -1110,6 +1117,28 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
     return result;
 }
 
+XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(
+    XrInstance                                  instance,
+    XrSystemId                                  systemId,
+    XrGraphicsRequirementsD3D11KHR*             graphicsRequirements)
+{
+   	XrResult result;
+    if(!gGetGraphicsRequirementsD3D11KHRWasCalled) {
+		auto foo = downchain->GetD3D11GraphicsRequirementsKHR;
+        result = foo /* downchain->GetD3D11GraphicsRequirementsKHR */(instance, systemId, graphicsRequirements);
+		if (result == XR_SUCCESS) {
+			gGraphicsRequirementsD3D11Saved = *graphicsRequirements; // XXX Need deep copy for next chains...
+			gGraphicsRequirementsD3D11Saved.next = nullptr;
+			gGetGraphicsRequirementsD3D11KHRWasCalled = true;
+		}
+    } else {
+        *graphicsRequirements = gGraphicsRequirementsD3D11Saved; // XXX Need deep copy for next chains...
+		result = XR_SUCCESS;
+    }
+	return result;
+}
+
+
 XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PFN_xrVoidFunction *function) {
   if (0 == strcmp(name, "xrGetInstanceProcAddr")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetInstanceProcAddr);
@@ -1137,6 +1166,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainFormats);
   } else if (0 == strcmp(name, "xrEnumerateSwapchainImages")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainImages);
+  } else if (0 == strcmp(name, "xrGetD3D11GraphicsRequirementsKHR")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetD3D11GraphicsRequirementsKHR);
   } else {
     *function = nullptr;
   }

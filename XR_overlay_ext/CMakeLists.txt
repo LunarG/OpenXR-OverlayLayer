@@ -48,3 +48,16 @@ if (MSVC)
     ""
   )
 endif ()
+
+find_package(OpenGL)
+if (OPENGL_FOUND)
+    add_definitions(-DXR_USE_GRAPHICS_API_OPENGL)
+elseif(BUILD_ALL_EXTENSIONS)
+    message(FATAL_ERROR "OpenGL not found")
+endif()
+
+if(WIN32)
+    add_definitions(-DXR_USE_GRAPHICS_API_D3D11)
+    add_definitions(-DXR_USE_GRAPHICS_API_D3D12)
+endif()
+

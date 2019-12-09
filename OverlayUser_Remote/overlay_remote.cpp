@@ -11,6 +11,8 @@
 #include <chrono>
 #include <thread>
 
+#include <cassert>
+
 #define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "../XR_overlay_ext/xr_overlay_dll.h"
@@ -320,14 +322,15 @@ int main( void )
     std::cout << XR_VERSION_MINOR(properties.runtimeVersion) << ".";
     std::cout << XR_VERSION_PATCH(properties.runtimeVersion) << ".\n";
 
-    // XXX Should query D3D11 Graphics Requirements here to get LUID, and hide that in the remote functionality
+    // From here should be fairly generic OpenXR code
+
+    XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+    CHECK_XR(xrGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
 
     // Give us our best chance of success of sharing our Remote
     // swapchainImages by creating our D3D device on the same adapter as
     // the Host application's device
-    ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(adapterLUID);
-
-    // From here should be fairly generic OpenXR code
+    ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(graphicsRequirements.adapterLuid);
 
     XrSession session;
     CreateOverlaySession(d3d11Device, instance, systemId, &session);

@@ -290,6 +290,10 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
         switch(srcbase->type) {
 
             // Should copy only non-pointers instead of "*dst = *src"
+            case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase), serializationType));
+                break;
+            }
 
             case XR_TYPE_FRAME_STATE: {
                 dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameState*>(srcbase), serializationType));
@@ -431,6 +435,14 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
         }
 
         switch(dstbase->type) {
+            case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
+                auto src = reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase);
+                auto dst = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(dstbase);
+                dst->adapterLuid = src->adapterLuid;
+                dst->minFeatureLevel = src->minFeatureLevel;
+                break;
+            }
+
             case XR_TYPE_FRAME_STATE: {
                 auto src = reinterpret_cast<const XrFrameState*>(srcbase);
                 auto dst = reinterpret_cast<XrFrameState*>(dstbase);
@@ -681,6 +693,53 @@ XrResult xrGetSystemProperties (
     IPCXrGetSystemProperties args {instance, system, properties};
 
     IPCXrGetSystemProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrGetD3D11GraphicsRequirementsKHR ----------------------------------------
+
+template <>
+IPCXrGetD3D11GraphicsRequirementsKHR* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrGetD3D11GraphicsRequirementsKHR* src)
+{
+    auto dst = new(ipcbuf) IPCXrGetD3D11GraphicsRequirementsKHR;
+
+    dst->instance = src->instance;
+    dst->systemId = src->systemId;
+
+    dst->graphicsRequirements = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->graphicsRequirements), SERIALIZE_ONLY_TYPE_NEXT));
+    header->addOffsetToPointer(ipcbuf.base, &dst->graphicsRequirements);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrGetD3D11GraphicsRequirementsKHR* dst, const IPCXrGetD3D11GraphicsRequirementsKHR* src)
+{
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->graphicsRequirements),
+            reinterpret_cast<const XrBaseOutStructure*>(src->graphicsRequirements)
+            );
+}
+
+XrResult xrGetD3D11GraphicsRequirementsKHR  (
+    XrInstance                                   instance,
+    XrSystemId                                   system,
+	XrGraphicsRequirementsD3D11KHR*                        graphicsRequirements)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR};
+
+    IPCXrGetD3D11GraphicsRequirementsKHR args {instance, system, graphicsRequirements};
+
+    IPCXrGetD3D11GraphicsRequirementsKHR* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishGuestRequest();

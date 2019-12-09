@@ -9,7 +9,11 @@
 #include <new>
 #include <cstdlib>
 
+#include <d3d11_4.h>
+#include <d3d12.h>
+
 #include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
 #include <xr_dependencies.h>
 #include <loader_interfaces.h>
 
@@ -163,6 +167,12 @@ struct IPCXrGetSystemProperties {
     XrInstance                                  instance;
     XrSystemId                                  system;
     XrSystemProperties*                       properties;
+};
+
+struct IPCXrGetD3D11GraphicsRequirementsKHR {
+    XrInstance	instance;
+    XrSystemId	systemId;
+    XrGraphicsRequirementsD3D11KHR*             graphicsRequirements;
 };
 
 struct IPCXrBeginSession {
@@ -359,6 +369,7 @@ enum {
     IPC_XR_END_SESSION,
     IPC_XR_GET_INSTANCE_PROPERTIES,
     IPC_XR_GET_SYSTEM_PROPERTIES,
+    IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR,
 };
 
 enum IPCWaitResult {
@@ -404,6 +415,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrBeginSession(XrSession session, const XrSe
 XR_OVERLAY_EXT_API XrResult Overlay_xrEndSession(XrSession session);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySpace(XrSpace space);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain);
+XR_OVERLAY_EXT_API XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsD3D11KHR* graphicsRequirements);
 
 
 // Function used to negotiate an interface betewen the loader and a layer.
