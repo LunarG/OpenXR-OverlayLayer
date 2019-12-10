@@ -201,7 +201,7 @@ void ChooseSwapchainFormat(XrSession session, uint64_t* chosenFormat)
     CHECK_XR(xrEnumerateSwapchainFormats(session, 0, &count, nullptr));
     std::vector<int64_t> runtimeFormats(count);
     CHECK_XR(xrEnumerateSwapchainFormats(session, (uint32_t)count, &count, runtimeFormats.data()));
-    std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_R8G8B8A8_UNORM }; // , DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
+    std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
     auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
     if(formatFound == runtimeFormats.end()) {
         OutputDebugStringA("No supported swapchain format found\n");
@@ -267,14 +267,21 @@ void CreateSwapchainsAndGetImages(XrSession session, uint64_t chosenFormat, int3
     }
 }
 
-void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, ID3D11Texture2D* sourceImages[2])
+void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, ID3D11Texture2D* sourceImages[2], DXGI_FORMAT format)
 {
+	assert(
+		(format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ||
+		(format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) ||
+		(format == DXGI_FORMAT_R8G8B8A8_UNORM) ||
+		(format == DXGI_FORMAT_B8G8R8A8_UNORM)
+	);
+
     for(int i = 0; i < 2; i++) {
         D3D11_TEXTURE2D_DESC desc;
         desc.Width = recommendedWidth;
         desc.Height = recommendedHeight;
         desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        desc.Format = format;
         desc.SampleDesc.Count = 1;
         desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
         desc.Usage = D3D11_USAGE_STAGING;
@@ -296,8 +303,12 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
                 int srcY = y * height / recommendedHeight;
                 unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + 4 * (recommendedWidth * y + x);
                 unsigned char *src = imageBytes + 4 * (width * srcY + srcX);
-                for(int i = 0; i < 4; i++)
-                    dst[i] = src[i];
+                // Source data is in RGBA
+                if(format == DXGI_FORMAT_R8G8B8A8_UNORM || DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) { 
+                    dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+                } else if(format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) { 
+                    dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = src[3];
+                }
             }
         d3dContext->Unmap(sourceImages[i], 0);
     }
@@ -356,7 +367,7 @@ int main( void )
     d3d11Device->GetImmediateContext(&d3dContext);
 
     ID3D11Texture2D* sourceImages[2];
-    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, sourceImages);
+    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, sourceImages, (DXGI_FORMAT)chosenFormat);
 
     std::cout << "Created Swapchain and enumerated SwapchainImages and made local\n";
     std::cout << "    images as texture sources!\n";
