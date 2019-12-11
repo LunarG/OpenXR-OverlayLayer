@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <queue>
 
 #include <cassert>
 #include <cstring>
@@ -1112,6 +1113,115 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         }
     }
 
+    ReleaseMutex(gOverlayCallMutex);
+    return result;
+}
+
+enum { MAX_REMOTE_QUEUE_EVENTS = 5 };
+std::queue<XrEventDataBaseHeader*> gHostEventsSaved;
+
+XrEventDataBaseHeader* MakeEventCopy(const XrEventDataBaseHeader* eventData)
+{
+    if(eventData == nullptr) {
+        return nullptr;
+    }
+
+    XrEventDataBaseHeader* copy;
+
+    switch(eventData->type) {
+        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+            auto* dest = new XrEventDataInstanceLossPending;
+            *dest = *reinterpret_cast<const XrEventDataInstanceLossPending*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+            auto* dest = new XrEventDataSessionStateChanged;
+            *dest = *reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+            auto* dest = new XrEventDataReferenceSpaceChangePending;
+            *dest = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
+            auto* dest = new XrEventDataEventsLost;
+            *dest = *reinterpret_cast<const XrEventDataEventsLost*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
+            auto* dest = new XrEventDataInteractionProfileChanged;
+            *dest = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: { 
+            auto* dest = new XrEventDataPerfSettingsEXT;
+            *dest = *reinterpret_cast<const XrEventDataPerfSettingsEXT*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR: {
+            auto* dest = new XrEventDataVisibilityMaskChangedKHR;
+            *dest = *reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(eventData);
+            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
+            break;
+        }
+        default: {
+            OutputDebugStringA(fmt("**OVERLAY** skipped type %d in MakeEventCopy\n", eventData->type).c_str());
+            return MakeEventCopy(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next));
+            break;
+        }
+    }
+    copy->next = MakeEventCopy(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next));
+    return copy;
+}
+
+XrResult Overlay_xrPollEvent(
+        XrInstance                                  instance,
+        XrEventDataBuffer*                          eventData)
+{
+    XrResult result;
+
+    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+    if(waitresult == WAIT_TIMEOUT) {
+        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+        DebugBreak();
+    }
+    result = downchain->PollEvent(instance, eventData);
+
+    if(result == XR_SUCCESS) {
+        bool queueFull = (gHostEventsSaved.size() == MAX_REMOTE_QUEUE_EVENTS);
+        bool queueOneShortOfFull = (gHostEventsSaved.size() == MAX_REMOTE_QUEUE_EVENTS - 1);
+        bool backIsEventsLostEvent = (gHostEventsSaved.size() > 0) && (gHostEventsSaved.back()->type == XR_TYPE_EVENT_DATA_EVENTS_LOST);
+
+        bool alreadyLostSomeEvents = queueFull || (queueOneShortOfFull && backIsEventsLostEvent);
+
+        if(alreadyLostSomeEvents) {
+
+            auto* lost = reinterpret_cast<XrEventDataEventsLost*>(gHostEventsSaved.back());
+            lost->lostEventCount ++;
+            OutputDebugStringA(fmt("**OVERLAY** incremented lost event count to %d\n", lost->lostEventCount).c_str());
+
+        } else if(queueOneShortOfFull) {
+
+            XrEventDataEventsLost* lost = new XrEventDataEventsLost;
+            lost->type = XR_TYPE_EVENT_DATA_EVENTS_LOST;
+            lost->next = nullptr;
+            lost->lostEventCount = 1;
+            gHostEventsSaved.push(reinterpret_cast<XrEventDataBaseHeader*>(lost));
+            OutputDebugStringA(fmt("**OVERLAY** added events lost event\n").c_str());
+
+        } else {
+
+            gHostEventsSaved.push(MakeEventCopy(reinterpret_cast<const XrEventDataBaseHeader*>(eventData)));
+            OutputDebugStringA(fmt("**OVERLAY** added event type %d\n", eventData->type).c_str());
+        }
+    }
 
     ReleaseMutex(gOverlayCallMutex);
     return result;
@@ -1168,6 +1278,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEnumerateSwapchainImages);
   } else if (0 == strcmp(name, "xrGetD3D11GraphicsRequirementsKHR")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetD3D11GraphicsRequirementsKHR);
+  } else if (0 == strcmp(name, "xrPollEvent")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrPollEvent);
   } else {
     *function = nullptr;
   }
