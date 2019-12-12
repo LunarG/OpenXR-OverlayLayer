@@ -57,8 +57,13 @@ enum {
 struct IPCXrHandshake {
     DWORD remoteProcessId; 
     XrInstance *instance;
-    XrSystemId *systemId;
     DWORD *hostProcessId;
+};
+
+struct IPCXrGetSystem {
+	XrInstance                                  instance;
+	const XrSystemGetInfo*                      getInfo;
+    XrSystemId*                                 systemId;
 };
 
 struct IPCXrCreateSession {
@@ -375,6 +380,7 @@ enum {
     IPC_XR_GET_SYSTEM_PROPERTIES,
     IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR,
     IPC_XR_POLL_EVENT,
+    IPC_XR_GET_SYSTEM,
 };
 
 enum IPCWaitResult {
@@ -423,6 +429,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySpace(XrSpace space);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain);
 XR_OVERLAY_EXT_API XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsD3D11KHR* graphicsRequirements);
 XR_OVERLAY_EXT_API XrResult Overlay_xrPollEvent(XrInstance instance, XrEventDataBuffer* event);
+XR_OVERLAY_EXT_API XrResult Overlay_xrGetSystem(XrInstance instance, const XrSystemGetInfo* getInfo, XrSystemId* systemId);
 
 
 // Function used to negotiate an interface betewen the loader and a layer.

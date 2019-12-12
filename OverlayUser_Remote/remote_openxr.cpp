@@ -325,6 +325,11 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 break;
             }
 
+            case XR_TYPE_SYSTEM_GET_INFO: {
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSystemGetInfo*>(srcbase), serializationType));
+                break;
+            }
+
             case XR_TYPE_SWAPCHAIN_CREATE_INFO: {
                 dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase), serializationType));
                 break;
@@ -1256,6 +1261,53 @@ XrResult xrCreateSession(
     return header->result;
 }
 
+// xrGetSystem --------------------------------------------------------------
+
+template <>
+IPCXrGetSystem* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrGetSystem* src)
+{
+    auto dst = new(ipcbuf) IPCXrGetSystem;
+
+    dst->instance = src->instance;
+
+    dst->getInfo = reinterpret_cast<const XrSystemGetInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->getInfo), SERIALIZE_EVERYTHING));
+    header->addOffsetToPointer(ipcbuf.base, &dst->getInfo);
+
+    dst->systemId = IPCSerializeNoCopy(ipcbuf, header, src->systemId);
+    header->addOffsetToPointer(ipcbuf.base, &dst->systemId);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrGetSystem* dst, const IPCXrGetSystem* src)
+{
+    IPCCopyOut(dst->systemId, src->systemId);
+}
+
+XrResult xrGetSystem(
+    XrInstance instance,
+    const XrSystemGetInfo* getInfo,
+    XrSystemId* systemId)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_GET_SYSTEM};
+
+    IPCXrGetSystem args {instance, getInfo, systemId};
+
+    IPCXrGetSystem* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    header->makePointersRelative(ipcbuf.base);
+
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
 // xrCreateReferenceSpace ---------------------------------------------------
 
 template <>
@@ -1314,8 +1366,6 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
     // TODO don't bother copying instance in here because out only
     dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
-    dst->systemId = IPCSerializeNoCopy(ipcbuf, header, src->systemId);
-    header->addOffsetToPointer(ipcbuf.base, &dst->systemId);
     dst->hostProcessId = IPCSerializeNoCopy(ipcbuf, header, src->hostProcessId);
     header->addOffsetToPointer(ipcbuf.base, &dst->hostProcessId);
 
@@ -1326,19 +1376,17 @@ template <>
 void IPCCopyOut(IPCXrHandshake* dst, const IPCXrHandshake* src)
 {
     IPCCopyOut(dst->instance, src->instance);
-    IPCCopyOut(dst->systemId, src->systemId);
     IPCCopyOut(dst->hostProcessId, src->hostProcessId);
 }
 
 XrResult ipcxrHandshake(
     XrInstance *instance,
-    XrSystemId *systemId,
     DWORD *hostProcessId)
 {
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake args {GetCurrentProcessId(), instance, systemId, hostProcessId};
+    IPCXrHandshake args {GetCurrentProcessId(), instance, hostProcessId};
     IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);

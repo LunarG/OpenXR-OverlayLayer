@@ -128,7 +128,6 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
 // Special IPC handshake function
 XrResult ipcxrHandshake(
 	XrInstance *instance,
-	XrSystemId *systemId,
 	DWORD *hostProcessId);
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
@@ -319,10 +318,11 @@ int main( void )
 
     // RPC Initialization not generic to OpenXR
     XrInstance instance;
-    XrSystemId systemId;
     DWORD hostProcessId;
-    CHECK_XR(ipcxrHandshake(&instance, &systemId, &hostProcessId));
+    CHECK_XR(ipcxrHandshake(&instance, &hostProcessId));
     std::cout << "Remote process handshake succeeded!\n";
+
+    // From here should be fairly generic OpenXR code
 
     XrInstanceProperties properties {XR_TYPE_INSTANCE_PROPERTIES, nullptr};
     CHECK_XR(xrGetInstanceProperties(instance, &properties));
@@ -331,7 +331,9 @@ int main( void )
     std::cout << XR_VERSION_MINOR(properties.runtimeVersion) << ".";
     std::cout << XR_VERSION_PATCH(properties.runtimeVersion) << ".\n";
 
-    // From here should be fairly generic OpenXR code
+    XrSystemId systemId;
+    XrSystemGetInfo getInfo { XR_TYPE_SYSTEM_GET_INFO, nullptr, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY };
+    CHECK_XR(xrGetSystem(instance, &getInfo, &systemId));
 
     XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
     CHECK_XR(xrGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));

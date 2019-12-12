@@ -112,6 +112,7 @@ ID3D11Device *gSavedD3DDevice;
 XrGraphicsRequirementsD3D11KHR gGraphicsRequirementsD3D11Saved; // XXX this is a struct and as such needs to be deep copied
 bool gGetGraphicsRequirementsD3D11KHRWasCalled = false;
 XrInstance gSavedInstance;
+XrFormFactor gSavedFormFactor;
 XrSystemId gSavedSystemId;
 unsigned int overlaySessionStandin;
 XrSession kOverlayFakeSession = reinterpret_cast<XrSession>(&overlaySessionStandin);
@@ -331,7 +332,6 @@ DWORD WINAPI ThreadBody(LPVOID)
                 CHECK_NOT_NULL(remoteProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, args->remoteProcessId));
 
                 *(args->instance) = gSavedInstance;
-                *(args->systemId) = gSavedSystemId;
 
                 {
                     IDXGIDevice * dxgiDevice;
@@ -354,6 +354,18 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_CREATE_SESSION: {
                 auto args = ipcbuf.getAndAdvance<IPCXrCreateSession>();
                 hdr->result = Overlay_xrCreateSession(args->instance, args->createInfo, args->session);
+                break;
+            }
+
+            case IPC_XR_GET_SYSTEM: {
+                auto args = ipcbuf.getAndAdvance<IPCXrGetSystem>();
+                if(args->getInfo->formFactor == gSavedFormFactor) {
+                    *args->systemId = gSavedSystemId;
+                    hdr->result = XR_SUCCESS;
+                } else {
+                    *args->systemId = XR_NULL_SYSTEM_ID;
+                    hdr->result = XR_ERROR_FORM_FACTOR_UNAVAILABLE;
+                }
                 break;
             }
 
@@ -1221,6 +1233,18 @@ XrResult Overlay_xrPollEvent(
     return result;
 }
 
+
+XrResult Overlay_xrGetSystem(
+    XrInstance                                  instance,
+    const XrSystemGetInfo*                      getInfo,
+    XrSystemId*                                 systemId)
+{
+    XrResult result = downchain->GetSystem(instance, getInfo, systemId);
+    gSavedFormFactor = getInfo->formFactor;
+    gSavedSystemId = *systemId;
+    return result;
+}
+
 XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(
     XrInstance                                  instance,
     XrSystemId                                  systemId,
@@ -1274,6 +1298,8 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetD3D11GraphicsRequirementsKHR);
   } else if (0 == strcmp(name, "xrPollEvent")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrPollEvent);
+  } else if (0 == strcmp(name, "xrGetSystem")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrGetSystem);
   } else {
     *function = nullptr;
   }
