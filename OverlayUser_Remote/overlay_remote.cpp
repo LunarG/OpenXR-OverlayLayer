@@ -405,13 +405,63 @@ int main( void )
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
     while(!quit) {
+
         auto now = std::chrono::steady_clock::now();
         if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
             whichImage = (whichImage + 1) % 2;
             then = std::chrono::steady_clock::now();
         }
 
-		XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
+        bool getAnotherEvent = true;
+        while (getAnotherEvent) {
+            static XrEventDataBuffer event;
+            event.type = XR_TYPE_EVENT_DATA_BUFFER;
+            event.next = nullptr;
+            XrResult result = xrPollEvent(instance, &event);
+            if(result == XR_SUCCESS) {
+                switch(event.type) {
+                    case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+                        const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(&event);
+                        quit = true;
+                        break;
+                    }
+                    case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+                        const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(&event);
+                        if(e.session == session) {
+                            // Handle state change of our session
+                        }
+                        break;
+                    }
+                    case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+                        const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
+                        // Handle reference space change pending
+                        break;
+                    }
+                    case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
+                        const auto& e = *reinterpret_cast<const XrEventDataEventsLost*>(&event);
+                        std::cout << "Warning: lost " << e.lostEventCount << " events\n";
+                        break;
+                    }
+                    case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
+                        const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(&event);
+                        // Handle data interaction profile changed
+                        break;
+                    }
+                    default: {
+                        std::cout << "Warning: ignoring event type " << event.type << "\n";
+                        break;
+                    }
+                }
+            } else {
+                getAnotherEvent = false;
+            }
+        }
+
+        if(quit) {
+            break;
+        }
+
+        XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
         xrWaitFrame(session, nullptr, &waitFrameState);
         xrBeginFrame(session, nullptr);
         for(int eye = 0; eye < 2; eye++) {

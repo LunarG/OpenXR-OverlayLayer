@@ -184,6 +184,11 @@ struct IPCXrEndSession {
     XrSession                                   session;
 };
 
+struct IPCXrPollEvent {
+    XrInstance                                  instance;
+    XrEventDataBuffer*                          event;
+};
+
 // no RPC struct for EnumerateSwapchainImages
 
 #define MAX_POINTER_FIXUP_COUNT 128
@@ -370,6 +375,7 @@ enum {
     IPC_XR_GET_INSTANCE_PROPERTIES,
     IPC_XR_GET_SYSTEM_PROPERTIES,
     IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR,
+    IPC_XR_POLL_EVENT,
 };
 
 enum IPCWaitResult {
@@ -395,6 +401,7 @@ XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
 XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
 XR_OVERLAY_EXT_API void IPCFinishHostResponse();
 
+XR_OVERLAY_EXT_API void CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer);
 
 
 // Exported entry points
@@ -416,6 +423,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrEndSession(XrSession session);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySpace(XrSpace space);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain);
 XR_OVERLAY_EXT_API XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsD3D11KHR* graphicsRequirements);
+XR_OVERLAY_EXT_API XrResult Overlay_xrPollEvent(XrInstance instance, XrEventDataBuffer* event);
 
 
 // Function used to negotiate an interface betewen the loader and a layer.

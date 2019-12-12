@@ -345,6 +345,11 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
                 break;
             }
 
+            case XR_TYPE_EVENT_DATA_BUFFER: {
+                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrEventDataBuffer*>(srcbase), serializationType));
+                break;
+            }
+
             case XR_TYPE_FRAME_END_INFO: {
                 auto src = reinterpret_cast<const XrFrameEndInfo*>(srcbase);
                 auto dst = new(ipcbuf) XrFrameEndInfo;
@@ -653,6 +658,54 @@ XrResult xrGetInstanceProperties (
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrGetPollEvent -----------------------------------------------------------
+
+template <>
+IPCXrPollEvent* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrPollEvent* src)
+{
+    auto dst = new(ipcbuf) IPCXrPollEvent;
+
+    dst->instance = src->instance;
+
+    dst->event = reinterpret_cast<XrEventDataBuffer*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->event), SERIALIZE_ONLY_TYPE_NEXT));
+    header->addOffsetToPointer(ipcbuf.base, &dst->event);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrPollEvent* dst, const IPCXrPollEvent* src)
+{
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->event),
+            reinterpret_cast<const XrBaseOutStructure*>(src->event)
+            );
+}
+
+XrResult xrPollEvent (
+    XrInstance                                   instance,
+    XrEventDataBuffer*                        event)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_POLL_EVENT};
+
+    IPCXrPollEvent args {instance, event};
+
+    IPCXrPollEvent* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized);
+    if(header->result == XR_SUCCESS) {
+        CopyEventChainIntoBuffer(const_cast<const XrEventDataBaseHeader*>(reinterpret_cast<XrEventDataBaseHeader*>(argsSerialized->event)), event);
+    }
 
     return header->result;
 }

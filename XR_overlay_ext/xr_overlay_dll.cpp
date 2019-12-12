@@ -2,6 +2,8 @@
 //
 
 #include "xr_overlay_dll.h"
+#include <string>
+#include <memory>
 
 // The DLL code
 #include <memory.h> 
@@ -30,6 +32,88 @@ XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
 {
     return IPCBuffer(shared_mem, mem_size);
 }
+
+static std::string fmt(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    int size = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    if(size >= 0) {
+        int provided = size + 1;
+        std::unique_ptr<char[]> buf(new char[provided]);
+
+        va_start(args, fmt);
+        int size = vsnprintf(buf.get(), provided, fmt, args);
+        va_end(args);
+
+        return std::string(buf.get());
+    }
+    return "(fmt() failed, vsnprintf returned -1)";
+}
+
+const void* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, unsigned char* buffer, size_t remaining);
+
+template <class XR_TYPE>
+const void* CopyXrTypeIntoBuffer(const XR_TYPE* eventData, XR_TYPE* buffer, size_t remaining)
+{
+    if (remaining < sizeof(XR_TYPE)) {
+        OutputDebugStringA(fmt("**OVERLAY** out of buffer space in CopyXrTypeIntoBuffer\n").c_str());
+        DebugBreak();
+    }
+    auto* dest = reinterpret_cast<XR_TYPE*>(buffer);
+    *dest = *reinterpret_cast<const XR_TYPE*>(eventData);
+    unsigned char *next = reinterpret_cast<unsigned char*>(buffer) + sizeof(XR_TYPE);
+    dest->next = CopyEventChainIntoBuffer(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next), next, remaining - sizeof(XR_TYPE));
+    return buffer;
+}
+
+const void* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, unsigned char* buffer, size_t remaining)
+{
+    if(eventData == nullptr) {
+        return nullptr;
+    }
+
+    switch(eventData->type) {
+        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataInstanceLossPending*>(eventData), reinterpret_cast<XrEventDataInstanceLossPending*>(buffer), remaining);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData), reinterpret_cast<XrEventDataSessionStateChanged*>(buffer), remaining);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(eventData), reinterpret_cast<XrEventDataReferenceSpaceChangePending*>(buffer), remaining);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataEventsLost*>(eventData), reinterpret_cast<XrEventDataEventsLost*>(buffer), remaining);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataInteractionProfileChanged*>(eventData), reinterpret_cast<XrEventDataInteractionProfileChanged*>(buffer), remaining);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: { 
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataPerfSettingsEXT*>(eventData), reinterpret_cast<XrEventDataPerfSettingsEXT*>(buffer), remaining);
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR: {
+            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(eventData), reinterpret_cast<XrEventDataVisibilityMaskChangedKHR*>(buffer), remaining);
+            break;
+        }
+        default: {
+            OutputDebugStringA(fmt("**OVERLAY** skipped type %d in CopyEventChainIntoBuffer\n", eventData->type).c_str());
+            DebugBreak();
+            return CopyEventChainIntoBuffer(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next), buffer, remaining);
+            break;
+        }
+    }
+    return buffer;
+}
+
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -113,7 +197,7 @@ bool IPCWaitForHostResponse()
 {
     WaitForSingleObject(gHostResponseSema, HOST_RESPONSE_WAIT_MILLIS);
     // XXX TODO something sane on very long timeout
-	return true;
+		return true;
 }
 
 // Set up shared memory using a named file-mapping object. 
@@ -177,6 +261,10 @@ bool UnmapSharedMemory()
     return err;
 } 
 
+XR_OVERLAY_EXT_API void CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
+{
+    CopyEventChainIntoBuffer(eventData, reinterpret_cast<unsigned char*>(buffer), sizeof(*buffer));
+}
 
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,

@@ -132,6 +132,11 @@ XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT]; // XXX this 
 std::set<XrSwapchain> gSwapchainsDestroyPending;
 std::set<XrSpace> gSpacesDestroyPending;
 
+// Events copied and queued from host XrPollEvent for later pickup by remote.
+enum { MAX_REMOTE_QUEUE_EVENTS = 16 };
+typedef std::unique_ptr<XrEventDataBuffer> EventDataBufferPtr;
+std::queue<EventDataBufferPtr> gHostEventsSaved;
+
 // Mutex synchronizing access to Main session and Overlay session commands
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
@@ -199,6 +204,7 @@ struct SwapchainCachedData
 
 typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
 std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
+
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -533,6 +539,55 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR: {
                 auto args = ipcbuf.getAndAdvance<IPCXrGetD3D11GraphicsRequirementsKHR>();
                 hdr->result = Overlay_xrGetD3D11GraphicsRequirementsKHR(args->instance, args->systemId, args->graphicsRequirements);
+                break;
+            }
+
+            case IPC_XR_POLL_EVENT: {
+                auto args = ipcbuf.getAndAdvance<IPCXrPollEvent>();
+                DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+                if(waitresult == WAIT_TIMEOUT) {
+                    OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+                    DebugBreak();
+                }
+                if(gHostEventsSaved.size() == 0) {
+                    hdr->result = XR_EVENT_UNAVAILABLE;
+                } else {
+                    EventDataBufferPtr event(std::move(gHostEventsSaved.front()));
+                    gHostEventsSaved.pop();
+                    CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader*>(event.get()), args->event);
+
+                    // Find all XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED.  If the session is our Main,
+                    // change the session to be our overlay session stand-in.
+                    const void *next = args->event;
+                    while(next != nullptr) {
+                        const auto* e = reinterpret_cast<const XrEventDataBaseHeader*>(next);
+                        if(e->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+                            const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(e);
+                            if(ssc->session == gSavedMainSession) {
+                                auto* ssc2 = const_cast<XrEventDataSessionStateChanged*>(ssc);
+                                ssc2->session = kOverlayFakeSession;
+                            }
+                        }
+                        next = e->next;
+                    }
+
+                    // args->event is already registered as a pointer
+                    // that has to be updated as it passes over IPC.
+                    // Add all newly created *subsequent* next pointers in
+                    // the chain, too.
+                    const void** tofix = &(args->event->next);
+                    while (*tofix != nullptr) {
+                        hdr->addOffsetToPointer(ipcbuf.base, tofix);
+                        const XrEventDataBaseHeader* qq = reinterpret_cast<const XrEventDataBaseHeader*>(*tofix);
+                        tofix = const_cast<const void **>(&(qq->next));
+                    }
+                    // add next pointers to the pointer list
+
+                    hdr->result = XR_SUCCESS;
+                    // event goes out of scope and is deleted
+                }
+                ReleaseMutex(gOverlayCallMutex);
+
                 break;
             }
 
@@ -1117,70 +1172,6 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
     return result;
 }
 
-enum { MAX_REMOTE_QUEUE_EVENTS = 5 };
-std::queue<XrEventDataBaseHeader*> gHostEventsSaved;
-
-XrEventDataBaseHeader* MakeEventCopy(const XrEventDataBaseHeader* eventData)
-{
-    if(eventData == nullptr) {
-        return nullptr;
-    }
-
-    XrEventDataBaseHeader* copy;
-
-    switch(eventData->type) {
-        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
-            auto* dest = new XrEventDataInstanceLossPending;
-            *dest = *reinterpret_cast<const XrEventDataInstanceLossPending*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
-            auto* dest = new XrEventDataSessionStateChanged;
-            *dest = *reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
-            auto* dest = new XrEventDataReferenceSpaceChangePending;
-            *dest = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
-            auto* dest = new XrEventDataEventsLost;
-            *dest = *reinterpret_cast<const XrEventDataEventsLost*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
-            auto* dest = new XrEventDataInteractionProfileChanged;
-            *dest = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: { 
-            auto* dest = new XrEventDataPerfSettingsEXT;
-            *dest = *reinterpret_cast<const XrEventDataPerfSettingsEXT*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR: {
-            auto* dest = new XrEventDataVisibilityMaskChangedKHR;
-            *dest = *reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(eventData);
-            copy = reinterpret_cast<XrEventDataBaseHeader*>(dest);
-            break;
-        }
-        default: {
-            OutputDebugStringA(fmt("**OVERLAY** skipped type %d in MakeEventCopy\n", eventData->type).c_str());
-            return MakeEventCopy(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next));
-            break;
-        }
-    }
-    copy->next = MakeEventCopy(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next));
-    return copy;
-}
-
 XrResult Overlay_xrPollEvent(
         XrInstance                                  instance,
         XrEventDataBuffer*                          eventData)
@@ -1201,25 +1192,30 @@ XrResult Overlay_xrPollEvent(
 
         bool alreadyLostSomeEvents = queueFull || (queueOneShortOfFull && backIsEventsLostEvent);
 
-        if(alreadyLostSomeEvents) {
+        EventDataBufferPtr newEvent(new XrEventDataBuffer{XR_TYPE_EVENT_DATA_BUFFER});
+        CopyEventChainIntoBuffer(const_cast<const XrEventDataBaseHeader*>(reinterpret_cast<XrEventDataBaseHeader*>(eventData)), newEvent.get());
 
-            auto* lost = reinterpret_cast<XrEventDataEventsLost*>(gHostEventsSaved.back());
-            lost->lostEventCount ++;
-            OutputDebugStringA(fmt("**OVERLAY** incremented lost event count to %d\n", lost->lostEventCount).c_str());
+        if(newEvent.get()->type != XR_TYPE_EVENT_DATA_BUFFER) {
+            // We were able to find some known events in the event pointer chain
 
-        } else if(queueOneShortOfFull) {
+            if(alreadyLostSomeEvents) {
 
-            XrEventDataEventsLost* lost = new XrEventDataEventsLost;
-            lost->type = XR_TYPE_EVENT_DATA_EVENTS_LOST;
-            lost->next = nullptr;
-            lost->lostEventCount = 1;
-            gHostEventsSaved.push(reinterpret_cast<XrEventDataBaseHeader*>(lost));
-            OutputDebugStringA(fmt("**OVERLAY** added events lost event\n").c_str());
+                auto* lost = reinterpret_cast<XrEventDataEventsLost*>(gHostEventsSaved.back().get());
+                lost->lostEventCount ++;
 
-        } else {
+            } else if(queueOneShortOfFull) {
 
-            gHostEventsSaved.push(MakeEventCopy(reinterpret_cast<const XrEventDataBaseHeader*>(eventData)));
-            OutputDebugStringA(fmt("**OVERLAY** added event type %d\n", eventData->type).c_str());
+                EventDataBufferPtr newEvent(new XrEventDataBuffer);
+                XrEventDataEventsLost* lost = reinterpret_cast<XrEventDataEventsLost*>(newEvent.get());
+                lost->type = XR_TYPE_EVENT_DATA_EVENTS_LOST;
+                lost->next = nullptr;
+                lost->lostEventCount = 1;
+                gHostEventsSaved.emplace(std::move(newEvent));
+
+            } else {
+
+                gHostEventsSaved.emplace(std::move(newEvent));
+            }
         }
     }
 
@@ -1234,18 +1230,18 @@ XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(
 {
    	XrResult result;
     if(!gGetGraphicsRequirementsD3D11KHRWasCalled) {
-		auto foo = downchain->GetD3D11GraphicsRequirementsKHR;
+        auto foo = downchain->GetD3D11GraphicsRequirementsKHR;
         result = foo /* downchain->GetD3D11GraphicsRequirementsKHR */(instance, systemId, graphicsRequirements);
-		if (result == XR_SUCCESS) {
-			gGraphicsRequirementsD3D11Saved = *graphicsRequirements; // XXX Need deep copy for next chains...
-			gGraphicsRequirementsD3D11Saved.next = nullptr;
-			gGetGraphicsRequirementsD3D11KHRWasCalled = true;
-		}
+        if (result == XR_SUCCESS) {
+            gGraphicsRequirementsD3D11Saved = *graphicsRequirements; // XXX Need deep copy for next chains...
+            gGraphicsRequirementsD3D11Saved.next = nullptr;
+            gGetGraphicsRequirementsD3D11KHRWasCalled = true;
+        }
     } else {
         *graphicsRequirements = gGraphicsRequirementsD3D11Saved; // XXX Need deep copy for next chains...
-		result = XR_SUCCESS;
+        result = XR_SUCCESS;
     }
-	return result;
+    return result;
 }
 
 
