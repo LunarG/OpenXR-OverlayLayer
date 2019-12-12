@@ -58,7 +58,6 @@ struct IPCXrHandshake {
     DWORD remoteProcessId; 
     XrInstance *instance;
     XrSystemId *systemId;
-    LUID *adapterLUID;
     DWORD *hostProcessId;
 };
 

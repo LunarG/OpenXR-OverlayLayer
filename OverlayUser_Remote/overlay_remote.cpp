@@ -129,7 +129,6 @@ XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
 XrResult ipcxrHandshake(
 	XrInstance *instance,
 	XrSystemId *systemId,
-	LUID *luid,
 	DWORD *hostProcessId);
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
@@ -321,9 +320,8 @@ int main( void )
     // RPC Initialization not generic to OpenXR
     XrInstance instance;
     XrSystemId systemId;
-    LUID adapterLUID;
     DWORD hostProcessId;
-    CHECK_XR(ipcxrHandshake(&instance, &systemId, &adapterLUID, &hostProcessId));
+    CHECK_XR(ipcxrHandshake(&instance, &systemId, &hostProcessId));
     std::cout << "Remote process handshake succeeded!\n";
 
     XrInstanceProperties properties {XR_TYPE_INSTANCE_PROPERTIES, nullptr};

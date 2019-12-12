@@ -1316,8 +1316,6 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
     dst->systemId = IPCSerializeNoCopy(ipcbuf, header, src->systemId);
     header->addOffsetToPointer(ipcbuf.base, &dst->systemId);
-    dst->adapterLUID = IPCSerializeNoCopy(ipcbuf, header, src->adapterLUID);
-    header->addOffsetToPointer(ipcbuf.base, &dst->adapterLUID);
     dst->hostProcessId = IPCSerializeNoCopy(ipcbuf, header, src->hostProcessId);
     header->addOffsetToPointer(ipcbuf.base, &dst->hostProcessId);
 
@@ -1329,20 +1327,18 @@ void IPCCopyOut(IPCXrHandshake* dst, const IPCXrHandshake* src)
 {
     IPCCopyOut(dst->instance, src->instance);
     IPCCopyOut(dst->systemId, src->systemId);
-    IPCCopyOut(dst->adapterLUID, src->adapterLUID);
     IPCCopyOut(dst->hostProcessId, src->hostProcessId);
 }
 
 XrResult ipcxrHandshake(
     XrInstance *instance,
     XrSystemId *systemId,
-    LUID *luid,
     DWORD *hostProcessId)
 {
     IPCBuffer ipcbuf = IPCGetBuffer();
     auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
 
-    IPCXrHandshake args {GetCurrentProcessId(), instance, systemId, luid, hostProcessId};
+    IPCXrHandshake args {GetCurrentProcessId(), instance, systemId, hostProcessId};
     IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);

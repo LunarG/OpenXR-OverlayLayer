@@ -343,8 +343,6 @@ DWORD WINAPI ThreadBody(LPVOID)
                     DXGI_ADAPTER_DESC desc;
                     CHECK(adapter->GetDesc(&desc));
 
-                    *(args->adapterLUID) = desc.AdapterLuid;
-
                     *(args->hostProcessId) = GetCurrentProcessId();
 
                     dxgiDevice->Release();
