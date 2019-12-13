@@ -112,6 +112,8 @@ ID3D11Device *gSavedD3DDevice;
 XrGraphicsRequirementsD3D11KHR gGraphicsRequirementsD3D11Saved; // XXX this is a struct and as such needs to be deep copied
 bool gGetGraphicsRequirementsD3D11KHRWasCalled = false;
 XrInstance gSavedInstance;
+std::set<std::string> gSavedRequestedExtensions;
+std::set<std::string> gSavedRequestedApiLayers;
 XrFormFactor gSavedFormFactor;
 XrSystemId gSavedSystemId;
 unsigned int overlaySessionStandin;
@@ -312,9 +314,9 @@ DWORD WINAPI ThreadBody(LPVOID)
 
         switch(hdr->requestType) {
 
-            case IPC_HANDSHAKE: {
+            case IPC_XR_CREATE_INSTANCE: {
                 // Establish IPC parameters and make initial handshake
-                auto args = ipcbuf.getAndAdvance<IPCXrHandshake>();
+                auto args = ipcbuf.getAndAdvance<IPCXrCreateInstance>();
 
                 // Wait on main session
                 if(!gMainSessionCreated) {
@@ -325,27 +327,28 @@ DWORD WINAPI ThreadBody(LPVOID)
                     }
                 }
 
-                hdr->result = XR_SUCCESS;
+                bool extensionsSupported = true;
+                for(unsigned int i = 0; extensionsSupported && (i < args->createInfo->enabledExtensionCount); i++) {
+                    extensionsSupported = gSavedRequestedExtensions.find(args->createInfo->enabledExtensionNames[i]) != gSavedRequestedExtensions.end();
+                }
 
-                connectionIsActive = true;
-                DWORD remote = args->remoteProcessId;
-                CHECK_NOT_NULL(remoteProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, args->remoteProcessId));
+                bool apiLayersSupported = true;
+                for(unsigned int i = 0; apiLayersSupported && (i < args->createInfo->enabledApiLayerCount); i++) {
+                    apiLayersSupported = gSavedRequestedApiLayers.find(args->createInfo->enabledApiLayerNames[i]) != gSavedRequestedApiLayers.end();
+                }
 
-                *(args->instance) = gSavedInstance;
+                if(!apiLayersSupported) {
+                    hdr->result = XR_ERROR_API_LAYER_NOT_PRESENT;
+                } else if(!extensionsSupported) {
+                    hdr->result = XR_ERROR_EXTENSION_NOT_PRESENT;
+                } else {
+                    hdr->result = XR_SUCCESS;
+                    connectionIsActive = true;
+                    DWORD remote = args->remoteProcessId;
+                    CHECK_NOT_NULL(remoteProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, args->remoteProcessId));
 
-                {
-                    IDXGIDevice * dxgiDevice;
-                    CHECK(gSavedD3DDevice->QueryInterface(__uuidof(IDXGIDevice), (void **)&dxgiDevice));
-
-                    IDXGIAdapter *adapter;
-                    CHECK(dxgiDevice->GetAdapter(&adapter));
-
-                    DXGI_ADAPTER_DESC desc;
-                    CHECK(adapter->GetDesc(&desc));
-
+                    *(args->instance) = gSavedInstance;
                     *(args->hostProcessId) = GetCurrentProcessId();
-
-                    dxgiDevice->Release();
                 }
 
                 break;
@@ -635,6 +638,17 @@ XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, cons
 {
     assert(0 == strncmp(kOverlayLayerName, apiLayerInfo->nextInfo->layerName, strnlen_s(kOverlayLayerName, XR_MAX_API_LAYER_NAME_SIZE)));
     assert(nullptr != apiLayerInfo->nextInfo);
+
+    gSavedRequestedExtensions.clear();
+    gSavedRequestedExtensions.insert("XR_EXT_overlay");
+    gSavedRequestedExtensions.insert(info->enabledExtensionNames, info->enabledExtensionNames + info->enabledExtensionCount);
+
+    gSavedRequestedApiLayers.clear();
+    // Is there a way to query which layers are only downstream?
+    // We can't get to the functionality of layers upstream (closer to
+    // the app), so we can't claim all these layers are enabled (the remote
+    // app can't use these layers)
+    // gSavedRequestedApiLayers.insert(info->enabledApiLayerNames, info->enabledApiLayerNames + info->enabledApiLayerCount);
 
     // Copy the contents of the layer info struct, but then move the next info up by
     // one slot so that the next layer gets information.

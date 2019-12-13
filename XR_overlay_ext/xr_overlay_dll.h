@@ -54,9 +54,10 @@ enum {
 
 // Structs containing RPC arguments -----------------------------------------
 
-struct IPCXrHandshake {
-    DWORD remoteProcessId; 
+struct IPCXrCreateInstance {
+    const XrInstanceCreateInfo*                 createInfo;
     XrInstance *instance;
+    DWORD remoteProcessId; 
     DWORD *hostProcessId;
 };
 
@@ -357,7 +358,7 @@ inline void operator delete(void* p, IPCBuffer& buffer)
 
 // RPC types implemented
 enum {
-    IPC_HANDSHAKE = 1,
+    IPC_XR_CREATE_INSTANCE = 1,
     IPC_XR_CREATE_SESSION,
     IPC_XR_CREATE_REFERENCE_SPACE,
     IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS,

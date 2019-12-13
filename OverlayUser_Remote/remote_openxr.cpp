@@ -290,6 +290,39 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
         switch(srcbase->type) {
 
             // Should copy only non-pointers instead of "*dst = *src"
+            case XR_TYPE_INSTANCE_CREATE_INFO: {
+                auto src = reinterpret_cast<const XrInstanceCreateInfo*>(srcbase);
+                auto dst = new(ipcbuf) XrInstanceCreateInfo;
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                dst->type = src->type;
+
+                dst->createFlags = src->createFlags;
+				dst->applicationInfo = src->applicationInfo;
+
+                // Lay down API layer names...
+                auto enabledApiLayerNames = new(ipcbuf) char*[src->enabledApiLayerCount];
+                dst->enabledApiLayerNames = enabledApiLayerNames;
+                dst->enabledApiLayerCount = src->enabledApiLayerCount;
+                header->addOffsetToPointer(ipcbuf.base, &dst->enabledApiLayerNames);
+                for(uint32_t i = 0; i < dst->enabledApiLayerCount; i++) {
+                    enabledApiLayerNames[i] = new(ipcbuf) char[strlen(src->enabledApiLayerNames[i]) + 1];
+                    strncpy_s(enabledApiLayerNames[i], strlen(src->enabledApiLayerNames[i]) + 1, src->enabledApiLayerNames[i], strlen(src->enabledApiLayerNames[i]) + 1);
+                    header->addOffsetToPointer(ipcbuf.base, &enabledApiLayerNames[i]);
+                }
+
+                // Lay down extension layer names...
+                auto enabledExtensionNames = new(ipcbuf) char*[src->enabledExtensionCount];
+                dst->enabledExtensionNames = enabledExtensionNames;
+                dst->enabledExtensionCount = src->enabledExtensionCount;
+                header->addOffsetToPointer(ipcbuf.base, &dst->enabledExtensionNames);
+                for(uint32_t i = 0; i < dst->enabledExtensionCount; i++) {
+                    enabledExtensionNames[i] = new(ipcbuf) char[strlen(src->enabledExtensionNames[i]) + 1];
+                    strncpy_s(enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1, src->enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1);
+                    header->addOffsetToPointer(ipcbuf.base, &enabledExtensionNames[i]);
+                }
+                break;
+            }
+
             case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
                 dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase), serializationType));
                 break;
@@ -1355,17 +1388,21 @@ XrResult xrCreateReferenceSpace(
     return header->result;
 }
 
-// ipcxrHandshake -----------------------------------------------------------
+// xrCreateInstance -----------------------------------------------------------
 
 template <>
-IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrHandshake* src)
+IPCXrCreateInstance* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrCreateInstance* src)
 {
-    IPCXrHandshake *dst = new(ipcbuf) IPCXrHandshake;
+    IPCXrCreateInstance *dst = new(ipcbuf) IPCXrCreateInstance;
 
-    dst->remoteProcessId = src->remoteProcessId;
-    // TODO don't bother copying instance in here because out only
+    dst->createInfo = reinterpret_cast<const XrInstanceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), SERIALIZE_EVERYTHING));
+    header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
+
     dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
     header->addOffsetToPointer(ipcbuf.base, &dst->instance);
+
+    dst->remoteProcessId = src->remoteProcessId;
+
     dst->hostProcessId = IPCSerializeNoCopy(ipcbuf, header, src->hostProcessId);
     header->addOffsetToPointer(ipcbuf.base, &dst->hostProcessId);
 
@@ -1373,21 +1410,22 @@ IPCXrHandshake* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 }
 
 template <>
-void IPCCopyOut(IPCXrHandshake* dst, const IPCXrHandshake* src)
+void IPCCopyOut(IPCXrCreateInstance* dst, const IPCXrCreateInstance* src)
 {
     IPCCopyOut(dst->instance, src->instance);
     IPCCopyOut(dst->hostProcessId, src->hostProcessId);
 }
 
-XrResult ipcxrHandshake(
-    XrInstance *instance,
-    DWORD *hostProcessId)
+XrResult xrCreateInstance(
+    const XrInstanceCreateInfo*                 createInfo,
+    XrInstance *instance)
 {
     IPCBuffer ipcbuf = IPCGetBuffer();
-    auto header = new(ipcbuf) IPCXrHeader{IPC_HANDSHAKE};
+    auto header = new(ipcbuf) IPCXrHeader{IPC_XR_CREATE_INSTANCE};
 
-    IPCXrHandshake args {GetCurrentProcessId(), instance, hostProcessId};
-    IPCXrHandshake *argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    IPCXrCreateInstance args {createInfo, instance, GetCurrentProcessId(), &gHostProcessId};
+    IPCXrCreateInstance *argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
 
@@ -1397,8 +1435,6 @@ XrResult ipcxrHandshake(
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
-
-    gHostProcessId = *hostProcessId;
 
     return header->result;
 }

@@ -318,11 +318,25 @@ int main( void )
 
     // RPC Initialization not generic to OpenXR
     XrInstance instance;
-    DWORD hostProcessId;
-    CHECK_XR(ipcxrHandshake(&instance, &hostProcessId));
-    std::cout << "Remote process handshake succeeded!\n";
-
     // From here should be fairly generic OpenXR code
+
+    XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
+    createInstance.next = nullptr;
+    createInstance.createFlags = 0;
+    std::string appName = "Overlay Sample";
+    strncpy_s(createInstance.applicationInfo.applicationName, appName.c_str(), appName.size() + 1);
+    createInstance.applicationInfo.applicationVersion = 0;
+    std::string engineName = "none";
+    strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
+    createInstance.applicationInfo.engineVersion = 0;
+    createInstance.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+    char* extensionNames[] = {"XR_KHR_D3D11_enable", "XR_EXT_overlay"};
+    createInstance.enabledExtensionCount = 2;
+    createInstance.enabledExtensionNames = extensionNames;
+    createInstance.enabledApiLayerCount = 0;
+    createInstance.enabledApiLayerNames = nullptr;
+    CHECK_XR(xrCreateInstance(&createInstance, &instance));
+    std::cout << "CreateInstance succeeded!\n";
 
     XrInstanceProperties properties {XR_TYPE_INSTANCE_PROPERTIES, nullptr};
     CHECK_XR(xrGetInstanceProperties(instance, &properties));
