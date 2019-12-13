@@ -1719,3 +1719,21 @@ XrResult xrEnumerateSwapchainImages(
     return XR_SUCCESS;
 }
 
+// xrGetInstanceProcAddr
+
+XrResult xrGetInstanceProcAddr(XrInstance instance, const char *name, PFN_xrVoidFunction *function) {
+    if (0 == strcmp(name, "xrGetD3D11GraphicsRequirementsKHR")) {
+        *function = reinterpret_cast<PFN_xrVoidFunction>(xrGetD3D11GraphicsRequirementsKHR);
+    } else {
+        *function = nullptr;
+    }
+    // Really should do all the base ones, too?
+
+    // If we setup the function, just return
+    if (*function != nullptr) {
+        return XR_SUCCESS;
+    }
+
+    return XR_ERROR_FUNCTION_UNSUPPORTED;
+}
+

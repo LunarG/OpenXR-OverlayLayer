@@ -1,8 +1,5 @@
 // Remote.cpp 
 
-#define NOMINMAX
-#include <windows.h>
-#include <tchar.h>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -13,22 +10,45 @@
 
 #include <cassert>
 
-#define XR_USE_GRAPHICS_API_D3D11 1
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif  // !WIN32_LEAN_AND_MEAN
 
-#include "../XR_overlay_ext/xr_overlay_dll.h"
-#include <openxr/openxr_platform.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif  // !NOMINMAX
+
+#include <windows.h>
 
 #include <dxgi1_2.h>
-#include <d3d11_1.h>
+#include <d3d11_4.h>
 
-// Fun images for page-flipping the overlay layer
+//
+// OpenXR Headers
+//
+#undef XR_USE_GRAPHICS_API_D3D12
+#undef XR_USE_GRAPHICS_API_VULKAN
+#define XR_USE_GRAPHICS_API_D3D11 1
+
+#define COMPILE_REMOTE_OVERLAY_APP 1
+
+#if COMPILE_REMOTE_OVERLAY_APP
+#include "../XR_overlay_ext/xr_overlay_dll.h"
+#else // undef COMPILE_REMOTE_OVERLAY_APP
+#include <openxr/openxr.h>
+#endif // COMPILE_REMOTE_OVERLAY_APP
+
+#include <openxr/openxr_platform.h>
+
+
+// Fun images for page-flipping the quad
 extern "C" {
-	extern int Image2Width;
-	extern int Image2Height;
-	extern unsigned char Image2Bytes[];
-	extern int Image1Width;
-	extern int Image1Height;
-	extern unsigned char Image1Bytes[];
+    extern int Image2Width;
+    extern int Image2Height;
+    extern unsigned char Image2Bytes[];
+    extern int Image1Width;
+    extern int Image1Height;
+    extern unsigned char Image1Bytes[];
 };
 
 
@@ -44,25 +64,12 @@ static std::string fmt(const char* fmt, ...)
         std::unique_ptr<char[]> buf(new char[provided]);
 
         va_start(args, fmt);
-        int size = vsnprintf(buf.get(), provided, fmt, args);
+        vsnprintf(buf.get(), provided, fmt, args);
         va_end(args);
 
         return std::string(buf.get());
     }
     return "(fmt() failed, vsnprintf returned -1)";
-}
-
-static void CheckResultWithLastError(bool success, const char* what, const char *file, int line)
-{
-    if(!success) {
-        DWORD lastError = GetLastError();
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
 }
 
 static void CheckResult(HRESULT result, const char* what, const char *file, int line)
@@ -86,49 +93,11 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
-// Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
-#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
-
-// Use this macro to test if functions succeeded that also update LastError
-#define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
-
 // Use this macro to test Direct3D functions
 #define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
 
 // Use this macro to test OpenXR functions
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
-
-
-namespace Math {
-namespace Pose {
-XrPosef Identity() {
-    XrPosef t{};
-    t.orientation.w = 1;
-    return t;
-}
-
-XrPosef Translation(const XrVector3f& translation) {
-    XrPosef t = Identity();
-    t.position = translation;
-    return t;
-}
-
-XrPosef RotateCCWAboutYAxis(float radians, XrVector3f translation) {
-    XrPosef t = Identity();
-    t.orientation.x = 0.f;
-    t.orientation.y = std::sin(radians * 0.5f);
-    t.orientation.z = 0.f;
-    t.orientation.w = std::cos(radians * 0.5f);
-    t.position = translation;
-    return t;
-}
-}  // namespace Pose
-}  // namespace Math
-
-// Special IPC handshake function
-XrResult ipcxrHandshake(
-	XrInstance *instance,
-	DWORD *hostProcessId);
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 
@@ -165,16 +134,20 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
     return d3d11Device;
 }
 
-void CreateOverlaySession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session)
+void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays)
 {
-    XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
-    sessionCreateInfoOverlay.next = nullptr;
-    sessionCreateInfoOverlay.overlaySession = XR_TRUE;
-    sessionCreateInfoOverlay.sessionLayersPlacement = 1;
-
     XrGraphicsBindingD3D11KHR d3dBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
     d3dBinding.device = d3d11Device;
-    d3dBinding.next = &sessionCreateInfoOverlay;
+
+    if(usingOverlays) {
+#if COMPILE_REMOTE_OVERLAY_APP
+        XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
+        sessionCreateInfoOverlay.next = nullptr;
+        sessionCreateInfoOverlay.overlaySession = XR_TRUE;
+        sessionCreateInfoOverlay.sessionLayersPlacement = 1; 
+        d3dBinding.next = &sessionCreateInfoOverlay;
+#endif  // COMPILE_REMOTE_OVERLAY_APP
+    }  
 
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
     sessionCreateInfo.systemId = systemId;
@@ -188,7 +161,6 @@ void CreateViewSpace(XrSession session, const XrPosef& pose, XrSpace* viewSpace)
     XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     createSpaceInfo.next = nullptr;
     createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
-    // Render head-locked 1.5m in front of device.
     createSpaceInfo.poseInReferenceSpace = pose;
     CHECK_XR(xrCreateReferenceSpace(session, &createSpaceInfo, viewSpace));
 }
@@ -281,7 +253,7 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
         desc.MipLevels = desc.ArraySize = 1;
         desc.Format = format;
         desc.SampleDesc.Count = 1;
-        desc.SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN ;
+        desc.SampleDesc.Quality = (UINT)D3D11_STANDARD_MULTISAMPLE_PATTERN;
         desc.Usage = D3D11_USAGE_STAGING;
         desc.BindFlags = 0;
         desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -316,9 +288,13 @@ int main( void )
 {
     bool sawFirstSuccessfulFrame = false;
 
-    // RPC Initialization not generic to OpenXR
+#if COMPILE_REMOTE_OVERLAY_APP
+    bool createOverlaySession = true;
+#else // not COMPILE_REMOTE_OVERLAY_APP
+    bool createOverlaySession = false;
+#endif // COMPILE_REMOTE_OVERLAY_APP
+
     XrInstance instance;
-    // From here should be fairly generic OpenXR code
 
     XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
     createInstance.next = nullptr;
@@ -330,41 +306,46 @@ int main( void )
     strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
     createInstance.applicationInfo.engineVersion = 0;
     createInstance.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+#if COMPILE_REMOTE_OVERLAY_APP
     char* extensionNames[] = {"XR_KHR_D3D11_enable", "XR_EXT_overlay"};
     createInstance.enabledExtensionCount = 2;
+#else   // not COMPILE_REMOTE_OVERLAY_APP
+    char* extensionNames[] = {"XR_KHR_D3D11_enable"};
+    createInstance.enabledExtensionCount = 1;
+#endif  // COMPILE_REMOTE_OVERLAY_APP
     createInstance.enabledExtensionNames = extensionNames;
     createInstance.enabledApiLayerCount = 0;
     createInstance.enabledApiLayerNames = nullptr;
     CHECK_XR(xrCreateInstance(&createInstance, &instance));
     std::cout << "CreateInstance succeeded!\n";
 
-    XrInstanceProperties properties {XR_TYPE_INSTANCE_PROPERTIES, nullptr};
-    CHECK_XR(xrGetInstanceProperties(instance, &properties));
-    std::cout << "Runtime \"" << properties.runtimeName << "\", version ";
-    std::cout << XR_VERSION_MAJOR(properties.runtimeVersion) << ".";
-    std::cout << XR_VERSION_MINOR(properties.runtimeVersion) << ".";
-    std::cout << XR_VERSION_PATCH(properties.runtimeVersion) << ".\n";
+    XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES, nullptr};
+    CHECK_XR(xrGetInstanceProperties(instance, &instanceProperties));
+    std::cout << "Runtime \"" << instanceProperties.runtimeName << "\", version " <<
+	XR_VERSION_MAJOR(instanceProperties.runtimeVersion) << "." <<
+	XR_VERSION_MINOR(instanceProperties.runtimeVersion) << "p" <<
+	XR_VERSION_PATCH(instanceProperties.runtimeVersion) << "\n";
 
     XrSystemId systemId;
-    XrSystemGetInfo getInfo { XR_TYPE_SYSTEM_GET_INFO, nullptr, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY };
-    CHECK_XR(xrGetSystem(instance, &getInfo, &systemId));
+    XrSystemGetInfo getSystem{XR_TYPE_SYSTEM_GET_INFO, nullptr, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
+    CHECK_XR(xrGetSystem(instance, &getSystem, &systemId));
 
-    XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
-    CHECK_XR(xrGetD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+    PFN_xrGetD3D11GraphicsRequirementsKHR getD3D11GraphicsRequirementsKHR;
+    CHECK_XR(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&getD3D11GraphicsRequirementsKHR)));
 
-    // Give us our best chance of success of sharing our Remote
-    // swapchainImages by creating our D3D device on the same adapter as
-    // the Host application's device
+    XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
+    CHECK_XR(getD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+
     ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(graphicsRequirements.adapterLuid);
 
     XrSession session;
-    CreateOverlaySession(d3d11Device, instance, systemId, &session);
+
+
+    CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession);
     std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
-    XrPosef pose = Math::Pose::Translation({-0.25f, 0.125f, -1.5f}); // ({-1.0f, 0.5f, -1.5f});
-
     XrSpace viewSpace;
-    CreateViewSpace(session, Math::Pose::Identity(), &viewSpace);
+    CreateViewSpace(session, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &viewSpace);
 
     uint64_t chosenFormat;
     ChooseSwapchainFormat(session, &chosenFormat);
@@ -413,8 +394,6 @@ int main( void )
     }
 
     // OpenXR Frame loop
-    // XXX Should be checking events to enter/exit session but at time
-    // of writing the RPC layer does not support events
 
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
@@ -435,7 +414,7 @@ int main( void )
             if(result == XR_SUCCESS) {
                 switch(event.type) {
                     case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
-                        const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(&event);
+                        // const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(&event);
                         quit = true;
                         break;
                     }
@@ -447,7 +426,7 @@ int main( void )
                         break;
                     }
                     case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
-                        const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
+                        // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
                         // Handle reference space change pending
                         break;
                     }
@@ -457,7 +436,7 @@ int main( void )
                         break;
                     }
                     case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
-                        const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(&event);
+                        // const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(&event);
                         // Handle data interaction profile changed
                         break;
                     }
@@ -476,14 +455,15 @@ int main( void )
         }
 
         XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
-        xrWaitFrame(session, nullptr, &waitFrameState);
-        xrBeginFrame(session, nullptr);
+        CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
+
+        CHECK_XR(xrBeginFrame(session, nullptr));
         for(int eye = 0; eye < 2; eye++) {
             uint32_t index;
             XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
             XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
             acquireInfo.next = nullptr;
-            // TODO - these should be layered
+
             CHECK_XR(xrAcquireSwapchainImage(sc, &acquireInfo, &index));
 
             XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
@@ -503,7 +483,9 @@ int main( void )
         XrCompositionLayerQuad layers[2];
         XrCompositionLayerBaseHeader* layerPointers[2];
 
-	if(useSeparateLeftRightEyes) {
+        XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
+	
+        if(useSeparateLeftRightEyes) {
 
 	    for(uint32_t eye = 0; eye < 2; eye++) {
 		XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
