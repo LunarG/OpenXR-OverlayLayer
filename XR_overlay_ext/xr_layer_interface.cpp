@@ -108,7 +108,10 @@ HANDLE gMainDestroySessionSema;
 // Main Session context that we hold on to for processing and interleaving
 // Overlay Session commands
 XrSession gSavedMainSession;
+XrSessionState gSavedMainSessionState;
 ID3D11Device *gSavedD3DDevice;
+bool gInitialWaitFrame = true;
+bool gHostWaitingOnWaitFrame = false;
 XrGraphicsRequirementsD3D11KHR gGraphicsRequirementsD3D11Saved; // XXX this is a struct and as such needs to be deep copied
 bool gGetGraphicsRequirementsD3D11KHRWasCalled = false;
 XrInstance gSavedInstance;
@@ -125,9 +128,11 @@ bool gSerializeEverything = true;
 enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 
 const int OVERLAY_WAITFRAME_FIRSTWAIT_MILLIS = 10000;
+const int OVERLAY_WAITFRAME_NORMAL_MILLIS = 1000;
 
 // WaitFrame state from Main Session for handing back to Overlay Session
 XrFrameState gSavedWaitFrameState; // XXX this is a struct and as such needs to be deep copied
+XrResult gSavedWaitFrameResult;
 
 // Quad layers from Overlay Session to overlay on Main Session's layers
 uint32_t gOverlayQuadLayerCount = 0;
@@ -567,6 +572,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 } else {
                     EventDataBufferPtr event(std::move(gHostEventsSaved.front()));
                     gHostEventsSaved.pop();
+                OutputDebugStringA(fmt("**OVERLAY** dequeued a %d Event, length %d\n", event->type, gHostEventsSaved.size()).c_str());
                     CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader*>(event.get()), args->event);
 
                     // Find all XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED.  If the session is our Main,
@@ -778,39 +784,49 @@ XrResult Overlay_xrEndSession(
 XrResult Overlay_xrDestroySession(
     XrSession session)
 {
-    if(gSerializeEverything) {
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-            DebugBreak();
-        }
-    }
-
+    
     XrResult result;
 
     if(session == kOverlayFakeSession) {
         // overlay session
 
-        gOverlayQuadLayerCount = 0;
+		if (gSerializeEverything) {
+			DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+			if (waitresult == WAIT_TIMEOUT) {
+				OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+				DebugBreak();
+			}
+		}
+		gOverlayQuadLayerCount = 0;
         ReleaseSemaphore(gMainDestroySessionSema, 1, nullptr);
         result = XR_SUCCESS;
+		if (gSerializeEverything) {
+			ReleaseMutex(gOverlayCallMutex);
+		}
 
     } else {
         // main session
 
-        ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
+		gExitIPCLoop = true;
+		ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
         DWORD waitresult = WaitForSingleObject(gMainDestroySessionSema, 1000000);
         if(waitresult == WAIT_TIMEOUT) {
             OutputDebugStringA("**OVERLAY** main destroy session timeout\n");
             DebugBreak();
         }
-        result = downchain->DestroySession(session);
-        gExitIPCLoop = true;
+		if (gSerializeEverything) {
+			DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+			if (waitresult == WAIT_TIMEOUT) {
+				OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+				DebugBreak();
+			}
+		}
+		result = downchain->DestroySession(session);
+		if (gSerializeEverything) {
+			ReleaseMutex(gOverlayCallMutex);
+		}
     }
 
-    if(gSerializeEverything) {
-        ReleaseMutex(gOverlayCallMutex);
-    }
     return result;
 }
 
@@ -1033,19 +1049,46 @@ XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateIn
 XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrFrameState *state) 
 {
     XrResult result;
+	DWORD waitresult;
 
     if(session == kOverlayFakeSession) {
 
-        // Wait on main session
-        // TODO - make first wait be long and subsequent waits be short,
-        // since it looks like WaitFrame may wait a long time on runtime.
-        DWORD waitresult = WaitForSingleObject(gOverlayWaitFrameSema, OVERLAY_WAITFRAME_FIRSTWAIT_MILLIS);
+        bool waitOnHostWaitFrame = true;
+
+        waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE); // XXX should timeout gracefully
         if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA("**OVERLAY** overlay session wait frame timeout\n");
+            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
             DebugBreak();
         }
 
-        waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+        if(
+            (gSavedMainSessionState != XR_SESSION_STATE_SYNCHRONIZED) && 
+            (gSavedMainSessionState != XR_SESSION_STATE_VISIBLE) && 
+            (gSavedMainSessionState != XR_SESSION_STATE_FOCUSED)) {
+                waitOnHostWaitFrame = false;
+        }
+        // TODO pass back any failure recorded by main session waitframe
+        *state = gSavedWaitFrameState;
+
+        ReleaseMutex(gOverlayCallMutex);
+
+        // Wait on main session
+        while(waitOnHostWaitFrame) {
+            DWORD waitMillis = gInitialWaitFrame ? OVERLAY_WAITFRAME_FIRSTWAIT_MILLIS : 1000000; // OVERLAY_WAITFRAME_NORMAL_MILLIS;
+            waitresult = WaitForSingleObject(gOverlayWaitFrameSema, waitMillis);
+            if(waitresult == WAIT_TIMEOUT) {
+                if(!gHostWaitingOnWaitFrame) {
+                    OutputDebugStringA("**OVERLAY** overlay session WaitFrame timeout but host is not in WaitFrame\n");
+                    DebugBreak();
+                }
+            } else {
+                if(waitresult == WAIT_OBJECT_0){
+                    waitOnHostWaitFrame = false;
+                }
+            } // XXX handle WAIT_ABANDONED also
+        }
+
+        waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE); // XXX should timeout gracefully
         if(waitresult == WAIT_TIMEOUT) {
             OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
             DebugBreak();
@@ -1053,10 +1096,9 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
 
         // TODO pass back any failure recorded by main session waitframe
         *state = gSavedWaitFrameState;
+        result = gSavedWaitFrameResult;
 
         ReleaseMutex(gOverlayCallMutex);
-
-        result = XR_SUCCESS;
 
     } else {
 
@@ -1066,11 +1108,15 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
             DebugBreak();
         }
 
+        gHostWaitingOnWaitFrame = true;
         result = downchain->WaitFrame(session, info, state);
+        gHostWaitingOnWaitFrame = false;
+        gInitialWaitFrame = false;
 
         ReleaseMutex(gOverlayCallMutex);
 
         gSavedWaitFrameState = *state;
+        gSavedWaitFrameResult = result;
         ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
     }
 
@@ -1235,10 +1281,21 @@ XrResult Overlay_xrPollEvent(
                 lost->next = nullptr;
                 lost->lostEventCount = 1;
                 gHostEventsSaved.emplace(std::move(newEvent));
+                OutputDebugStringA(fmt("**OVERLAY** enqueued a Lost Event, length %d\n", gHostEventsSaved.size()).c_str());
 
             } else {
 
+                OutputDebugStringA(fmt("**OVERLAY** will enqueue a %d Event\n", newEvent->type).c_str());
+                if(newEvent->type == 18) {
+                    auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(newEvent.get());
+                    OutputDebugStringA(fmt("**OVERLAY** session state will be %d\n", ssc->state).c_str());
+                    if(ssc->session == gSavedMainSession) {
+                        gSavedMainSessionState = ssc->state;
+                    }
+                }
                 gHostEventsSaved.emplace(std::move(newEvent));
+                OutputDebugStringA(fmt("**OVERLAY** queue is now size %d\n", gHostEventsSaved.size()).c_str());
+                
             }
         }
     }

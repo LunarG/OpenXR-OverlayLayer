@@ -340,7 +340,6 @@ int main( void )
 
     XrSession session;
 
-
     CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession);
     std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
@@ -376,9 +375,6 @@ int main( void )
     }};
     exitPollingThread.detach();
 
-    XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-    CHECK_XR(xrBeginSession(session, &beginInfo));
-
     XrSystemProperties systemProperties { XR_TYPE_SYSTEM_PROPERTIES };
     CHECK_XR(xrGetSystemProperties(instance, systemId, &systemProperties));
     std::cout << "System \"" << systemProperties.systemName << "\", vendorId " << systemProperties.vendorId << "\n";
@@ -397,6 +393,9 @@ int main( void )
 
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
+    XrSessionState sessionState = XR_SESSION_STATE_IDLE;
+    bool runFrameLoop = false;
+
     while(!quit) {
 
         auto now = std::chrono::steady_clock::now();
@@ -421,7 +420,59 @@ int main( void )
                     case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
                         const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(&event);
                         if(e.session == session) {
+                            std::cout << "transition to " << e.state << "\n";
                             // Handle state change of our session
+                            if((e.state == XR_SESSION_STATE_EXITING) ||
+                               (e.state == XR_SESSION_STATE_LOSS_PENDING)) {
+
+                                quit = true;
+
+                            } else {
+
+                                switch(sessionState) {
+                                    case XR_SESSION_STATE_IDLE: {
+                                        if(e.state == XR_SESSION_STATE_READY) {
+                                            XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+                                            CHECK_XR(xrBeginSession(session, &beginInfo));
+                                            std::cout << "entered READY\n";
+                                            runFrameLoop = true;
+                                        }
+                                        // ignore other transitions
+                                        break;
+                                    }
+                                    case XR_SESSION_STATE_READY: {
+                                        // ignore
+                                        break;
+                                    }
+                                    case XR_SESSION_STATE_SYNCHRONIZED: {
+                                        if(e.state == XR_SESSION_STATE_STOPPING) {
+                                            CHECK_XR(xrEndSession(session));
+                                            std::cout << "left READY\n";
+                                            runFrameLoop = false;
+                                        }
+                                        // ignore other transitions
+                                        break;
+                                    }
+                                    case XR_SESSION_STATE_VISIBLE: {
+                                        // ignore
+                                        break;
+                                    }
+                                    case XR_SESSION_STATE_FOCUSED: {
+                                        // ignore
+                                        break;
+                                    }
+                                    case XR_SESSION_STATE_STOPPING: {
+                                        // ignore
+                                        break;
+                                    }
+                                    default: {
+                                        std::cout << "Warning: ignored unknown new session state " << e.state << "\n";
+                                        break;
+                                    }
+                                }
+
+                            }
+                            sessionState = e.state;
                         }
                         break;
                     }
@@ -450,101 +501,103 @@ int main( void )
             }
         }
 
-        if(quit) {
-            break;
-        }
+        if(runFrameLoop) {
 
-        XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
-        CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
+            XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
+            CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
 
-        CHECK_XR(xrBeginFrame(session, nullptr));
+            CHECK_XR(xrBeginFrame(session, nullptr));
+            for(int eye = 0; eye < 2; eye++) {
+                uint32_t index;
+                XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
+                XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+                acquireInfo.next = nullptr;
+
+                CHECK_XR(xrAcquireSwapchainImage(sc, &acquireInfo, &index));
+
+                XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+                waitInfo.next = nullptr;
+                waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
+                CHECK_XR(xrWaitSwapchainImage(sc, &waitInfo));
+
+                d3dContext->CopyResource(swapchainImages[eye][index].texture, sourceImages[whichImage]);
+
+                XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+                releaseInfo.next = nullptr;
+                CHECK_XR(xrReleaseSwapchainImage(sc, &releaseInfo));
+            }
+
+            d3dContext->Flush();
+
+            XrCompositionLayerQuad layers[2];
+            XrCompositionLayerBaseHeader* layerPointers[2];
+
+            XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
+            
+            if(useSeparateLeftRightEyes) {
+
+                for(uint32_t eye = 0; eye < 2; eye++) {
+                    XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                    layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
+                    layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+                    layers[eye].next = nullptr;
+                    layers[eye].layerFlags = 0;
+                    layers[eye].space = viewSpace;
+                    layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+                    layers[eye].subImage = fullImage;
+                    layers[eye].pose = pose;
+                    layers[eye].size = {0.33f, 0.33f};
+                }
+                XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
+                frameEndInfo.next = nullptr;
+                frameEndInfo.layers = layerPointers;
+                frameEndInfo.layerCount = 2;
+                frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
+                frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+
+                CHECK_XR(xrEndFrame(session, &frameEndInfo));
+
+            } else {
+
+                XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
+                layers[0].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+                layers[0].next = nullptr;
+                layers[0].layerFlags = 0;
+                layers[0].space = viewSpace;
+                layers[0].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+                layers[0].subImage = fullImage;
+                layers[0].pose = pose;
+                layers[0].size = {0.33f, 0.33f};
+
+                XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
+                frameEndInfo.next = nullptr;
+                frameEndInfo.layers = layerPointers;
+                frameEndInfo.layerCount = 1;
+                frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
+                frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+
+                CHECK_XR(xrEndFrame(session, &frameEndInfo));
+
+            }
+            
+            if(!sawFirstSuccessfulFrame) {
+                sawFirstSuccessfulFrame = true;
+                std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
+            }
+		} else {
+			std::this_thread::sleep_for(std::chrono::milliseconds(250));
+		}
+    }
+
+    if(false) {
+        // These are destroyed by xrDestroySession but written here for clarity
         for(int eye = 0; eye < 2; eye++) {
-            uint32_t index;
-            XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
-            XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-            acquireInfo.next = nullptr;
-
-            CHECK_XR(xrAcquireSwapchainImage(sc, &acquireInfo, &index));
-
-            XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-            waitInfo.next = nullptr;
-            waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
-            CHECK_XR(xrWaitSwapchainImage(sc, &waitInfo));
-
-            d3dContext->CopyResource(swapchainImages[eye][index].texture, sourceImages[whichImage]);
-
-            XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-            releaseInfo.next = nullptr;
-            CHECK_XR(xrReleaseSwapchainImage(sc, &releaseInfo));
+            CHECK_XR(xrDestroySwapchain(swapchains[eye]));
         }
 
-        d3dContext->Flush();
-
-        XrCompositionLayerQuad layers[2];
-        XrCompositionLayerBaseHeader* layerPointers[2];
-
-        XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
-	
-        if(useSeparateLeftRightEyes) {
-
-	    for(uint32_t eye = 0; eye < 2; eye++) {
-		XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-		layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
-		layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-		layers[eye].next = nullptr;
-		layers[eye].layerFlags = 0;
-		layers[eye].space = viewSpace;
-		layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
-		layers[eye].subImage = fullImage;
-		layers[eye].pose = pose;
-		layers[eye].size = {0.33f, 0.33f};
-	    }
-	    XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-	    frameEndInfo.next = nullptr;
-	    frameEndInfo.layers = layerPointers;
-	    frameEndInfo.layerCount = 2;
-	    frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-	    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-
-	    CHECK_XR(xrEndFrame(session, &frameEndInfo));
-
-	} else {
-
-	    XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-	    layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
-	    layers[0].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-	    layers[0].next = nullptr;
-	    layers[0].layerFlags = 0;
-	    layers[0].space = viewSpace;
-	    layers[0].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-	    layers[0].subImage = fullImage;
-	    layers[0].pose = pose;
-	    layers[0].size = {0.33f, 0.33f};
-
-	    XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-	    frameEndInfo.next = nullptr;
-	    frameEndInfo.layers = layerPointers;
-	    frameEndInfo.layerCount = 1;
-	    frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-	    frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-
-	    CHECK_XR(xrEndFrame(session, &frameEndInfo));
-
-	}
-        
-        if(!sawFirstSuccessfulFrame) {
-            sawFirstSuccessfulFrame = true;
-            std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
-        }
+        CHECK_XR(xrDestroySpace(viewSpace));
     }
-
-    CHECK_XR(xrEndSession(session));
-
-    for(int eye = 0; eye < 2; eye++) {
-        CHECK_XR(xrDestroySwapchain(swapchains[eye]));
-    }
-
-    CHECK_XR(xrDestroySpace(viewSpace));
 
     CHECK_XR(xrDestroySession(session));
 

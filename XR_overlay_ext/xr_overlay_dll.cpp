@@ -25,7 +25,7 @@ LPCWSTR kHostResponseSemaName = TEXT("LUNARG_XR_IPC_host_response_sema");
 HANDLE gHostResponseSema;
 
 static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100;
-static const DWORD HOST_RESPONSE_WAIT_MILLIS = 10000;
+static const DWORD HOST_RESPONSE_WAIT_MILLIS = 100000;
 
 // Get the shared memory wrapped in a convenient structure
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
