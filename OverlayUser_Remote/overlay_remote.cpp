@@ -309,12 +309,31 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
 int main( void )
 {
     bool sawFirstSuccessfulFrame = false;
+    bool useDebugMessenger = false;
 
 #if COMPILE_REMOTE_OVERLAY_APP
     bool createOverlaySession = true;
 #else // not COMPILE_REMOTE_OVERLAY_APP
     bool createOverlaySession = false;
 #endif // COMPILE_REMOTE_OVERLAY_APP
+
+    uint32_t extPropCount;
+    CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
+    if(extPropCount > 0) {
+        std::vector<XrExtensionProperties> extensionProperties(extPropCount);
+        for(auto& p: extensionProperties) {
+            p.type = XR_TYPE_EXTENSION_PROPERTIES;
+            p.next = nullptr;
+        }
+        CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, extPropCount, &extPropCount, extensionProperties.data()));
+        std::cout << "Extensions supported:\n";
+        for(auto& p: extensionProperties) {
+            std::cout << "    " << p.extensionName << ", version " << p.extensionVersion << "\n";
+            if(std::string(p.extensionName) == "XR_EXT_debug_utils") {
+                useDebugMessenger = true;
+            }
+        }
+    }
 
     XrInstance instance;
 
