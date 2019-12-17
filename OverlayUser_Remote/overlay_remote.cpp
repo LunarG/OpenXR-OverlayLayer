@@ -306,17 +306,38 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
     }
 }
 
+XrBool32 processDebugMessage(
+    XrDebugUtilsMessageSeverityFlagsEXT /* messageSeverity */,
+    XrDebugUtilsMessageTypeFlagsEXT /* messageTypes */,
+    const XrDebugUtilsMessengerCallbackDataEXT* callbackData,
+    void* /* userData */)
+{
+    std::cout << "XR: " << callbackData->message << "\n";
+
+    // typedef struct XrDebugUtilsMessengerCallbackDataEXT {
+        // XrStructureType type;
+        // const void* next;
+        // const char* messageId;
+        // const char* functionName;
+        // const char* message;
+        // uint32_t objectCount;
+        // XrDebugUtilsObjectNameInfoEXT* objects;
+        // uint32_t sessionLabelCount;
+        // XrDebugUtilsLabelEXT* sessionLabels;
+    // } XrDebugUtilsMessengerCallbackDataEXT;
+
+	return XR_FALSE;
+}
+
 int main( void )
 {
     bool sawFirstSuccessfulFrame = false;
     bool useDebugMessenger = false;
 
-#if COMPILE_REMOTE_OVERLAY_APP
-    bool createOverlaySession = true;
-#else // not COMPILE_REMOTE_OVERLAY_APP
-    bool createOverlaySession = false;
-#endif // COMPILE_REMOTE_OVERLAY_APP
+    bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
 
+#if !COMPILE_REMOTE_OVERLAY_APP
+    // XXX Layer doesn't support calling downchain->EnumerateInstanceExtensionProperties
     uint32_t extPropCount;
     CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
     if(extPropCount > 0) {
@@ -334,6 +355,7 @@ int main( void )
             }
         }
     }
+#endif // COMPILE_REMOTE_OVERLAY_APP
 
     XrInstance instance;
 
@@ -347,18 +369,41 @@ int main( void )
     strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
     createInstance.applicationInfo.engineVersion = 0;
     createInstance.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
-#if COMPILE_REMOTE_OVERLAY_APP
-    char* extensionNames[] = {"XR_KHR_D3D11_enable", "XR_EXT_overlay"};
-    createInstance.enabledExtensionCount = 2;
-#else   // not COMPILE_REMOTE_OVERLAY_APP
-    char* extensionNames[] = {"XR_KHR_D3D11_enable"};
-    createInstance.enabledExtensionCount = 1;
-#endif  // COMPILE_REMOTE_OVERLAY_APP
+    char* extensionNames[16];
     createInstance.enabledExtensionNames = extensionNames;
+    createInstance.enabledExtensionCount = 0;
+    extensionNames[createInstance.enabledExtensionCount++] = "XR_KHR_D3D11_enable";
+#if COMPILE_REMOTE_OVERLAY_APP
+    extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_overlay";
+#endif  // COMPILE_REMOTE_OVERLAY_APP
+    if(useDebugMessenger) {
+        extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_debug_utils";
+    }
     createInstance.enabledApiLayerCount = 0;
     createInstance.enabledApiLayerNames = nullptr;
     CHECK_XR(xrCreateInstance(&createInstance, &instance));
     std::cout << "CreateInstance succeeded!\n";
+
+    XrDebugUtilsMessengerEXT messenger = XR_NULL_HANDLE;
+    if(useDebugMessenger) {
+		PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
+		CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
+			reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
+
+        XrDebugUtilsMessengerCreateInfoEXT dumCreateInfo { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+        dumCreateInfo.messageSeverities = 
+            XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+            XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+            XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+            XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        dumCreateInfo.messageTypes = XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+			XR_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+            XR_DEBUG_UTILS_MESSAGE_TYPE_CONFORMANCE_BIT_EXT |
+           XR_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        dumCreateInfo.userCallback = processDebugMessage;
+        dumCreateInfo.userData = nullptr;
+        CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, &messenger));
+    }
 
     XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES, nullptr};
     CHECK_XR(xrGetInstanceProperties(instance, &instanceProperties));

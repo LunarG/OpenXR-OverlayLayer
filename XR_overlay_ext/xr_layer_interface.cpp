@@ -344,6 +344,12 @@ DWORD WINAPI ThreadBody(LPVOID)
 
         switch(hdr->requestType) {
 
+            case IPC_XR_ENUMERATE_INSTANCE_EXTENSION_PROPERTIES: {
+                auto args = ipcbuf.getAndAdvance<IPCXrEnumerateInstanceExtensionProperties>();
+                hdr->result = downchain->EnumerateInstanceExtensionProperties(args->layerName, args->propertyCapacityInput, args->propertyCountOutput, args->properties);
+                break;
+            }
+
             case IPC_XR_CREATE_INSTANCE: {
                 // Establish IPC parameters and make initial handshake
                 auto args = ipcbuf.getAndAdvance<IPCXrCreateInstance>();

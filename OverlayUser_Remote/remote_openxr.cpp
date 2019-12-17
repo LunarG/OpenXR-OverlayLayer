@@ -1649,6 +1649,76 @@ XrResult xrGetViewConfigurationProperties(
     return header->result;
 }
 
+// xrEnumerateInstanceExtensionProperties -----------------------------------
+
+template <>
+IPCXrEnumerateInstanceExtensionProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrEnumerateInstanceExtensionProperties* src)
+{
+    auto dst = new(ipcbuf) IPCXrEnumerateInstanceExtensionProperties;
+
+    if(src->layerName != nullptr) {
+        char *dstLayerName = new(ipcbuf) char[strlen(src->layerName) + 1];
+        dst->layerName = dstLayerName;
+        strncpy_s(dstLayerName, strlen(src->layerName) + 1, src->layerName, strlen(src->layerName) + 1);
+    } else {
+        dst->layerName = nullptr;
+    }
+    header->addOffsetToPointer(ipcbuf.base, &dst->layerName);
+
+    dst->propertyCapacityInput = src->propertyCapacityInput;
+
+    dst->propertyCountOutput = IPCSerializeNoCopy(ipcbuf, header, src->propertyCountOutput);
+    header->addOffsetToPointer(ipcbuf.base, &dst->propertyCountOutput);
+
+    if(dst->propertyCapacityInput > 0) {
+        dst->properties = new(ipcbuf) XrExtensionProperties[dst->propertyCapacityInput];
+        header->addOffsetToPointer(ipcbuf.base, &dst->properties);
+        for(uint32_t i = 0; i < dst->propertyCapacityInput; i++) {
+            dst->properties[i].type = src->properties[i].type;
+            dst->properties[i].next = IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties[i].next), SERIALIZE_ONLY_TYPE_NEXT);
+            header->addOffsetToPointer(ipcbuf.base, &dst->properties[i].next);
+        }
+    }
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrEnumerateInstanceExtensionProperties* dst, const IPCXrEnumerateInstanceExtensionProperties* src)
+{
+    IPCCopyOut(dst->propertyCountOutput, src->propertyCountOutput);
+    uint32_t toCopy = std::min(src->propertyCapacityInput, (uint32_t)*src->propertyCountOutput);
+    for(uint32_t i = 0; i < toCopy; i++) {
+        IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(&dst->properties[i]),
+            reinterpret_cast<const XrBaseOutStructure*>(&src->properties[i])
+            );
+    }
+}
+
+XrResult xrEnumerateInstanceExtensionProperties(
+    const char *                                  layerName,
+    uint32_t                                    propertyCapacityInput,
+    uint32_t*                                   propertyCountOutput,
+    XrExtensionProperties*                    properties)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_ENUMERATE_INSTANCE_EXTENSION_PROPERTIES};
+
+    IPCXrEnumerateInstanceExtensionProperties args {layerName, propertyCapacityInput, propertyCountOutput, properties};
+
+    IPCXrEnumerateInstanceExtensionProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
 // xrEnumerateViewConfigurationViews ----------------------------------------
 
 template <>

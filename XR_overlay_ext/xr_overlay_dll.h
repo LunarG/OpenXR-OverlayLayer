@@ -156,6 +156,13 @@ struct IPCXrDestroySession {
     XrSession                                   session;
 };
 
+struct IPCXrEnumerateInstanceExtensionProperties {
+    const char*                                 layerName;
+    uint32_t                                    propertyCapacityInput;
+    uint32_t*                                   propertyCountOutput;
+    XrExtensionProperties*                      properties;
+};
+
 struct IPCXrEnumerateViewConfigurations {
     XrInstance                                  instance;
     XrSystemId                                  systemId;
@@ -407,6 +414,7 @@ enum {
     IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR,
     IPC_XR_POLL_EVENT,
     IPC_XR_GET_SYSTEM,
+    IPC_XR_ENUMERATE_INSTANCE_EXTENSION_PROPERTIES,
 };
 
 enum IPCWaitResult {
