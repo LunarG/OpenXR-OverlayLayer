@@ -43,6 +43,41 @@
 #include "xr_generated_dispatch_table.h"
 #include "xr_linear.h"
 
+static XrGeneratedDispatchTable *downchain = nullptr;
+static XrInstance gSavedInstance = XR_NULL_HANDLE;
+
+static void DebugOutputFmt(XrDebugUtilsMessageSeverityFlagsEXT severity, XrDebugUtilsMessageTypeFlagsEXT msgtype, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    int size = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    std::string formatted;
+
+    if(size >= 0) {
+        int provided = size + 1;
+        std::unique_ptr<char[]> buf(new char[provided]);
+
+        va_start(args, fmt);
+        int size = vsnprintf(buf.get(), provided, fmt, args);
+        va_end(args);
+
+        formatted = std::string(buf.get());
+    } else {
+        formatted = "DebugOutputFormat() failed, vsnprintf returned -1)";
+    }
+    if(gSavedInstance != XR_NULL_HANDLE && downchain->SubmitDebugUtilsMessageEXT) {
+        // XXX Does this layer have to implement the whole extension so
+        // that it can properly populate this CallbackData?
+        XrDebugUtilsMessengerCallbackDataEXT cbdata { XR_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT };
+        cbdata.message = formatted.c_str();
+        downchain->SubmitDebugUtilsMessageEXT(gSavedInstance, severity, msgtype, &cbdata);
+    } else {
+        OutputDebugStringA(formatted.data());
+    }
+}
+
 static std::string fmt(const char* fmt, ...)
 {
     va_list args;
@@ -139,7 +174,6 @@ bool gInitialWaitFrame = true;
 bool gHostWaitingOnWaitFrame = false;
 XrGraphicsRequirementsD3D11KHR gGraphicsRequirementsD3D11Saved; // XXX this is a struct and as such needs to be deep copied
 bool gGetGraphicsRequirementsD3D11KHRWasCalled = false;
-XrInstance gSavedInstance;
 std::set<std::string> gSavedRequestedExtensions;
 std::set<std::string> gSavedRequestedApiLayers;
 XrFormFactor gSavedFormFactor;
@@ -173,8 +207,6 @@ std::queue<EventDataBufferPtr> gHostEventsSaved;
 // Mutex synchronizing access to Main session and Overlay session commands
 HANDLE gOverlayCallMutex = NULL;      // handle to sync object
 LPCWSTR kOverlayMutexName = TEXT("XR_EXT_overlay_call_mutex");
-
-static XrGeneratedDispatchTable *downchain = nullptr;
 
 // Bookkeeping of SwapchainImages for copying remote SwapchainImages on ReleaseSwapchainImage
 struct SwapchainCachedData
@@ -668,7 +700,7 @@ void CreateOverlaySessionThread()
 
     CHECK_NOT_NULL(gOverlayWorkerThread =
         CreateThread(nullptr, 0, ThreadBody, nullptr, 0, &gOverlayWorkerThreadId));
-    OutputDebugStringA("**OVERLAY** success creating IPC thread\n");
+    DebugOutputFmt(XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT, "**OVERLAY** success creating IPC thread\n");
 }
 
 XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance) 
