@@ -33,6 +33,7 @@
 
 #include <new>
 #include <cstdlib>
+#include <functional>
 
 #include <d3d11_4.h>
 #include <d3d12.h>
@@ -387,6 +388,14 @@ inline void operator delete(void* p, IPCBuffer& buffer)
 {
     buffer.deallocate(p);
 }
+
+enum CopyType {
+    COPY_EVERYTHING,       // XR command will consume (aka input)
+    COPY_ONLY_TYPE_NEXT,   // XR command will fill (aka output)
+};
+
+typedef std::function<void* (size_t size)> AllocateFunc;
+XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer);
 
 // RPC types implemented
 enum {

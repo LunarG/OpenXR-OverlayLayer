@@ -139,6 +139,235 @@ const void* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, uns
     return buffer;
 }
 
+template <class XR_STRUCT>
+XrBaseInStructure* AllocateAndCopy(const XR_STRUCT* srcbase, CopyType copyType, std::function<void* (size_t size)> alloc)
+{
+    auto src = reinterpret_cast<const XR_STRUCT*>(srcbase);
+    auto dst = reinterpret_cast<XR_STRUCT*>(alloc(sizeof(XR_STRUCT)));
+    if(copyType == COPY_EVERYTHING) {
+        *dst = *src;
+    } else {
+        dst->type = src->type;
+    }
+    return reinterpret_cast<XrBaseInStructure*>(dst);
+}
+
+XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
+{
+    XrBaseInStructure *dstbase = nullptr;
+    bool skipped;
+
+    do {
+        skipped = false;
+
+        if(!srcbase) {
+            return nullptr;
+        }
+
+        switch(srcbase->type) {
+
+            // Should copy only non-pointers instead of "*dst = *src"
+            case XR_TYPE_INSTANCE_CREATE_INFO: {
+                auto src = reinterpret_cast<const XrInstanceCreateInfo*>(srcbase);
+                auto dst = reinterpret_cast<XrInstanceCreateInfo*>(alloc(sizeof(XrInstanceCreateInfo)));
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                dst->type = src->type;
+
+                dst->createFlags = src->createFlags;
+                dst->applicationInfo = src->applicationInfo;
+
+                // Lay down API layer names...
+                auto enabledApiLayerNames = (char **)alloc(sizeof(char *) * src->enabledApiLayerCount);
+                dst->enabledApiLayerNames = enabledApiLayerNames;
+                dst->enabledApiLayerCount = src->enabledApiLayerCount;
+                addOffsetToPointer(&dst->enabledApiLayerNames);
+                for(uint32_t i = 0; i < dst->enabledApiLayerCount; i++) {
+                    enabledApiLayerNames[i] = (char *)alloc(strlen(src->enabledApiLayerNames[i]) + 1);
+                    strncpy_s(enabledApiLayerNames[i], strlen(src->enabledApiLayerNames[i]) + 1, src->enabledApiLayerNames[i], strlen(src->enabledApiLayerNames[i]) + 1);
+                    addOffsetToPointer(&enabledApiLayerNames[i]);
+                }
+
+                // Lay down extension layer names...
+                auto enabledExtensionNames = (char **)alloc(sizeof(char *) * src->enabledExtensionCount);
+                dst->enabledExtensionNames = enabledExtensionNames;
+                dst->enabledExtensionCount = src->enabledExtensionCount;
+                addOffsetToPointer(&dst->enabledExtensionNames);
+                for(uint32_t i = 0; i < dst->enabledExtensionCount; i++) {
+                    enabledExtensionNames[i] = (char *)alloc(strlen(src->enabledExtensionNames[i]) + 1);
+                    strncpy_s(enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1, src->enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1);
+                    addOffsetToPointer(&enabledExtensionNames[i]);
+                }
+                break;
+            }
+
+            case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_FRAME_STATE: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameState*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SYSTEM_PROPERTIES: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSystemProperties*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_INSTANCE_PROPERTIES: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrInstanceProperties*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrViewConfigurationView*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrViewConfigurationProperties*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SESSION_BEGIN_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionBeginInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SYSTEM_GET_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSystemGetInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SWAPCHAIN_CREATE_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_FRAME_WAIT_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameWaitInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_FRAME_BEGIN_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameBeginInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_COMPOSITION_LAYER_QUAD: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrCompositionLayerQuad*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_EVENT_DATA_BUFFER: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataBuffer*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_FRAME_END_INFO: {
+                auto src = reinterpret_cast<const XrFrameEndInfo*>(srcbase);
+                auto dst = reinterpret_cast<XrFrameEndInfo*>(alloc(sizeof(XrFrameEndInfo)));
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                dst->type = src->type;
+                dst->displayTime = src->displayTime;
+                dst->environmentBlendMode = src->environmentBlendMode;
+                dst->layerCount = src->layerCount;
+
+                // Lay down layers...
+                // const XrCompositionLayerBaseHeader* const* layers;
+                auto layers = (XrCompositionLayerBaseHeader**)alloc(sizeof(XrCompositionLayerBaseHeader*) * src->layerCount);
+                dst->layers = layers;
+                addOffsetToPointer(&dst->layers);
+                for(uint32_t i = 0; i < dst->layerCount; i++) {
+                    layers[i] = reinterpret_cast<XrCompositionLayerBaseHeader*>(CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(src->layers[i]), copyType, alloc, addOffsetToPointer));
+                    addOffsetToPointer(&layers[i]);
+                }
+                break;
+            }
+
+            case XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainImageAcquireInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainImageWaitInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainImageReleaseInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SESSION_CREATE_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionCreateInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_REFERENCE_SPACE_CREATE_INFO: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+                // We know what this is but do not send it through because we process it locally.
+                srcbase = srcbase->next;
+                skipped = true;
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataInstanceLossPending*>(srcbase), copyType, alloc);
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataSessionStateChanged*>(srcbase), copyType, alloc);
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(srcbase), copyType, alloc);
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataEventsLost*>(srcbase), copyType, alloc);
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataInteractionProfileChanged*>(srcbase), copyType, alloc);
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: { 
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataPerfSettingsEXT*>(srcbase), copyType, alloc);
+                break;
+            }
+            case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            default: {
+                // I don't know what this is, skip it and try the next one
+                std::string str = fmt("CopyXrStructChain called on %p of unknown type %d - dropped from \"next\" chain.\n", srcbase, srcbase->type);
+                OutputDebugStringA(str.data());
+                srcbase = srcbase->next;
+                skipped = true;
+                break;
+            }
+        }
+    } while(skipped);
+
+    dstbase->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(srcbase->next, copyType, alloc, addOffsetToPointer));
+    addOffsetToPointer(&dstbase->next);
+
+    return dstbase;
+}
+
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
