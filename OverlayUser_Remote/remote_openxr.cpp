@@ -281,17 +281,17 @@ void IPCCopyOut(T* dst, const T* src, size_t count)
 
 // Serialization of XR structs ----------------------------------------------
 
-enum SerializationType {
-    SERIALIZE_EVERYTHING,       // XR command will consume (aka input)
-    SERIALIZE_ONLY_TYPE_NEXT,   // XR command will fill (aka output)
+enum CopyType {
+    COPY_EVERYTHING,       // XR command will consume (aka input)
+    COPY_ONLY_TYPE_NEXT,   // XR command will fill (aka output)
 };
 
 template <class XR_STRUCT>
-XrBaseInStructure* AllocateAndCopy(IPCBuffer& ipcbuf, const XR_STRUCT* srcbase, SerializationType serializationType)
+XrBaseInStructure* AllocateAndCopy(const XR_STRUCT* srcbase, CopyType copyType, std::function<void* (size_t size)> alloc)
 {
     auto src = reinterpret_cast<const XR_STRUCT*>(srcbase);
-    auto dst = new(ipcbuf) XR_STRUCT;
-    if(serializationType == SERIALIZE_EVERYTHING) {
+    auto dst = reinterpret_cast<XR_STRUCT*>(alloc(sizeof(XR_STRUCT)));
+    if(copyType == COPY_EVERYTHING) {
         *dst = *src;
     } else {
         dst->type = src->type;
@@ -299,7 +299,9 @@ XrBaseInStructure* AllocateAndCopy(IPCBuffer& ipcbuf, const XR_STRUCT* srcbase, 
     return reinterpret_cast<XrBaseInStructure*>(dst);
 }
 
-XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const XrBaseInStructure* srcbase, SerializationType serializationType)
+typedef std::function<void* (size_t size)> AllocateFunc;
+
+XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
 {
     XrBaseInStructure *dstbase = nullptr;
     bool skipped;
@@ -316,105 +318,105 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
             // Should copy only non-pointers instead of "*dst = *src"
             case XR_TYPE_INSTANCE_CREATE_INFO: {
                 auto src = reinterpret_cast<const XrInstanceCreateInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrInstanceCreateInfo;
+                auto dst = reinterpret_cast<XrInstanceCreateInfo*>(alloc(sizeof(XrInstanceCreateInfo)));
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
                 dst->type = src->type;
 
                 dst->createFlags = src->createFlags;
-				dst->applicationInfo = src->applicationInfo;
+                dst->applicationInfo = src->applicationInfo;
 
                 // Lay down API layer names...
-                auto enabledApiLayerNames = new(ipcbuf) char*[src->enabledApiLayerCount];
+                auto enabledApiLayerNames = (char **)alloc(sizeof(char *) * src->enabledApiLayerCount);
                 dst->enabledApiLayerNames = enabledApiLayerNames;
                 dst->enabledApiLayerCount = src->enabledApiLayerCount;
-                header->addOffsetToPointer(ipcbuf.base, &dst->enabledApiLayerNames);
+                addOffsetToPointer(&dst->enabledApiLayerNames);
                 for(uint32_t i = 0; i < dst->enabledApiLayerCount; i++) {
-                    enabledApiLayerNames[i] = new(ipcbuf) char[strlen(src->enabledApiLayerNames[i]) + 1];
+                    enabledApiLayerNames[i] = (char *)alloc(strlen(src->enabledApiLayerNames[i]) + 1);
                     strncpy_s(enabledApiLayerNames[i], strlen(src->enabledApiLayerNames[i]) + 1, src->enabledApiLayerNames[i], strlen(src->enabledApiLayerNames[i]) + 1);
-                    header->addOffsetToPointer(ipcbuf.base, &enabledApiLayerNames[i]);
+                    addOffsetToPointer(&enabledApiLayerNames[i]);
                 }
 
                 // Lay down extension layer names...
-                auto enabledExtensionNames = new(ipcbuf) char*[src->enabledExtensionCount];
+                auto enabledExtensionNames = (char **)alloc(sizeof(char *) * src->enabledExtensionCount);
                 dst->enabledExtensionNames = enabledExtensionNames;
                 dst->enabledExtensionCount = src->enabledExtensionCount;
-                header->addOffsetToPointer(ipcbuf.base, &dst->enabledExtensionNames);
+                addOffsetToPointer(&dst->enabledExtensionNames);
                 for(uint32_t i = 0; i < dst->enabledExtensionCount; i++) {
-                    enabledExtensionNames[i] = new(ipcbuf) char[strlen(src->enabledExtensionNames[i]) + 1];
+                    enabledExtensionNames[i] = (char *)alloc(strlen(src->enabledExtensionNames[i]) + 1);
                     strncpy_s(enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1, src->enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1);
-                    header->addOffsetToPointer(ipcbuf.base, &enabledExtensionNames[i]);
+                    addOffsetToPointer(&enabledExtensionNames[i]);
                 }
                 break;
             }
 
             case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_FRAME_STATE: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameState*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameState*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SYSTEM_PROPERTIES: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSystemProperties*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSystemProperties*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_INSTANCE_PROPERTIES: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrInstanceProperties*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrInstanceProperties*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrViewConfigurationView*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrViewConfigurationView*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrViewConfigurationProperties*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrViewConfigurationProperties*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SESSION_BEGIN_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSessionBeginInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionBeginInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SYSTEM_GET_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSystemGetInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSystemGetInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_CREATE_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainCreateInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_FRAME_WAIT_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameWaitInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameWaitInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_FRAME_BEGIN_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrFrameBeginInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameBeginInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_COMPOSITION_LAYER_QUAD: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrCompositionLayerQuad*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrCompositionLayerQuad*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_EVENT_DATA_BUFFER: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrEventDataBuffer*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataBuffer*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_FRAME_END_INFO: {
                 auto src = reinterpret_cast<const XrFrameEndInfo*>(srcbase);
-                auto dst = new(ipcbuf) XrFrameEndInfo;
+                auto dst = reinterpret_cast<XrFrameEndInfo*>(alloc(sizeof(XrFrameEndInfo)));
                 dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
                 dst->type = src->type;
                 dst->displayTime = src->displayTime;
@@ -423,43 +425,43 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
 
                 // Lay down layers...
                 // const XrCompositionLayerBaseHeader* const* layers;
-                auto layers = new(ipcbuf) XrCompositionLayerBaseHeader*[src->layerCount];
+                auto layers = (XrCompositionLayerBaseHeader**)alloc(sizeof(XrCompositionLayerBaseHeader*) * src->layerCount);
                 dst->layers = layers;
-                header->addOffsetToPointer(ipcbuf.base, &dst->layers);
+                addOffsetToPointer(&dst->layers);
                 for(uint32_t i = 0; i < dst->layerCount; i++) {
-                    layers[i] = reinterpret_cast<XrCompositionLayerBaseHeader*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->layers[i]), serializationType));
-                    header->addOffsetToPointer(ipcbuf.base, &layers[i]);
+                    layers[i] = reinterpret_cast<XrCompositionLayerBaseHeader*>(CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(src->layers[i]), copyType, alloc, addOffsetToPointer));
+                    addOffsetToPointer(&layers[i]);
                 }
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainImageAcquireInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainImageAcquireInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainImageWaitInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainImageWaitInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSwapchainImageReleaseInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSwapchainImageReleaseInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SESSION_CREATE_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSessionCreateInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionCreateInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase), copyType, alloc);
                 break;
             }
 
             case XR_TYPE_REFERENCE_SPACE_CREATE_INFO: {
-                dstbase = reinterpret_cast<XrBaseInStructure*>(AllocateAndCopy(ipcbuf, reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase), serializationType));
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrReferenceSpaceCreateInfo*>(srcbase), copyType, alloc);
                 break;
             }
 
@@ -472,7 +474,7 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
 
             default: {
                 // I don't know what this is, skip it and try the next one
-                std::string str = fmt("IPCSerialize called on %p of unknown type %d - dropped from \"next\" chain.\n", srcbase, srcbase->type);
+                std::string str = fmt("CopyXrStructChain called on %p of unknown type %d - dropped from \"next\" chain.\n", srcbase, srcbase->type);
                 OutputDebugStringA(str.data());
                 srcbase = srcbase->next;
                 skipped = true;
@@ -481,10 +483,17 @@ XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const Xr
         }
     } while(skipped);
 
-    dstbase->next = reinterpret_cast<XrBaseInStructure*>(IPCSerialize(ipcbuf, header, srcbase->next, serializationType));
-    header->addOffsetToPointer(ipcbuf.base, &dstbase->next);
+    dstbase->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(srcbase->next, copyType, alloc, addOffsetToPointer));
+    addOffsetToPointer(&dstbase->next);
 
     return dstbase;
+}
+
+XrBaseInStructure* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const XrBaseInStructure* srcbase, CopyType copyType)
+{
+    return CopyXrStructChain(srcbase, copyType,
+            [&ipcbuf](size_t size){return ipcbuf.allocate(size);},
+            [&ipcbuf,&header](void* pointerToPointer){header->addOffsetToPointer(ipcbuf.base, pointerToPointer);});
 }
 
 // CopyOut XR structs -------------------------------------------------------
@@ -688,7 +697,7 @@ IPCXrGetInstanceProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header,
 
     dst->instance = src->instance;
 
-    dst->properties = reinterpret_cast<XrInstanceProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), SERIALIZE_ONLY_TYPE_NEXT));
+    dst->properties = reinterpret_cast<XrInstanceProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), COPY_ONLY_TYPE_NEXT));
     header->addOffsetToPointer(ipcbuf.base, &dst->properties);
 
     return dst;
@@ -733,7 +742,7 @@ IPCXrPollEvent* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 
     dst->instance = src->instance;
 
-    dst->event = reinterpret_cast<XrEventDataBuffer*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->event), SERIALIZE_ONLY_TYPE_NEXT));
+    dst->event = reinterpret_cast<XrEventDataBuffer*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->event), COPY_ONLY_TYPE_NEXT));
     header->addOffsetToPointer(ipcbuf.base, &dst->event);
 
     return dst;
@@ -782,7 +791,7 @@ IPCXrGetSystemProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, c
     dst->instance = src->instance;
 	dst->system = src->system;
 
-    dst->properties = reinterpret_cast<XrSystemProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), SERIALIZE_ONLY_TYPE_NEXT));
+    dst->properties = reinterpret_cast<XrSystemProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), COPY_ONLY_TYPE_NEXT));
     header->addOffsetToPointer(ipcbuf.base, &dst->properties);
 
     return dst;
@@ -829,7 +838,7 @@ IPCXrGetD3D11GraphicsRequirementsKHR* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeade
     dst->instance = src->instance;
     dst->systemId = src->systemId;
 
-    dst->graphicsRequirements = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->graphicsRequirements), SERIALIZE_ONLY_TYPE_NEXT));
+    dst->graphicsRequirements = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->graphicsRequirements), COPY_ONLY_TYPE_NEXT));
     header->addOffsetToPointer(ipcbuf.base, &dst->graphicsRequirements);
 
     return dst;
@@ -875,7 +884,7 @@ IPCXrCreateSwapchain* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const
 
     dst->session = src->session;
 
-    dst->createInfo = reinterpret_cast<const XrSwapchainCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), SERIALIZE_EVERYTHING));
+    dst->createInfo = reinterpret_cast<const XrSwapchainCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
 
     dst->swapchain = IPCSerializeNoCopy(ipcbuf, header, src->swapchain);
@@ -949,10 +958,10 @@ IPCXrWaitFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 
     dst->session = src->session;
 
-    dst->frameWaitInfo = reinterpret_cast<const XrFrameWaitInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameWaitInfo), SERIALIZE_EVERYTHING));
+    dst->frameWaitInfo = reinterpret_cast<const XrFrameWaitInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameWaitInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->frameWaitInfo);
 
-    dst->frameState = reinterpret_cast<XrFrameState*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameState), SERIALIZE_ONLY_TYPE_NEXT));
+    dst->frameState = reinterpret_cast<XrFrameState*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameState), COPY_ONLY_TYPE_NEXT));
     header->addOffsetToPointer(ipcbuf.base, &dst->frameState);
 
     return dst;
@@ -998,7 +1007,7 @@ IPCXrBeginFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCX
 
     dst->session = src->session;
 
-    dst->frameBeginInfo = reinterpret_cast<const XrFrameBeginInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameBeginInfo), SERIALIZE_EVERYTHING));
+    dst->frameBeginInfo = reinterpret_cast<const XrFrameBeginInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameBeginInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->frameBeginInfo);
 
     return dst;
@@ -1034,7 +1043,7 @@ IPCXrEndFrame* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrE
 
     dst->session = src->session;
 
-    dst->frameEndInfo = reinterpret_cast<const XrFrameEndInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameEndInfo), SERIALIZE_EVERYTHING));
+    dst->frameEndInfo = reinterpret_cast<const XrFrameEndInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->frameEndInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->frameEndInfo);
 
     return dst;
@@ -1070,7 +1079,7 @@ IPCXrAcquireSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header,
 
     dst->swapchain = src->swapchain;
 
-    dst->acquireInfo = reinterpret_cast<const XrSwapchainImageAcquireInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->acquireInfo), SERIALIZE_EVERYTHING));
+    dst->acquireInfo = reinterpret_cast<const XrSwapchainImageAcquireInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->acquireInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->acquireInfo);
 
     dst->index = IPCSerializeNoCopy(ipcbuf, header, src->index);
@@ -1118,7 +1127,7 @@ IPCXrWaitSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, co
 
     dst->swapchain = src->swapchain;
 
-    dst->waitInfo = reinterpret_cast<const XrSwapchainImageWaitInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->waitInfo), SERIALIZE_EVERYTHING));
+    dst->waitInfo = reinterpret_cast<const XrSwapchainImageWaitInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->waitInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->waitInfo);
 
     dst->sourceImage = src->sourceImage;
@@ -1170,7 +1179,7 @@ IPCXrReleaseSwapchainImage* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header,
 
     dst->swapchain = src->swapchain;
 
-    dst->releaseInfo = reinterpret_cast<const XrSwapchainImageReleaseInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->releaseInfo), SERIALIZE_EVERYTHING));
+    dst->releaseInfo = reinterpret_cast<const XrSwapchainImageReleaseInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->releaseInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->releaseInfo);
 
     dst->sourceImage = src->sourceImage;
@@ -1263,7 +1272,7 @@ IPCXrCreateSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const I
 
     dst->instance = src->instance;
 
-    dst->createInfo = reinterpret_cast<const XrSessionCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), SERIALIZE_EVERYTHING));
+    dst->createInfo = reinterpret_cast<const XrSessionCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
 
     dst->session = IPCSerializeNoCopy(ipcbuf, header, src->session);
@@ -1327,7 +1336,7 @@ IPCXrGetSystem* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXr
 
     dst->instance = src->instance;
 
-    dst->getInfo = reinterpret_cast<const XrSystemGetInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->getInfo), SERIALIZE_EVERYTHING));
+    dst->getInfo = reinterpret_cast<const XrSystemGetInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->getInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->getInfo);
 
     dst->systemId = IPCSerializeNoCopy(ipcbuf, header, src->systemId);
@@ -1374,7 +1383,7 @@ IPCXrCreateReferenceSpace* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, 
 
     dst->session = src->session;
 
-    dst->createInfo = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), SERIALIZE_EVERYTHING));
+    dst->createInfo = reinterpret_cast<const XrReferenceSpaceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
 
     dst->space = IPCSerializeNoCopy(ipcbuf, header, src->space);
@@ -1419,7 +1428,7 @@ IPCXrCreateInstance* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const 
 {
     IPCXrCreateInstance *dst = new(ipcbuf) IPCXrCreateInstance;
 
-    dst->createInfo = reinterpret_cast<const XrInstanceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), SERIALIZE_EVERYTHING));
+    dst->createInfo = reinterpret_cast<const XrInstanceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
 
     dst->instance = IPCSerializeNoCopy(ipcbuf, header, src->instance);
@@ -1573,7 +1582,7 @@ IPCXrBeginSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IP
 
     dst->session = src->session;
 
-    dst->beginInfo = reinterpret_cast<const XrSessionBeginInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->beginInfo), SERIALIZE_EVERYTHING));
+    dst->beginInfo = reinterpret_cast<const XrSessionBeginInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->beginInfo), COPY_EVERYTHING));
     header->addOffsetToPointer(ipcbuf.base, &dst->beginInfo);
 
     return dst;
@@ -1611,7 +1620,7 @@ IPCXrGetViewConfigurationProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader
     dst->systemId = src->systemId;
     dst->viewConfigurationType = src->viewConfigurationType;
 
-    dst->configurationProperties = reinterpret_cast<XrViewConfigurationProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->configurationProperties), SERIALIZE_ONLY_TYPE_NEXT));
+    dst->configurationProperties = reinterpret_cast<XrViewConfigurationProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->configurationProperties), COPY_ONLY_TYPE_NEXT));
     header->addOffsetToPointer(ipcbuf.base, &dst->configurationProperties);
 
     return dst;
@@ -1675,7 +1684,7 @@ IPCXrEnumerateInstanceExtensionProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXr
         header->addOffsetToPointer(ipcbuf.base, &dst->properties);
         for(uint32_t i = 0; i < dst->propertyCapacityInput; i++) {
             dst->properties[i].type = src->properties[i].type;
-            dst->properties[i].next = IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties[i].next), SERIALIZE_ONLY_TYPE_NEXT);
+            dst->properties[i].next = IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties[i].next), COPY_ONLY_TYPE_NEXT);
             header->addOffsetToPointer(ipcbuf.base, &dst->properties[i].next);
         }
     }
@@ -1739,7 +1748,7 @@ IPCXrEnumerateViewConfigurationViews* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeade
         header->addOffsetToPointer(ipcbuf.base, &dst->views);
         for(uint32_t i = 0; i < dst->viewCapacityInput; i++) {
             dst->views[i].type = src->views[i].type;
-            dst->views[i].next = IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->views[i].next), SERIALIZE_ONLY_TYPE_NEXT);
+            dst->views[i].next = IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->views[i].next), COPY_ONLY_TYPE_NEXT);
             header->addOffsetToPointer(ipcbuf.base, &dst->views[i].next);
         }
     }
