@@ -395,7 +395,12 @@ enum CopyType {
 };
 
 typedef std::function<void* (size_t size)> AllocateFunc;
+typedef std::function<void (const void* p)> FreeFunc;
 XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer);
+XR_OVERLAY_EXT_API void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free);
+XR_OVERLAY_EXT_API XrBaseInStructure* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer);
+XR_OVERLAY_EXT_API XrBaseInStructure* CopyXrStructChainWithMalloc(const void* xrstruct);
+XR_OVERLAY_EXT_API void FreeXrStructChainWithFree(const void* xrstruct);
 
 // RPC types implemented
 enum {
@@ -448,8 +453,6 @@ XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequestOrTermination(HANDLE remo
 XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
 XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
 XR_OVERLAY_EXT_API void IPCFinishHostResponse();
-
-XR_OVERLAY_EXT_API void CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer);
 
 
 // Exported entry points

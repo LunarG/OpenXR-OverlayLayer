@@ -159,9 +159,9 @@ const int OVERLAY_WAITFRAME_NORMAL_MILLIS = 1000;
 XrFrameState gSavedWaitFrameState; // XXX this is a struct and as such needs to be deep copied
 XrResult gSavedWaitFrameResult;
 
-// Quad layers from Overlay Session to overlay on Main Session's layers
-uint32_t gOverlayQuadLayerCount = 0;
-XrCompositionLayerQuad gOverlayQuadLayers[MAX_OVERLAY_LAYER_COUNT]; // XXX this is a struct and as such needs to be deep copied
+// Compositor layers from Overlay Session to overlay on Main Session's layers
+uint32_t gOverlayLayerCount = 0;
+std::vector<const XrCompositionLayerBaseHeader *>gOverlayLayers; // XXX this is a struct and as such needs to be deep copied
 std::set<XrSwapchain> gSwapchainsDestroyPending;
 std::set<XrSpace> gSpacesDestroyPending;
 
@@ -237,6 +237,85 @@ struct SwapchainCachedData
 
 typedef std::unique_ptr<SwapchainCachedData> SwapchainCachedDataPtr;
 std::map<XrSwapchain, SwapchainCachedDataPtr> gSwapchainMap;
+
+void ClearOverlayLayers()
+{
+    for(auto* l: gOverlayLayers) {
+        FreeXrStructChainWithFree(l);
+    }
+    gOverlayLayers.clear();
+}
+
+const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain swapchain)
+{
+    for(const auto* l : gOverlayLayers) {
+        while(l != nullptr) {
+            switch(l->type) {
+                case XR_TYPE_COMPOSITION_LAYER_QUAD: {
+                    auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
+                    if(p2->subImage.swapchain == swapchain) {
+                        return l;
+                    }
+                    break;
+                }
+                case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+                    auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(l);
+                    for(uint32_t j = 0; j < p2->viewCount; j++) {
+                        if(p2->views[j].subImage.swapchain == swapchain) {
+                            return l;
+                        }
+                    }
+                    break;
+                }
+                case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
+                    auto p2 = reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(l);
+                    if(p2->subImage.swapchain == swapchain) {
+                        return l;
+                    }
+                    break;
+                }
+                default: {
+                    OutputDebugStringA(fmt("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type).c_str());
+                }
+            }
+            l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
+        }
+    }
+    return nullptr;
+}
+
+const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
+{
+    for(const auto* l : gOverlayLayers) {
+        while(l != nullptr) {
+            switch(l->type) {
+                case XR_TYPE_COMPOSITION_LAYER_QUAD: {
+                    auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
+                    if(p2->space == space) {
+                        return l;
+                    }
+                    break;
+                }
+                case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+                    auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(l);
+                    if(p2->space == space) {
+                        return l;
+                    }
+                    break;
+                }
+                case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
+                    // Nothing - DepthInfoKHR Is chained from Projection, which has the space
+                    break;
+                }
+                default: {
+                    OutputDebugStringA(fmt("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type).c_str());
+                }
+            }
+            l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
+        }
+    }
+    return nullptr;
+}
 
 
 #ifdef __cplusplus    // If used by C++ code, 
@@ -316,7 +395,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 DebugBreak();
             }
             gSwapchainMap.clear();
-            gOverlayQuadLayerCount = 0;
+            ClearOverlayLayers();
             ReleaseMutex(gOverlayCallMutex);
             connectionIsActive = false;
             continue;
@@ -329,7 +408,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 DebugBreak();
             }
             gSwapchainMap.clear();
-            gOverlayQuadLayerCount = 0;
+            ClearOverlayLayers();
             ReleaseMutex(gOverlayCallMutex);
             connectionIsActive = false;
             OutputDebugStringA("IPC Wait Error\n");
@@ -815,47 +894,51 @@ XrResult Overlay_xrEndSession(
 XrResult Overlay_xrDestroySession(
     XrSession session)
 {
-    
     XrResult result;
 
     if(session == kOverlayFakeSession) {
         // overlay session
 
-		if (gSerializeEverything) {
-			DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-			if (waitresult == WAIT_TIMEOUT) {
-				OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-				DebugBreak();
-			}
-		}
-		gOverlayQuadLayerCount = 0;
+        if (gSerializeEverything) {
+            DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+            if (waitresult == WAIT_TIMEOUT) {
+                    OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+                    DebugBreak();
+            }
+        }
+
+        ClearOverlayLayers();
         ReleaseSemaphore(gMainDestroySessionSema, 1, nullptr);
         result = XR_SUCCESS;
-		if (gSerializeEverything) {
-			ReleaseMutex(gOverlayCallMutex);
-		}
+
+        if (gSerializeEverything) {
+            ReleaseMutex(gOverlayCallMutex);
+        }
 
     } else {
         // main session
 
-		gExitIPCLoop = true;
-		ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
+        gExitIPCLoop = true;
+        ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
         DWORD waitresult = WaitForSingleObject(gMainDestroySessionSema, 1000000);
         if(waitresult == WAIT_TIMEOUT) {
             OutputDebugStringA("**OVERLAY** main destroy session timeout\n");
             DebugBreak();
         }
-		if (gSerializeEverything) {
-			DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-			if (waitresult == WAIT_TIMEOUT) {
-				OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-				DebugBreak();
-			}
-		}
-		result = downchain->DestroySession(session);
-		if (gSerializeEverything) {
-			ReleaseMutex(gOverlayCallMutex);
-		}
+
+        if (gSerializeEverything) {
+            DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+            if (waitresult == WAIT_TIMEOUT) {
+                OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+                DebugBreak();
+            }
+        }
+
+        result = downchain->DestroySession(session);
+
+        if (gSerializeEverything) {
+            ReleaseMutex(gOverlayCallMutex);
+        }
     }
 
     return result;
@@ -871,10 +954,7 @@ XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
         DebugBreak();
     }
 
-    auto foundIt = std::find_if(gOverlayQuadLayers, gOverlayQuadLayers + gOverlayQuadLayerCount, 
-            [swapchain](const XrCompositionLayerQuad& x){return x.subImage.swapchain == swapchain;});
-
-    bool isSubmitted = (foundIt != (gOverlayQuadLayers + gOverlayQuadLayerCount));
+    bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) == nullptr);
 
     if(isSubmitted) {
         gSwapchainsDestroyPending.insert(swapchain);
@@ -900,13 +980,7 @@ XrResult Overlay_xrDestroySpace(XrSpace space)
         }
     }
 
-    bool isSubmitted = false;
-    // XXX there's probably an elegant C++ find with lambda that would do this:
-    for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
-        if(gOverlayQuadLayers[i].space == space) {
-            isSubmitted = true;
-        }
-    }
+    bool isSubmitted = (FindLayerReferencingSpace(space) == nullptr);
 
     if(isSubmitted) {
         gSpacesDestroyPending.insert(space);
@@ -1185,7 +1259,7 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
 
 XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info) 
 {
-    XrResult result;
+    XrResult result = XR_SUCCESS;
 
     DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
     if(waitresult == WAIT_TIMEOUT) {
@@ -1197,39 +1271,31 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
 
         // TODO: validate blend mode matches main session
 
+        ClearOverlayLayers();
         if(info->layerCount > MAX_OVERLAY_LAYER_COUNT) {
-            gOverlayQuadLayerCount = 0;
             result = XR_ERROR_LAYER_LIMIT_EXCEEDED;
         } else {
-            bool valid = true;
-            for(uint32_t i = 0; i < info->layerCount; i++) {
-                if(info->layers[0]->type != XR_TYPE_COMPOSITION_LAYER_QUAD) {
-                    result = XR_ERROR_LAYER_INVALID;
-                    valid = false;
-                    break;
+            for(uint32_t i = 0; (result == XR_SUCCESS) && (i < info->layerCount); i++) {
+                const XrBaseInStructure *copy = CopyXrStructChainWithMalloc(info->layers[i]);
+                if(copy == nullptr) {
+                    result = XR_ERROR_OUT_OF_MEMORY;
+                    ClearOverlayLayers();
+                } else {
+                    gOverlayLayers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(copy));
                 }
-            }
-            if(valid) {
-                gOverlayQuadLayerCount = info->layerCount;
-                for(uint32_t i = 0; i < info->layerCount; i++) {
-                    gOverlayQuadLayers[i] = *reinterpret_cast<const XrCompositionLayerQuad*>(info->layers[i]);
-                }
-                result = XR_SUCCESS;
-            } else {
-                gOverlayQuadLayerCount = 0;
             }
         }
 
     } else {
 
         XrFrameEndInfo info2 = *info;
-        std::unique_ptr<const XrCompositionLayerBaseHeader*> layers2(new const XrCompositionLayerBaseHeader*[info->layerCount + gOverlayQuadLayerCount]);
+        std::unique_ptr<const XrCompositionLayerBaseHeader*> layers2(new const XrCompositionLayerBaseHeader*[info->layerCount + gOverlayLayers.size()]);
         memcpy(layers2.get(), info->layers, sizeof(const XrCompositionLayerBaseHeader*) * info->layerCount);
-        for(uint32_t i = 0; i < gOverlayQuadLayerCount; i++) {
-            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&gOverlayQuadLayers[i]);
+        for(uint32_t i = 0; i < gOverlayLayers.size(); i++) {
+            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(gOverlayLayers[i]);
 	}
 
-        info2.layerCount = info->layerCount + gOverlayQuadLayerCount;
+        info2.layerCount = info->layerCount + static_cast<uint32_t>(gOverlayLayers.size());
         info2.layers = layers2.get();
 
         result = downchain->EndFrame(session, &info2);
@@ -1237,10 +1303,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         // XXX there's probably an elegant C++ find with lambda that would do this:
         auto copyOfPendingDestroySwapchains = gSwapchainsDestroyPending;
         for(auto swapchain : copyOfPendingDestroySwapchains) {
-            auto foundIt = std::find_if(gOverlayQuadLayers, gOverlayQuadLayers + gOverlayQuadLayerCount, 
-                [swapchain](const XrCompositionLayerQuad& x){return x.subImage.swapchain == swapchain;});
-
-            bool isSubmitted = (foundIt != (gOverlayQuadLayers + gOverlayQuadLayerCount));
+            bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) == nullptr);
 
             if(!isSubmitted) {
                 result = downchain->DestroySwapchain(swapchain);
@@ -1253,10 +1316,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         }
         auto copyOfPendingDestroySpaces = gSpacesDestroyPending;
         for(auto space : copyOfPendingDestroySpaces) {
-            auto foundIt = std::find_if(gOverlayQuadLayers, gOverlayQuadLayers + gOverlayQuadLayerCount, 
-                [space](const XrCompositionLayerQuad& x){return x.space == space;});
-
-            bool isSubmitted = (foundIt != (gOverlayQuadLayers + gOverlayQuadLayerCount));
+            bool isSubmitted = (FindLayerReferencingSpace(space) == nullptr);
 
             if(!isSubmitted) {
                 result = downchain->DestroySpace(space);

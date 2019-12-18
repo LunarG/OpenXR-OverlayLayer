@@ -78,67 +78,6 @@ static std::string fmt(const char* fmt, ...)
     return "(fmt() failed, vsnprintf returned -1)";
 }
 
-const void* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, unsigned char* buffer, size_t remaining);
-
-template <class XR_TYPE>
-const void* CopyXrTypeIntoBuffer(const XR_TYPE* eventData, XR_TYPE* buffer, size_t remaining)
-{
-    if (remaining < sizeof(XR_TYPE)) {
-        OutputDebugStringA(fmt("**OVERLAY** out of buffer space in CopyXrTypeIntoBuffer\n").c_str());
-        DebugBreak();
-    }
-    auto* dest = reinterpret_cast<XR_TYPE*>(buffer);
-    *dest = *reinterpret_cast<const XR_TYPE*>(eventData);
-    unsigned char *next = reinterpret_cast<unsigned char*>(buffer) + sizeof(XR_TYPE);
-    dest->next = CopyEventChainIntoBuffer(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next), next, remaining - sizeof(XR_TYPE));
-    return buffer;
-}
-
-const void* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, unsigned char* buffer, size_t remaining)
-{
-    if(eventData == nullptr) {
-        return nullptr;
-    }
-
-    switch(eventData->type) {
-        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataInstanceLossPending*>(eventData), reinterpret_cast<XrEventDataInstanceLossPending*>(buffer), remaining);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData), reinterpret_cast<XrEventDataSessionStateChanged*>(buffer), remaining);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(eventData), reinterpret_cast<XrEventDataReferenceSpaceChangePending*>(buffer), remaining);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataEventsLost*>(eventData), reinterpret_cast<XrEventDataEventsLost*>(buffer), remaining);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataInteractionProfileChanged*>(eventData), reinterpret_cast<XrEventDataInteractionProfileChanged*>(buffer), remaining);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: { 
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataPerfSettingsEXT*>(eventData), reinterpret_cast<XrEventDataPerfSettingsEXT*>(buffer), remaining);
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR: {
-            return CopyXrTypeIntoBuffer(reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR*>(eventData), reinterpret_cast<XrEventDataVisibilityMaskChangedKHR*>(buffer), remaining);
-            break;
-        }
-        default: {
-            OutputDebugStringA(fmt("**OVERLAY** skipped type %d in CopyEventChainIntoBuffer\n", eventData->type).c_str());
-            DebugBreak();
-            return CopyEventChainIntoBuffer(reinterpret_cast<const XrEventDataBaseHeader*>(eventData->next), buffer, remaining);
-            break;
-        }
-    }
-    return buffer;
-}
-
 template <class XR_STRUCT>
 XrBaseInStructure* AllocateAndCopy(const XR_STRUCT* srcbase, CopyType copyType, std::function<void* (size_t size)> alloc)
 {
@@ -260,8 +199,35 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
                 break;
             }
 
+            case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(srcbase), copyType, alloc);
+                break;
+            }
+
             case XR_TYPE_EVENT_DATA_BUFFER: {
                 dstbase = AllocateAndCopy(reinterpret_cast<const XrEventDataBuffer*>(srcbase), copyType, alloc);
+                break;
+            }
+
+            case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+                auto src = reinterpret_cast<const XrCompositionLayerProjection*>(srcbase);
+                auto dst = reinterpret_cast<XrCompositionLayerProjection*>(alloc(sizeof(XrCompositionLayerProjection)));
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                dst->type = src->type;
+
+                dst->layerFlags = src->layerFlags;
+                dst->space = src->space;
+                dst->viewCount = src->viewCount;
+
+                // Lay down views...
+                auto views = (XrCompositionLayerProjectionView*)alloc(sizeof(XrCompositionLayerProjectionView) * src->viewCount);
+                dst->views = views;
+                addOffsetToPointer(&dst->views);
+                for(uint32_t i = 0; i < dst->viewCount; i++) {
+                    views[i] = src->views[i]; // XXX sloppy
+                    views[i].next =(CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(src->views[i].next), copyType, alloc, addOffsetToPointer));
+                    addOffsetToPointer(&(views[i].next));
+                }
                 break;
             }
 
@@ -275,7 +241,6 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
                 dst->layerCount = src->layerCount;
 
                 // Lay down layers...
-                // const XrCompositionLayerBaseHeader* const* layers;
                 auto layers = (XrCompositionLayerBaseHeader**)alloc(sizeof(XrCompositionLayerBaseHeader*) * src->layerCount);
                 dst->layers = layers;
                 addOffsetToPointer(&dst->layers);
@@ -368,6 +333,114 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
     return dstbase;
 }
 
+XR_OVERLAY_EXT_API void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free)
+{
+    if(p == nullptr) {
+		return;
+    }
+
+    switch(p->type) {
+
+        case XR_TYPE_INSTANCE_CREATE_INFO: {
+            auto* actual = reinterpret_cast<const XrInstanceCreateInfo*>(p);
+
+            // Delete API Layer names
+            for(uint32_t i = 0; i < actual->enabledApiLayerCount; i++) {
+                free(actual->enabledApiLayerNames[i]);
+            }
+            free(actual->enabledApiLayerNames);
+
+            // Delete extension names
+            for(uint32_t i = 0; i < actual->enabledExtensionCount; i++) {
+                free(actual->enabledExtensionNames[i]);
+            }
+            free(actual->enabledApiLayerNames);
+            break;
+        }
+
+        case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR:
+        case XR_TYPE_FRAME_STATE:
+        case XR_TYPE_SYSTEM_PROPERTIES:
+        case XR_TYPE_INSTANCE_PROPERTIES:
+        case XR_TYPE_VIEW_CONFIGURATION_VIEW:
+        case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES:
+        case XR_TYPE_SESSION_BEGIN_INFO:
+        case XR_TYPE_SYSTEM_GET_INFO:
+        case XR_TYPE_SWAPCHAIN_CREATE_INFO:
+        case XR_TYPE_FRAME_WAIT_INFO:
+        case XR_TYPE_FRAME_BEGIN_INFO:
+        case XR_TYPE_COMPOSITION_LAYER_QUAD:
+        case XR_TYPE_EVENT_DATA_BUFFER:
+        case XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO:
+        case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO:
+        case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO:
+        case XR_TYPE_SESSION_CREATE_INFO:
+        case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT:
+        case XR_TYPE_REFERENCE_SPACE_CREATE_INFO:
+        case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR:
+        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
+        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+        case XR_TYPE_EVENT_DATA_EVENTS_LOST:
+        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
+        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: 
+        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR:
+        case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR:
+            break;
+
+        case XR_TYPE_FRAME_END_INFO: {
+            auto* actual = reinterpret_cast<const XrFrameEndInfo*>(p);
+            // Delete layers...
+            for(uint32_t i = 0; i < actual->layerCount; i++) {
+                FreeXrStructChain(reinterpret_cast<const XrBaseInStructure*>(actual->layers[i]), free);
+            }
+            free(actual->layers);
+            break;
+        }
+
+        case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+            auto* actual = reinterpret_cast<const XrCompositionLayerProjection*>(p);
+            // Delete views...
+            for(uint32_t i = 0; i < actual->viewCount; i++) {
+                free(actual->views[i].next);
+            }
+            free(actual->views);
+            break;
+        }
+
+        default: {
+            // I don't know what this is, skip it and try the next one
+            std::string str = fmt("Warning: Free called on %p of unknown type %d - will descend \"next\" but don't know any other pointers.\n", p, p->type);
+            OutputDebugStringA(str.data());
+            break;
+        }
+    }
+
+    FreeXrStructChain(p->next, free);
+    free(p);
+}
+
+XR_OVERLAY_EXT_API XrBaseInStructure* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
+{
+    size_t remaining = sizeof(XrEventDataBuffer);
+    unsigned char* next = reinterpret_cast<unsigned char *>(buffer);
+    return CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(eventData), COPY_EVERYTHING,
+            [&buffer,&remaining,&next](size_t s){unsigned char* cur = next; next += s; return cur; },
+            [](void *){ });
+}
+
+XR_OVERLAY_EXT_API XrBaseInStructure* CopyXrStructChainWithMalloc(const void* xrstruct)
+{
+    return CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(xrstruct), COPY_EVERYTHING,
+            [](size_t s){return malloc(s); },
+            [](void *){ });
+}
+
+XR_OVERLAY_EXT_API void FreeXrStructChainWithFree(const void* xrstruct)
+{
+    FreeXrStructChain(reinterpret_cast<const XrBaseInStructure*>(xrstruct),
+            [](const void *p){free(const_cast<void*>(p));});
+}
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
@@ -387,7 +460,7 @@ bool CreateIPCSemaphores()
         DebugBreak();
         return false;
     }
-	return true;
+    return true;
 }
 
 void* IPCGetSharedMemory()
@@ -514,11 +587,6 @@ bool UnmapSharedMemory()
 
     return err;
 } 
-
-XR_OVERLAY_EXT_API void CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
-{
-    CopyEventChainIntoBuffer(eventData, reinterpret_cast<unsigned char*>(buffer), sizeof(*buffer));
-}
 
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,
