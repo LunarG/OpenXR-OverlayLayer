@@ -156,24 +156,40 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
     return d3d11Device;
 }
 
-void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays)
+void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays, bool requestPosePermission, XrPermissionIdEXT posePermissionId)
 {
+    void* chain = nullptr;
+
     XrGraphicsBindingD3D11KHR d3dBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
     d3dBinding.device = d3d11Device;
+    chain = &d3dBinding;
 
     if(usingOverlays) {
 #if COMPILE_REMOTE_OVERLAY_APP
         XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
-        sessionCreateInfoOverlay.next = nullptr;
+        sessionCreateInfoOverlay.next = chain;
         sessionCreateInfoOverlay.overlaySession = XR_TRUE;
         sessionCreateInfoOverlay.sessionLayersPlacement = 1; 
-        d3dBinding.next = &sessionCreateInfoOverlay;
+        chain = &sessionCreateInfoOverlay;
 #endif  // COMPILE_REMOTE_OVERLAY_APP
     }  
 
+    if(requestPosePermission) {
+#if COMPILE_REMOTE_OVERLAY_APP
+        XrSessionCreateInfoPermissionsEXT sessionCreateInfoPermissions{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_PERMISSIONS_EXT};
+        std::vector<XrPermissionRequestEXT> permissions;
+        XrPermissionRequestEXT posePermission {(XrStructureType)XR_TYPE_PERMISSION_REQUEST_EXT, nullptr, posePermissionId, false};
+        permissions.push_back(posePermission);
+        sessionCreateInfoPermissions.next = chain;
+        sessionCreateInfoPermissions.requestedPermissionsCount = (uint32_t)permissions.size();
+        sessionCreateInfoPermissions.requestedPermissions = permissions.data(); 
+        chain = &sessionCreateInfoPermissions;
+#endif  // COMPILE_REMOTE_OVERLAY_APP
+    }
+
     XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
     sessionCreateInfo.systemId = systemId;
-    sessionCreateInfo.next = &d3dBinding;
+    sessionCreateInfo.next = chain;
 
     CHECK_XR(xrCreateSession(instance, &sessionCreateInfo, session));
 }
@@ -333,6 +349,7 @@ int main( void )
 {
     bool sawFirstSuccessfulFrame = false;
     bool useDebugMessenger = false;
+    bool usePermissions = false;
 
     bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
 
@@ -352,6 +369,9 @@ int main( void )
             std::cout << "    " << p.extensionName << ", version " << p.extensionVersion << "\n";
             if(std::string(p.extensionName) == "XR_EXT_debug_utils") {
                 useDebugMessenger = true;
+            }
+            if(std::string(p.extensionName) == "XR_EXT_permissions_support") {
+                usePermissions = true;
             }
         }
     }
@@ -379,16 +399,37 @@ int main( void )
     if(useDebugMessenger) {
         extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_debug_utils";
     }
+    if(usePermissions) {
+        extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_permissions_support";
+    }
     createInstance.enabledApiLayerCount = 0;
     createInstance.enabledApiLayerNames = nullptr;
     CHECK_XR(xrCreateInstance(&createInstance, &instance));
     std::cout << "CreateInstance succeeded!\n";
 
+    PFN_xrEnumerateInstancePermissionsEXT enumerateInstancePermissionsEXT;
+    bool unfocusedPosePermissionAvailable = false;
+    XrPermissionIdEXT unfocusedPosePermissionId = 0;
+    if(usePermissions) {
+        CHECK_XR(xrGetInstanceProcAddr(instance, "xrEnumerateInstancePermissionsEXT",
+            reinterpret_cast<PFN_xrVoidFunction*>(&enumerateInstancePermissionsEXT)));
+        uint32_t count;
+        CHECK_XR(enumerateInstancePermissionsEXT(instance, 0, &count, nullptr));
+        std::vector<XrPermissionPropertiesEXT> properties(count);
+        CHECK_XR(enumerateInstancePermissionsEXT(instance, count, &count, properties.data()));
+        for(auto& p : properties) {
+            if(std::string(p.permissionName) == "XR_EXT_permissions_support") {
+                unfocusedPosePermissionAvailable = true;
+                unfocusedPosePermissionId = p.permissionId;
+            }
+        }
+    }
+
     XrDebugUtilsMessengerEXT messenger = XR_NULL_HANDLE;
     if(useDebugMessenger) {
-		PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
-		CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
-			reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
+        PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
+        CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
+            reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
 
         XrDebugUtilsMessengerCreateInfoEXT dumCreateInfo { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
         dumCreateInfo.messageSeverities = 
@@ -426,7 +467,7 @@ int main( void )
 
     XrSession session;
 
-    CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession);
+    CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession, unfocusedPosePermissionAvailable, unfocusedPosePermissionId);
     std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
     XrSpace viewSpace;

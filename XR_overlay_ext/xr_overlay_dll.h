@@ -65,6 +65,9 @@ enum {
 };
 
 // Stand in while Overlay is not defined in openxr.h
+
+XR_DEFINE_ATOM(XrPermissionIdEXT)
+
 typedef struct XrSessionCreateInfoOverlayEXT
 {
     XrStructureType             type;
@@ -73,9 +76,53 @@ typedef struct XrSessionCreateInfoOverlayEXT
     uint32_t                    sessionLayersPlacement;
 } XrSessionCreateInfoOverlayEXT;
 
+typedef struct XrPermissionPropertiesEXT {
+    XrStructureType type;
+    const void* XR_MAY_ALIAS next;
+    char permissionName[128];
+    char permissionDescription[256];
+    XrPermissionIdEXT permissionId;
+} XrPermissionPropertiesEXT;
+
+typedef struct XrPermissionRequestEXT {
+    XrStructureType type;
+    const void* XR_MAY_ALIAS next;
+    XrPermissionIdEXT permissionId;
+    XrBool32 optional;
+} XrPermissionRequestEXT;
+
+typedef struct XrSessionCreateInfoPermissionsEXT {
+    XrStructureType type;
+    const void* XR_MAY_ALIAS next;
+    uint32_t requestedPermissionsCount;
+    const XrPermissionRequestEXT* requestedPermissions;
+} XrSessionCreateInfoPermissionsEXT;
+
+XrResult xrEnumerateInstancePermissionsEXT(
+    XrInstance instance,
+    uint32_t propertyCapacityInput,
+    uint32_t* propertyCountOutput,
+    XrPermissionPropertiesEXT* properties);
+
+typedef XrResult (XRAPI_PTR *PFN_xrEnumerateInstancePermissionsEXT)(XrInstance instance, uint32_t propertyCapacityInput, uint32_t* propertyCountOutput, XrPermissionPropertiesEXT* properties);
+
 enum {
     // XXX need to do this with an enum generated from ext as part of build
-    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000099999,
+
+    // XR_EXT_overlay
+    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000090000,
+
+    // XR_EXT_permission_support
+    XR_TYPE_PERMISSION_PROPERTIES_EXT,
+    XR_TYPE_PERMISSION_REQUEST_EXT,
+    XR_TYPE_SESSION_CREATE_INFO_PERMISSIONS_EXT,
+
+    // New Success Codes
+    XR_OPTIONAL_PERMISSION_UNAVAILABLE_EXT,
+
+    // New Error codes
+    XR_ERROR_PERMISSION_INVALID_EXT,
+    XR_ERROR_REQUIRED_PERMISSION_UNAVAILABLE_EXT,
 };
 
 // Structs containing RPC arguments -----------------------------------------
