@@ -58,6 +58,7 @@
 #include "../XR_overlay_ext/xr_overlay_dll.h"
 #else // undef COMPILE_REMOTE_OVERLAY_APP
 #include <openxr/openxr.h>
+XR_DEFINE_ATOM(XrPermissionIdEXT)
 #endif // COMPILE_REMOTE_OVERLAY_APP
 
 #include <openxr/openxr_platform.h>
@@ -156,7 +157,7 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
     return d3d11Device;
 }
 
-void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays, bool requestPosePermission, XrPermissionIdEXT posePermissionId)
+void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays, bool requestPosePermission)
 {
     void* chain = nullptr;
 
@@ -176,6 +177,22 @@ void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId sy
 
     if(requestPosePermission) {
 #if COMPILE_REMOTE_OVERLAY_APP
+        bool unfocusedPosePermissionAvailable = false;
+        XrPermissionIdEXT unfocusedPosePermissionId = 0;
+        PFN_xrEnumerateInstancePermissionsEXT enumerateInstancePermissionsEXT;
+        CHECK_XR(xrGetInstanceProcAddr(instance, "xrEnumerateInstancePermissionsEXT",
+                                        reinterpret_cast<PFN_xrVoidFunction*>(&enumerateInstancePermissionsEXT)));
+        uint32_t count;
+        CHECK_XR(enumerateInstancePermissionsEXT(instance, 0, &count, nullptr));
+        std::vector<XrPermissionPropertiesEXT> properties(count);
+        CHECK_XR(enumerateInstancePermissionsEXT(instance, count, &count, properties.data()));
+        for (auto& p : properties) {
+            if (std::string(p.permissionName) == "XR_EXT_permissions_support") {
+                unfocusedPosePermissionAvailable = true;
+                unfocusedPosePermissionId = p.permissionId;
+            }
+        }
+
         XrSessionCreateInfoPermissionsEXT sessionCreateInfoPermissions{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_PERMISSIONS_EXT};
         std::vector<XrPermissionRequestEXT> permissions;
         XrPermissionRequestEXT posePermission {(XrStructureType)XR_TYPE_PERMISSION_REQUEST_EXT, nullptr, posePermissionId, false};
@@ -407,24 +424,6 @@ int main( void )
     CHECK_XR(xrCreateInstance(&createInstance, &instance));
     std::cout << "CreateInstance succeeded!\n";
 
-    PFN_xrEnumerateInstancePermissionsEXT enumerateInstancePermissionsEXT;
-    bool unfocusedPosePermissionAvailable = false;
-    XrPermissionIdEXT unfocusedPosePermissionId = 0;
-    if(usePermissions) {
-        CHECK_XR(xrGetInstanceProcAddr(instance, "xrEnumerateInstancePermissionsEXT",
-            reinterpret_cast<PFN_xrVoidFunction*>(&enumerateInstancePermissionsEXT)));
-        uint32_t count;
-        CHECK_XR(enumerateInstancePermissionsEXT(instance, 0, &count, nullptr));
-        std::vector<XrPermissionPropertiesEXT> properties(count);
-        CHECK_XR(enumerateInstancePermissionsEXT(instance, count, &count, properties.data()));
-        for(auto& p : properties) {
-            if(std::string(p.permissionName) == "XR_EXT_permissions_support") {
-                unfocusedPosePermissionAvailable = true;
-                unfocusedPosePermissionId = p.permissionId;
-            }
-        }
-    }
-
     XrDebugUtilsMessengerEXT messenger = XR_NULL_HANDLE;
     if(useDebugMessenger) {
         PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
@@ -467,7 +466,7 @@ int main( void )
 
     XrSession session;
 
-    CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession, unfocusedPosePermissionAvailable, unfocusedPosePermissionId);
+    CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession, usePermissions);
     std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
     XrSpace viewSpace;
@@ -575,7 +574,7 @@ int main( void )
                                         if(e.state == XR_SESSION_STATE_STOPPING) {
                                             CHECK_XR(xrEndSession(session));
                                             std::cout << "left READY\n";
-                                            runFrameLoop = false;
+                                            // runFrameLoop = false;
                                         }
                                         // ignore other transitions
                                         break;
@@ -632,8 +631,15 @@ int main( void )
 
             XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
             CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
+            // printf("frameState: { %llu, %llu, %s }\n", waitFrameState.predictedDisplayTime, waitFrameState.predictedDisplayPeriod, waitFrameState.shouldRender ? "yes" : "no");
 
             CHECK_XR(xrBeginFrame(session, nullptr));
+
+            XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO, nullptr};
+            frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
+            frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+
+            if(waitFrameState.shouldRender) {
             for(int eye = 0; eye < 2; eye++) {
                 uint32_t index;
                 XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
@@ -675,14 +681,8 @@ int main( void )
                     layers[eye].pose = pose;
                     layers[eye].size = {0.33f, 0.33f};
                 }
-                XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-                frameEndInfo.next = nullptr;
                 frameEndInfo.layers = layerPointers;
                 frameEndInfo.layerCount = 2;
-                frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-                frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-
-                CHECK_XR(xrEndFrame(session, &frameEndInfo));
 
             } else {
 
@@ -697,24 +697,20 @@ int main( void )
                 layers[0].pose = pose;
                 layers[0].size = {0.33f, 0.33f};
 
-                XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO};
-                frameEndInfo.next = nullptr;
                 frameEndInfo.layers = layerPointers;
                 frameEndInfo.layerCount = 1;
-                frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-                frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-
-                CHECK_XR(xrEndFrame(session, &frameEndInfo));
-
+                }
             }
+
+            CHECK_XR(xrEndFrame(session, &frameEndInfo));
             
             if(!sawFirstSuccessfulFrame) {
                 sawFirstSuccessfulFrame = true;
                 std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
             }
-		} else {
-			std::this_thread::sleep_for(std::chrono::milliseconds(250));
-		}
+	} else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+	}
     }
 
     if(false) {
