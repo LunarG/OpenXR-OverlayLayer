@@ -22,6 +22,8 @@
 // Author: Brad Grantham <brad@lunarg.com>
 //
 
+
+#include <string>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -157,6 +159,87 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
     return d3d11Device;
 }
 
+void GetInstanceExtensions(std::map<std::string, uint32_t>& extensionMap)
+{
+#if !COMPILE_REMOTE_OVERLAY_APP
+    // XXX Layer doesn't support calling downchain->EnumerateInstanceExtensionProperties
+    uint32_t extPropCount;
+    CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
+    if(extPropCount > 0) {
+        std::vector<XrExtensionProperties> extensionProperties(extPropCount);
+        for(auto& p: extensionProperties) {
+            p.type = XR_TYPE_EXTENSION_PROPERTIES;
+            p.next = nullptr;
+        }
+        CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, extPropCount, &extPropCount, extensionProperties.data()));
+        for(auto& p: extensionProperties) {
+            extensionMap.insert({p.extensionName, p.extensionVersion});
+        }
+    }
+#endif // COMPILE_REMOTE_OVERLAY_APP
+}
+
+void CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion, uint64_t apiVersion, std::vector<const char*> extensionNames, XrInstance* instance)
+{
+    XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
+    createInstance.next = nullptr;
+    createInstance.createFlags = 0;
+    strncpy_s(createInstance.applicationInfo.applicationName, appName.c_str(), appName.size() + 1);
+    createInstance.applicationInfo.applicationVersion = appVersion;
+    strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
+    createInstance.applicationInfo.engineVersion = engineVersion;
+	createInstance.applicationInfo.apiVersion = apiVersion;
+    createInstance.enabledExtensionNames = extensionNames.data();
+    createInstance.enabledExtensionCount = (uint32_t) extensionNames.size();
+    createInstance.enabledApiLayerCount = 0;
+    createInstance.enabledApiLayerNames = nullptr;
+    CHECK_XR(xrCreateInstance(&createInstance, instance));
+}
+
+XrBool32 processDebugMessage(
+    XrDebugUtilsMessageSeverityFlagsEXT /* messageSeverity */,
+    XrDebugUtilsMessageTypeFlagsEXT /* messageTypes */,
+    const XrDebugUtilsMessengerCallbackDataEXT* callbackData,
+    void* /* userData */)
+{
+    std::cout << "XR: " << callbackData->message << "\n";
+
+    // typedef struct XrDebugUtilsMessengerCallbackDataEXT {
+        // XrStructureType type;
+        // const void* next;
+        // const char* messageId;
+        // const char* functionName;
+        // const char* message;
+        // uint32_t objectCount;
+        // XrDebugUtilsObjectNameInfoEXT* objects;
+        // uint32_t sessionLabelCount;
+        // XrDebugUtilsLabelEXT* sessionLabels;
+    // } XrDebugUtilsMessengerCallbackDataEXT;
+
+    return XR_FALSE;
+}
+
+void CreateDebugMessenger(XrInstance instance, XrDebugUtilsMessengerEXT* messenger)
+{
+    PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
+    CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
+        reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
+
+    XrDebugUtilsMessengerCreateInfoEXT dumCreateInfo { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+    dumCreateInfo.messageSeverities = 
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    dumCreateInfo.messageTypes = XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                    XR_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_TYPE_CONFORMANCE_BIT_EXT |
+       XR_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    dumCreateInfo.userCallback = processDebugMessage;
+    dumCreateInfo.userData = nullptr;
+    CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, messenger));
+}
+
 void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays, bool requestPosePermission)
 {
     void* chain = nullptr;
@@ -195,7 +278,7 @@ void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId sy
 
         XrSessionCreateInfoPermissionsEXT sessionCreateInfoPermissions{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_PERMISSIONS_EXT};
         std::vector<XrPermissionRequestEXT> permissions;
-        XrPermissionRequestEXT posePermission {(XrStructureType)XR_TYPE_PERMISSION_REQUEST_EXT, nullptr, posePermissionId, false};
+        XrPermissionRequestEXT posePermission {(XrStructureType)XR_TYPE_PERMISSION_REQUEST_EXT, nullptr, unfocusedPosePermissionId, false};
         permissions.push_back(posePermission);
         sessionCreateInfoPermissions.next = chain;
         sessionCreateInfoPermissions.requestedPermissionsCount = (uint32_t)permissions.size();
@@ -339,27 +422,129 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
     }
 }
 
-XrBool32 processDebugMessage(
-    XrDebugUtilsMessageSeverityFlagsEXT /* messageSeverity */,
-    XrDebugUtilsMessageTypeFlagsEXT /* messageTypes */,
-    const XrDebugUtilsMessengerCallbackDataEXT* callbackData,
-    void* /* userData */)
+void FillSwapchainImage(XrSwapchain swapchain, XrSwapchainImageD3D11KHR *swapchainImages, ID3D11Texture2D *sourceImage, ID3D11DeviceContext* d3dContext)
 {
-    std::cout << "XR: " << callbackData->message << "\n";
+    uint32_t index;
+    XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+    acquireInfo.next = nullptr;
 
-    // typedef struct XrDebugUtilsMessengerCallbackDataEXT {
-        // XrStructureType type;
-        // const void* next;
-        // const char* messageId;
-        // const char* functionName;
-        // const char* message;
-        // uint32_t objectCount;
-        // XrDebugUtilsObjectNameInfoEXT* objects;
-        // uint32_t sessionLabelCount;
-        // XrDebugUtilsLabelEXT* sessionLabels;
-    // } XrDebugUtilsMessengerCallbackDataEXT;
+    CHECK_XR(xrAcquireSwapchainImage(swapchain, &acquireInfo, &index));
 
-	return XR_FALSE;
+    XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    waitInfo.next = nullptr;
+    waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
+    CHECK_XR(xrWaitSwapchainImage(swapchain, &waitInfo));
+
+    d3dContext->CopyResource(swapchainImages[index].texture, sourceImage);
+
+    XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    releaseInfo.next = nullptr;
+    CHECK_XR(xrReleaseSwapchainImage(swapchain, &releaseInfo));
+}
+
+void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
+{
+    const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
+    if(e.session == session) {
+        std::cout << "transition to " << e.state << "\n";
+        // Handle state change of our session
+        if((e.state == XR_SESSION_STATE_EXITING) ||
+           (e.state == XR_SESSION_STATE_LOSS_PENDING)) {
+
+            quit = true;
+
+        } else {
+
+            switch(sessionState) {
+                case XR_SESSION_STATE_IDLE: {
+                    if(e.state == XR_SESSION_STATE_READY) {
+                        XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+                        CHECK_XR(xrBeginSession(session, &beginInfo));
+                        std::cout << "entered READY\n";
+                        runFrameLoop = true;
+                    }
+                    // ignore other transitions
+                    break;
+                }
+                case XR_SESSION_STATE_READY: {
+                    // ignore
+                    break;
+                }
+                case XR_SESSION_STATE_SYNCHRONIZED: {
+                    if(e.state == XR_SESSION_STATE_STOPPING) {
+                        CHECK_XR(xrEndSession(session));
+                        std::cout << "left READY\n";
+                        // runFrameLoop = false;
+                    }
+                    // ignore other transitions
+                    break;
+                }
+                case XR_SESSION_STATE_VISIBLE: {
+                    // ignore
+                    break;
+                }
+                case XR_SESSION_STATE_FOCUSED: {
+                    // ignore
+                    break;
+                }
+                case XR_SESSION_STATE_STOPPING: {
+                    // ignore
+                    break;
+                }
+                default: {
+                    std::cout << "Warning: ignored unknown new session state " << e.state << "\n";
+                    break;
+                }
+            }
+
+        }
+        sessionState = e.state;
+    }
+}
+
+void ProcessEvent(XrEventDataBuffer *event, bool& quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
+{
+    switch(event->type) {
+        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+            // const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(event);
+            quit = true;
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+            ProcessSessionStateChangedEvent(event, quit, session, runFrameLoop, sessionState);
+        }
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+            // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
+            // Handle reference space change pending
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
+            const auto& e = *reinterpret_cast<const XrEventDataEventsLost*>(event);
+            std::cout << "Warning: lost " << e.lostEventCount << " events\n";
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
+            // const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(event);
+            // Handle data interaction profile changed
+            break;
+        }
+        default: {
+            std::cout << "Warning: ignoring event type " << event->type << "\n";
+            break;
+        }
+    }
+}
+
+void SetLayer(XrCompositionLayerQuad *layer, XrSpace space, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
+{
+    layer->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+    layer->next = nullptr;
+    layer->layerFlags = 0;
+    layer->space = space;
+    layer->eyeVisibility = visibility;
+    layer->subImage = subImage;
+    layer->pose = pose;
+    layer->size = extent;
 }
 
 int main( void )
@@ -370,79 +555,43 @@ int main( void )
 
     bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
 
-#if !COMPILE_REMOTE_OVERLAY_APP
-    // XXX Layer doesn't support calling downchain->EnumerateInstanceExtensionProperties
-    uint32_t extPropCount;
-    CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
-    if(extPropCount > 0) {
-        std::vector<XrExtensionProperties> extensionProperties(extPropCount);
-        for(auto& p: extensionProperties) {
-            p.type = XR_TYPE_EXTENSION_PROPERTIES;
-            p.next = nullptr;
-        }
-        CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, extPropCount, &extPropCount, extensionProperties.data()));
+    std::map<std::string, uint32_t> extensions;
+    GetInstanceExtensions(extensions);
+    if(extensions.size() > 0) {
         std::cout << "Extensions supported:\n";
-        for(auto& p: extensionProperties) {
-            std::cout << "    " << p.extensionName << ", version " << p.extensionVersion << "\n";
-            if(std::string(p.extensionName) == "XR_EXT_debug_utils") {
+        for(const auto& p: extensions) {
+            std::cout << "    " << p.first << ", version " << p.second << "\n";
+            if(std::string(p.first) == "XR_EXT_debug_utils") {
                 useDebugMessenger = true;
             }
-            if(std::string(p.extensionName) == "XR_EXT_permissions_support") {
+            if(std::string(p.first) == "XR_EXT_permissions_support") {
                 usePermissions = true;
             }
         }
+    } else {
+        std::cout << "No extensions supported.\n";
     }
-#endif // COMPILE_REMOTE_OVERLAY_APP
 
     XrInstance instance;
 
-    XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
-    createInstance.next = nullptr;
-    createInstance.createFlags = 0;
-    std::string appName = "Overlay Sample";
-    strncpy_s(createInstance.applicationInfo.applicationName, appName.c_str(), appName.size() + 1);
-    createInstance.applicationInfo.applicationVersion = 0;
-    std::string engineName = "none";
-    strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
-    createInstance.applicationInfo.engineVersion = 0;
-    createInstance.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
-    char* extensionNames[16];
-    createInstance.enabledExtensionNames = extensionNames;
-    createInstance.enabledExtensionCount = 0;
-    extensionNames[createInstance.enabledExtensionCount++] = "XR_KHR_D3D11_enable";
+    std::vector<const char*> extensionNames;
+    extensionNames.push_back("XR_KHR_D3D11_enable");
 #if COMPILE_REMOTE_OVERLAY_APP
-    extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_overlay";
+    extensionNames.push_back("XR_EXT_overlay");
 #endif  // COMPILE_REMOTE_OVERLAY_APP
     if(useDebugMessenger) {
-        extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_debug_utils";
+        extensionNames.push_back("XR_EXT_debug_utils");
     }
     if(usePermissions) {
-        extensionNames[createInstance.enabledExtensionCount++] = "XR_EXT_permissions_support";
+        extensionNames.push_back("XR_EXT_permissions_support");
     }
-    createInstance.enabledApiLayerCount = 0;
-    createInstance.enabledApiLayerNames = nullptr;
-    CHECK_XR(xrCreateInstance(&createInstance, &instance));
+
+    CreateInstance("Overlay Sample", 0, "none", 0, XR_MAKE_VERSION(1, 0, 0), extensionNames, &instance);
     std::cout << "CreateInstance succeeded!\n";
 
     XrDebugUtilsMessengerEXT messenger = XR_NULL_HANDLE;
     if(useDebugMessenger) {
-        PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
-        CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
-            reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
-
-        XrDebugUtilsMessengerCreateInfoEXT dumCreateInfo { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
-        dumCreateInfo.messageSeverities = 
-            XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-            XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
-            XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-            XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        dumCreateInfo.messageTypes = XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-			XR_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-            XR_DEBUG_UTILS_MESSAGE_TYPE_CONFORMANCE_BIT_EXT |
-           XR_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-        dumCreateInfo.userCallback = processDebugMessage;
-        dumCreateInfo.userData = nullptr;
-        CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, &messenger));
+        CreateDebugMessenger(instance, &messenger);
     }
 
     XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES, nullptr};
@@ -537,91 +686,7 @@ int main( void )
             event.next = nullptr;
             XrResult result = xrPollEvent(instance, &event);
             if(result == XR_SUCCESS) {
-                switch(event.type) {
-                    case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
-                        // const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(&event);
-                        quit = true;
-                        break;
-                    }
-                    case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
-                        const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(&event);
-                        if(e.session == session) {
-                            std::cout << "transition to " << e.state << "\n";
-                            // Handle state change of our session
-                            if((e.state == XR_SESSION_STATE_EXITING) ||
-                               (e.state == XR_SESSION_STATE_LOSS_PENDING)) {
-
-                                quit = true;
-
-                            } else {
-
-                                switch(sessionState) {
-                                    case XR_SESSION_STATE_IDLE: {
-                                        if(e.state == XR_SESSION_STATE_READY) {
-                                            XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-                                            CHECK_XR(xrBeginSession(session, &beginInfo));
-                                            std::cout << "entered READY\n";
-                                            runFrameLoop = true;
-                                        }
-                                        // ignore other transitions
-                                        break;
-                                    }
-                                    case XR_SESSION_STATE_READY: {
-                                        // ignore
-                                        break;
-                                    }
-                                    case XR_SESSION_STATE_SYNCHRONIZED: {
-                                        if(e.state == XR_SESSION_STATE_STOPPING) {
-                                            CHECK_XR(xrEndSession(session));
-                                            std::cout << "left READY\n";
-                                            // runFrameLoop = false;
-                                        }
-                                        // ignore other transitions
-                                        break;
-                                    }
-                                    case XR_SESSION_STATE_VISIBLE: {
-                                        // ignore
-                                        break;
-                                    }
-                                    case XR_SESSION_STATE_FOCUSED: {
-                                        // ignore
-                                        break;
-                                    }
-                                    case XR_SESSION_STATE_STOPPING: {
-                                        // ignore
-                                        break;
-                                    }
-                                    default: {
-                                        std::cout << "Warning: ignored unknown new session state " << e.state << "\n";
-                                        break;
-                                    }
-                                }
-
-                            }
-                            sessionState = e.state;
-                        }
-                        break;
-                    }
-                    case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
-                        // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(&event);
-                        // Handle reference space change pending
-                        break;
-                    }
-                    case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
-                        const auto& e = *reinterpret_cast<const XrEventDataEventsLost*>(&event);
-                        std::cout << "Warning: lost " << e.lostEventCount << " events\n";
-                        break;
-                    }
-                    case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
-                        // const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(&event);
-                        // Handle data interaction profile changed
-                        break;
-                    }
-                    default: {
-                        std::cout << "Warning: ignoring event type " << event.type << "\n";
-                        break;
-                    }
-                }
+                ProcessEvent(&event, quit, session, runFrameLoop, sessionState);
             } else {
                 getAnotherEvent = false;
             }
@@ -640,65 +705,35 @@ int main( void )
             frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 
             if(waitFrameState.shouldRender) {
-            for(int eye = 0; eye < 2; eye++) {
-                uint32_t index;
-                XrSwapchain sc = reinterpret_cast<XrSwapchain>(swapchains[eye]);
-                XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-                acquireInfo.next = nullptr;
-
-                CHECK_XR(xrAcquireSwapchainImage(sc, &acquireInfo, &index));
-
-                XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-                waitInfo.next = nullptr;
-                waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
-                CHECK_XR(xrWaitSwapchainImage(sc, &waitInfo));
-
-                d3dContext->CopyResource(swapchainImages[eye][index].texture, sourceImages[whichImage]);
-
-                XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-                releaseInfo.next = nullptr;
-                CHECK_XR(xrReleaseSwapchainImage(sc, &releaseInfo));
-            }
-
-            d3dContext->Flush();
-
-            XrCompositionLayerQuad layers[2];
-            XrCompositionLayerBaseHeader* layerPointers[2];
-
-            XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
-            
-            if(useSeparateLeftRightEyes) {
-
-                for(uint32_t eye = 0; eye < 2; eye++) {
-                    XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                    layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
-                    layers[eye].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-                    layers[eye].next = nullptr;
-                    layers[eye].layerFlags = 0;
-                    layers[eye].space = viewSpace;
-                    layers[eye].eyeVisibility = (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
-                    layers[eye].subImage = fullImage;
-                    layers[eye].pose = pose;
-                    layers[eye].size = {0.33f, 0.33f};
+                for(int eye = 0; eye < 2; eye++) {
+                    FillSwapchainImage(swapchains[eye], swapchainImages[eye], sourceImages[whichImage], d3dContext);
                 }
+
+                d3dContext->Flush();
+
+                XrCompositionLayerQuad layers[2];
+                XrCompositionLayerBaseHeader* layerPointers[2];
                 frameEndInfo.layers = layerPointers;
-                frameEndInfo.layerCount = 2;
 
-            } else {
+                XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
+                
+                if(useSeparateLeftRightEyes) {
 
-                XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
-                layers[0].type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-                layers[0].next = nullptr;
-                layers[0].layerFlags = 0;
-                layers[0].space = viewSpace;
-                layers[0].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-                layers[0].subImage = fullImage;
-                layers[0].pose = pose;
-                layers[0].size = {0.33f, 0.33f};
+                    for(uint32_t eye = 0; eye < 2; eye++) {
+                        XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                        SetLayer(&layers[eye], viewSpace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, {0.33f, 0.33f});
+                        layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
+                    }
 
-                frameEndInfo.layers = layerPointers;
-                frameEndInfo.layerCount = 1;
+                    frameEndInfo.layerCount = 2;
+
+                } else {
+
+                    XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                    SetLayer(&layers[0], viewSpace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, {0.33f, 0.33f});
+
+                    layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
+                    frameEndInfo.layerCount = 1;
                 }
             }
 
