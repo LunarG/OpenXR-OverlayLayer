@@ -507,6 +507,12 @@ DWORD WINAPI ThreadBody(LPVOID)
                 break;
             }
 
+            case IPC_XR_LOCATE_SPACE: {
+                auto args = ipcbuf.getAndAdvance<IPCXrLocateSpace>();
+                hdr->result = downchain->LocateSpace(args->space, args->baseSpace, args->time, args->spaceLocation);
+                break;
+            }
+
             case IPC_XR_ENUMERATE_SWAPCHAIN_FORMATS: { 
                 auto args = ipcbuf.getAndAdvance<IPCXrEnumerateSwapchainFormats>();
                 hdr->result = Overlay_xrEnumerateSwapchainFormats(args->session, args->formatCapacityInput, args->formatCountOutput, args->formats);

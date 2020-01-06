@@ -294,11 +294,11 @@ void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId sy
     CHECK_XR(xrCreateSession(instance, &sessionCreateInfo, session));
 }
 
-void CreateViewSpace(XrSession session, const XrPosef& pose, XrSpace* viewSpace)
+void CreateSpace(XrSession session, XrReferenceSpaceType spaceType, const XrPosef& pose, XrSpace* viewSpace)
 {
     XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     createSpaceInfo.next = nullptr;
-    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+    createSpaceInfo.referenceSpaceType = spaceType;
     createSpaceInfo.poseInReferenceSpace = pose;
     CHECK_XR(xrCreateReferenceSpace(session, &createSpaceInfo, viewSpace));
 }
@@ -619,7 +619,11 @@ int main( void )
     std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
 
     XrSpace viewSpace;
-    CreateViewSpace(session, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &viewSpace);
+    CreateSpace(session, XR_REFERENCE_SPACE_TYPE_VIEW, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &viewSpace);
+    XrSpace localSpace;
+    CreateSpace(session, XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &localSpace);
+    XrSpace stageSpace;
+    CreateSpace(session, XR_REFERENCE_SPACE_TYPE_STAGE, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &stageSpace);
 
     uint64_t chosenFormat;
     ChooseSwapchainFormat(session, &chosenFormat);
@@ -697,6 +701,17 @@ int main( void )
             XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
             CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
             // printf("frameState: { %llu, %llu, %s }\n", waitFrameState.predictedDisplayTime, waitFrameState.predictedDisplayPeriod, waitFrameState.shouldRender ? "yes" : "no");
+
+            XrSpaceLocation viewPose { XR_TYPE_SPACE_LOCATION, nullptr };
+            CHECK_XR(xrLocateSpace(viewSpace, localSpace, waitFrameState.predictedDisplayTime, &viewPose));
+            printf("pose {{%f, %f, %f, %f}, {%f, %f, %f}}\n",
+                    viewPose.pose.orientation.x,
+                    viewPose.pose.orientation.y,
+                    viewPose.pose.orientation.z,
+                    viewPose.pose.orientation.w,
+                    viewPose.pose.position.x,
+                    viewPose.pose.position.y,
+                    viewPose.pose.position.z);
 
             CHECK_XR(xrBeginFrame(session, nullptr));
 

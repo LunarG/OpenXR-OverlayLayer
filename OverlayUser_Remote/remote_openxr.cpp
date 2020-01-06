@@ -303,6 +303,14 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
         }
 
         switch(dstbase->type) {
+            case XR_TYPE_SPACE_LOCATION: {
+                auto src = reinterpret_cast<const XrSpaceLocation*>(srcbase);
+                auto dst = reinterpret_cast<XrSpaceLocation*>(dstbase);
+                dst->locationFlags = src->locationFlags;
+                dst->pose = src->pose;
+                break;
+            }
+
             case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
                 auto src = reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase);
                 auto dst = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(dstbase);
@@ -609,6 +617,55 @@ XrResult xrGetSystemProperties (
     IPCXrGetSystemProperties args {instance, system, properties};
 
     IPCXrGetSystemProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    IPCCopyOut(&args, argsSerialized);
+
+    return header->result;
+}
+
+// xrLocateSpace ------------------------------------------------------------
+
+template <>
+IPCXrLocateSpace* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrLocateSpace* src)
+{
+    auto dst = new(ipcbuf) IPCXrLocateSpace;
+
+    dst->space = src->space;
+    dst->baseSpace = src->baseSpace;
+    dst->time = src->time;
+
+    dst->spaceLocation = reinterpret_cast<XrSpaceLocation*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->spaceLocation), COPY_ONLY_TYPE_NEXT));
+    header->addOffsetToPointer(ipcbuf.base, &dst->spaceLocation);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(IPCXrLocateSpace* dst, const IPCXrLocateSpace* src)
+{
+    IPCCopyOut(
+            reinterpret_cast<XrBaseOutStructure*>(dst->spaceLocation),
+            reinterpret_cast<const XrBaseOutStructure*>(src->spaceLocation)
+            );
+}
+
+XrResult xrLocateSpace (
+  XrSpace space,
+  XrSpace baseSpace,
+  XrTime time,
+  XrSpaceLocation* location)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_LOCATE_SPACE};
+
+    IPCXrLocateSpace args {space, baseSpace, time, location};
+
+    IPCXrLocateSpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishGuestRequest();

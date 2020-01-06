@@ -144,6 +144,11 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
                 break;
             }
 
+            case XR_TYPE_SPACE_LOCATION: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSpaceLocation*>(srcbase), copyType, alloc);
+                break;
+            }
+
             case XR_TYPE_FRAME_STATE: {
                 dstbase = AllocateAndCopy(reinterpret_cast<const XrFrameState*>(srcbase), copyType, alloc);
                 break;

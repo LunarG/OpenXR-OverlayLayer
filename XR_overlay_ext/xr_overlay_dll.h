@@ -248,6 +248,13 @@ struct IPCXrGetInstanceProperties {
     XrInstanceProperties*                       properties;
 };
 
+struct IPCXrLocateSpace {
+    XrSpace space;
+  XrSpace baseSpace;
+  XrTime time;
+  XrSpaceLocation* spaceLocation;
+};
+
 struct IPCXrGetSystemProperties {
     XrInstance                                  instance;
     XrSystemId                                  system;
@@ -472,6 +479,7 @@ enum {
     IPC_XR_END_SESSION,
     IPC_XR_GET_INSTANCE_PROPERTIES,
     IPC_XR_GET_SYSTEM_PROPERTIES,
+    IPC_XR_LOCATE_SPACE,
     IPC_XR_GET_D3D11_GRAPHICS_REQUIREMENTS_KHR,
     IPC_XR_POLL_EVENT,
     IPC_XR_GET_SYSTEM,
