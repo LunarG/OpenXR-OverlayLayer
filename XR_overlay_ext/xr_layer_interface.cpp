@@ -664,6 +664,12 @@ DWORD WINAPI ThreadBody(LPVOID)
                 break;
             }
 
+            case IPC_XR_REQUEST_EXIT_SESSION: {
+                auto args = ipcbuf.getAndAdvance<IPCXrRequestExitSession>();
+                hdr->result = Overlay_xrRequestExitSession(args->session);
+                break;
+            }
+
             case IPC_XR_END_SESSION: {
                 auto args = ipcbuf.getAndAdvance<IPCXrEndSession>();
                 hdr->result = Overlay_xrEndSession(args->session);
@@ -856,6 +862,36 @@ XrResult Overlay_xrBeginSession(
     } else {
 
         result = downchain->BeginSession(session, beginInfo);
+
+    }
+
+    if(gSerializeEverything) {
+        ReleaseMutex(gOverlayCallMutex);
+    }
+
+    return result;
+}
+
+XrResult Overlay_xrRequestExitSession(
+    XrSession session)
+{
+    XrResult result;
+
+    if(gSerializeEverything) {
+        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+            DebugBreak();
+        }
+    }
+
+    if(session == kOverlayFakeSession) {
+
+        result = downchain->RequestExitSession(gSavedMainSession);
+
+    } else {
+
+        result = downchain->RequestExitSession(session);
 
     }
 
@@ -1454,6 +1490,12 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrWaitFrame);
   } else if (0 == strcmp(name, "xrCreateSession")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrCreateSession);
+  } else if (0 == strcmp(name, "xrBeginSession")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrBeginSession);
+  } else if (0 == strcmp(name, "xrRequestExitSession")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrRequestExitSession);
+  } else if (0 == strcmp(name, "xrEndSession")) {
+    *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrEndSession);
   } else if (0 == strcmp(name, "xrDestroySession")) {
     *function = reinterpret_cast<PFN_xrVoidFunction>(Overlay_xrDestroySession);
   } else if (0 == strcmp(name, "xrCreateReferenceSpace")) {

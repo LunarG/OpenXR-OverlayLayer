@@ -1389,6 +1389,39 @@ XrResult xrDestroySpace(
     return header->result;
 }
 
+// xrRequestExitSession -------------------------------------------------------------
+
+template <>
+IPCXrRequestExitSession* IPCSerialize(IPCBuffer& ipcbuf, IPCXrHeader* header, const IPCXrRequestExitSession* src)
+{
+    auto dst = new(ipcbuf) IPCXrRequestExitSession;
+
+    dst->session = src->session;
+
+    return dst;
+}
+
+XrResult xrRequestExitSession(
+    XrSession                                   session)
+{
+    IPCBuffer ipcbuf = IPCGetBuffer();
+    IPCXrHeader* header = new(ipcbuf) IPCXrHeader{IPC_XR_REQUEST_EXIT_SESSION};
+
+    IPCXrRequestExitSession args {session};
+
+    IPCXrRequestExitSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    header->makePointersRelative(ipcbuf.base);
+    IPCFinishGuestRequest();
+
+    IPCWaitForHostResponse();
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
+
+    return header->result;
+}
+
 // xrEndSession -------------------------------------------------------------
 
 template <>

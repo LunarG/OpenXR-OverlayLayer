@@ -272,6 +272,10 @@ struct IPCXrBeginSession {
     const XrSessionBeginInfo*                   beginInfo;
 };
 
+struct IPCXrRequestExitSession {
+    XrSession                                   session;
+};
+
 struct IPCXrEndSession {
     XrSession                                   session;
 };
@@ -476,6 +480,7 @@ enum {
     IPC_XR_DESTROY_SWAPCHAIN,
     IPC_XR_DESTROY_SPACE,
     IPC_XR_BEGIN_SESSION,
+    IPC_XR_REQUEST_EXIT_SESSION,
     IPC_XR_END_SESSION,
     IPC_XR_GET_INSTANCE_PROPERTIES,
     IPC_XR_GET_SYSTEM_PROPERTIES,
@@ -525,6 +530,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapc
 XR_OVERLAY_EXT_API XrResult Overlay_xrCreateReferenceSpace(XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space);
 XR_OVERLAY_EXT_API XrResult Overlay_xrEnumerateSwapchainFormats(XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats);
 XR_OVERLAY_EXT_API XrResult Overlay_xrBeginSession(XrSession session, const XrSessionBeginInfo* beginInfo);
+XR_OVERLAY_EXT_API XrResult Overlay_xrRequestExitSession(XrSession session);
 XR_OVERLAY_EXT_API XrResult Overlay_xrEndSession(XrSession session);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySpace(XrSpace space);
 XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain);

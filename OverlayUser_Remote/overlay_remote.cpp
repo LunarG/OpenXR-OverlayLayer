@@ -442,16 +442,29 @@ void FillSwapchainImage(XrSwapchain swapchain, XrSwapchainImageD3D11KHR *swapcha
     CHECK_XR(xrReleaseSwapchainImage(swapchain, &releaseInfo));
 }
 
-void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
+std::map<XrSessionState, std::string> SessionStateToString {
+    {XR_SESSION_STATE_IDLE, "XR_SESSION_STATE_IDLE"},
+    {XR_SESSION_STATE_READY, "XR_SESSION_STATE_READY"},
+    {XR_SESSION_STATE_SYNCHRONIZED, "XR_SESSION_STATE_SYNCHRONIZED"},
+    {XR_SESSION_STATE_VISIBLE, "XR_SESSION_STATE_VISIBLE"},
+    {XR_SESSION_STATE_FOCUSED, "XR_SESSION_STATE_FOCUSED"},
+    {XR_SESSION_STATE_STOPPING, "XR_SESSION_STATE_STOPPING"},
+    {XR_SESSION_STATE_LOSS_PENDING, "XR_SESSION_STATE_LOSS_PENDING"},
+    {XR_SESSION_STATE_EXITING, "XR_SESSION_STATE_EXITING"},
+};
+
+void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool* quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
 {
     const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
     if(e.session == session) {
-        std::cout << "transition to " << e.state << "\n";
+        if(true) std::cout << "transition to " << SessionStateToString.at(e.state) << "\n";
+
         // Handle state change of our session
         if((e.state == XR_SESSION_STATE_EXITING) ||
            (e.state == XR_SESSION_STATE_LOSS_PENDING)) {
 
-            quit = true;
+            *quit = true;
+            runFrameLoop = false;
 
         } else {
 
@@ -460,7 +473,7 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, XrSes
                     if(e.state == XR_SESSION_STATE_READY) {
                         XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
                         CHECK_XR(xrBeginSession(session, &beginInfo));
-                        std::cout << "entered READY\n";
+                        std::cout << "running\n";
                         runFrameLoop = true;
                     }
                     // ignore other transitions
@@ -473,8 +486,8 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, XrSes
                 case XR_SESSION_STATE_SYNCHRONIZED: {
                     if(e.state == XR_SESSION_STATE_STOPPING) {
                         CHECK_XR(xrEndSession(session));
-                        std::cout << "left READY\n";
-                        // runFrameLoop = false;
+                        std::cout << "not running\n";
+                        runFrameLoop = false;
                     }
                     // ignore other transitions
                     break;
@@ -502,12 +515,12 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, XrSes
     }
 }
 
-void ProcessEvent(XrEventDataBuffer *event, bool& quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
+void ProcessEvent(XrEventDataBuffer *event, bool* quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
 {
     switch(event->type) {
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
             // const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(event);
-            quit = true;
+            *quit = true;
             break;
         }
         case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
@@ -646,11 +659,12 @@ int main( void )
     std::cout << "    images as texture sources!\n";
 
     // Spawn a thread to wait for a keypress
-    static bool quit = false;
+    static bool requestExit = false;
+    static bool exitRequested = false;
     auto exitPollingThread = std::thread{[] {
         std::cout << "Press ENTER to exit...\n";
         getchar();
-        quit = true;
+        requestExit = true;
     }};
     exitPollingThread.detach();
 
@@ -674,94 +688,124 @@ int main( void )
     auto then = std::chrono::steady_clock::now();
     XrSessionState sessionState = XR_SESSION_STATE_IDLE;
     bool runFrameLoop = false;
+    XrSpace myspace = localSpace;
 
-    while(!quit) {
+    bool quit = false;
 
+    do {
         auto now = std::chrono::steady_clock::now();
         if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
             whichImage = (whichImage + 1) % 2;
             then = std::chrono::steady_clock::now();
         }
 
+        if(requestExit && !exitRequested) {
+
+            if((sessionState == XR_SESSION_STATE_SYNCHRONIZED) || 
+               (sessionState == XR_SESSION_STATE_VISIBLE) || 
+               (sessionState == XR_SESSION_STATE_STOPPING) || 
+               (sessionState == XR_SESSION_STATE_FOCUSED)) {
+
+                // If we are "running" and haven't yet requested an
+                // exit, play nice by requesting exit and perform no other
+                // actions, state machine should carry us to EXITING
+                // state, which we will get and set quit = true.
+
+                CHECK_XR(xrRequestExitSession(session));
+                exitRequested = true;
+
+            } else {
+
+                // If we are not "running", we can't request an exit.
+                // But we can just destroy our session and quit.
+                // (from any state, actually)
+
+                exitRequested = true;
+                quit = true;
+            }
+        }
+
         bool getAnotherEvent = true;
-        while (getAnotherEvent) {
+        while (getAnotherEvent && !quit) {
             static XrEventDataBuffer event;
             event.type = XR_TYPE_EVENT_DATA_BUFFER;
             event.next = nullptr;
             XrResult result = xrPollEvent(instance, &event);
             if(result == XR_SUCCESS) {
-                ProcessEvent(&event, quit, session, runFrameLoop, sessionState);
+                ProcessEvent(&event, &quit, session, runFrameLoop, sessionState);
             } else {
                 getAnotherEvent = false;
             }
         }
 
-        if(runFrameLoop) {
+        if(!quit) {
+            if(runFrameLoop) {
 
-            XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
-            CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
-            // printf("frameState: { %llu, %llu, %s }\n", waitFrameState.predictedDisplayTime, waitFrameState.predictedDisplayPeriod, waitFrameState.shouldRender ? "yes" : "no");
+                XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
+                CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
+                if(false) printf("frameState: { %llu, %llu, %s }\n", waitFrameState.predictedDisplayTime, waitFrameState.predictedDisplayPeriod, waitFrameState.shouldRender ? "yes" : "no");
 
-            XrSpaceLocation viewPose { XR_TYPE_SPACE_LOCATION, nullptr };
-            CHECK_XR(xrLocateSpace(viewSpace, localSpace, waitFrameState.predictedDisplayTime, &viewPose));
-            printf("pose {{%f, %f, %f, %f}, {%f, %f, %f}}\n",
-                    viewPose.pose.orientation.x,
-                    viewPose.pose.orientation.y,
-                    viewPose.pose.orientation.z,
-                    viewPose.pose.orientation.w,
-                    viewPose.pose.position.x,
-                    viewPose.pose.position.y,
-                    viewPose.pose.position.z);
+                XrSpaceLocation viewPose { XR_TYPE_SPACE_LOCATION, nullptr };
+                CHECK_XR(xrLocateSpace(viewSpace, localSpace, waitFrameState.predictedDisplayTime, &viewPose));
+                if(false) printf("pose {{%f, %f, %f, %f}, {%f, %f, %f}}\n",
+                        viewPose.pose.orientation.x,
+                        viewPose.pose.orientation.y,
+                        viewPose.pose.orientation.z,
+                        viewPose.pose.orientation.w,
+                        viewPose.pose.position.x,
+                        viewPose.pose.position.y,
+                        viewPose.pose.position.z);
 
-            CHECK_XR(xrBeginFrame(session, nullptr));
+                CHECK_XR(xrBeginFrame(session, nullptr));
 
-            XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO, nullptr};
-            frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-            frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+                XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO, nullptr};
+                frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
+                frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 
-            if(waitFrameState.shouldRender) {
-                for(int eye = 0; eye < 2; eye++) {
-                    FillSwapchainImage(swapchains[eye], swapchainImages[eye], sourceImages[whichImage], d3dContext);
-                }
-
-                d3dContext->Flush();
-
-                XrCompositionLayerQuad layers[2];
-                XrCompositionLayerBaseHeader* layerPointers[2];
-                frameEndInfo.layers = layerPointers;
-
-                XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
-                
-                if(useSeparateLeftRightEyes) {
-
-                    for(uint32_t eye = 0; eye < 2; eye++) {
-                        XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                        SetLayer(&layers[eye], viewSpace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, {0.33f, 0.33f});
-                        layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
+                if(waitFrameState.shouldRender) {
+                    for(int eye = 0; eye < 2; eye++) {
+                        FillSwapchainImage(swapchains[eye], swapchainImages[eye], sourceImages[whichImage], d3dContext);
                     }
 
-                    frameEndInfo.layerCount = 2;
+                    d3dContext->Flush();
 
-                } else {
+                    XrCompositionLayerQuad layers[2];
+                    XrCompositionLayerBaseHeader* layerPointers[2];
+                    frameEndInfo.layers = layerPointers;
 
-                    XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                    SetLayer(&layers[0], viewSpace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, {0.33f, 0.33f});
+                    XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
+                    
+                    if(useSeparateLeftRightEyes) {
 
-                    layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
-                    frameEndInfo.layerCount = 1;
+                        for(uint32_t eye = 0; eye < 2; eye++) {
+                            XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                            SetLayer(&layers[eye], myspace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, {0.33f, 0.33f});
+                            layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
+                        }
+
+                        frameEndInfo.layerCount = 2;
+
+                    } else {
+
+                        XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                        SetLayer(&layers[0], myspace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, {0.33f, 0.33f});
+
+                        layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
+                        frameEndInfo.layerCount = 1;
+                    }
                 }
-            }
 
-            CHECK_XR(xrEndFrame(session, &frameEndInfo));
-            
-            if(!sawFirstSuccessfulFrame) {
-                sawFirstSuccessfulFrame = true;
-                std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
+                CHECK_XR(xrEndFrame(session, &frameEndInfo));
+                
+                if(!sawFirstSuccessfulFrame) {
+                    sawFirstSuccessfulFrame = true;
+                    std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
+                }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
             }
-	} else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-	}
-    }
+        }
+    } while(!quit);
 
     if(false) {
         // These are destroyed by xrDestroySession but written here for clarity
@@ -769,6 +813,8 @@ int main( void )
             CHECK_XR(xrDestroySwapchain(swapchains[eye]));
         }
 
+        CHECK_XR(xrDestroySpace(stageSpace));
+        CHECK_XR(xrDestroySpace(localSpace));
         CHECK_XR(xrDestroySpace(viewSpace));
     }
 
