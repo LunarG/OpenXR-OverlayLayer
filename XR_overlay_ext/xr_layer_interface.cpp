@@ -317,6 +317,133 @@ const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
     return nullptr;
 }
 
+typedef std::pair<bool, XrSessionState> OptionalSessionStateChange;
+
+struct OverlayAppSession
+{
+    enum OpenXRCommand {
+        BEGIN_SESSION,
+        END_SESSION,
+        REQUEST_EXIT_SESSION,
+    };
+    enum SessionLossState {
+        NOT_LOST,
+        LOSS_PENDING,
+        LOST,
+    } sessionLossState;
+    XrSessionState currentOverlayXrSessionState;
+    XrSessionState currentMainXrSessionState;
+
+    bool isOverlaySessionRunning;
+    bool exitRequested;
+    bool isMainSessionRunning;
+
+    OverlayAppSession() :
+        currentOverlayXrSessionState(XR_SESSION_STATE_IDLE),
+        isOverlaySessionRunning(false),
+        sessionLossState(NOT_LOST),
+        isMainSessionRunning(false)
+    {}
+
+    void DoMainSessionStateChange(XrSessionState state)
+    {
+        currentMainXrSessionState = state;
+    }
+
+    void DoOverlaySessionCommand(OpenXRCommand command)
+    {
+        if(command == BEGIN_SESSION) {
+            isMainSessionRunning = false;
+        } else if (command == END_SESSION) {
+            isMainSessionRunning = true;
+        } else if (command == REQUEST_EXIT_SESSION) {
+            exitRequested = true;
+        }
+    }
+
+    void DoMainSessionCommand(OpenXRCommand command)
+    {
+        if(command == BEGIN_SESSION) {
+            isMainSessionRunning = false;
+        } else if (command == END_SESSION) {
+            isMainSessionRunning = true;
+        }
+    }
+
+    void DoMainSessionLostError()
+    {
+        sessionLossState = LOST;
+    }
+    
+    OptionalSessionStateChange GetAndDoPendingStateChange();
+    SessionLossState GetSessionLossState()
+    {
+        return sessionLossState;
+    }
+} overlayAppSession;
+
+OptionalSessionStateChange OverlayAppSession::GetAndDoPendingStateChange()
+{
+    if((currentOverlayXrSessionState != XR_SESSION_STATE_LOSS_PENDING) &&
+        ((GetSessionLossState() == LOST) ||
+        (GetSessionLossState() == LOST))) {
+
+        return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_LOSS_PENDING };
+    }
+
+    switch(currentOverlayXrSessionState) {
+        case XR_SESSION_STATE_IDLE:
+            if(exitRequested) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_EXITING };
+            } else if(isMainSessionRunning) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_READY };
+            }
+            break;
+
+        case XR_SESSION_STATE_READY:
+            if(isOverlaySessionRunning) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_SYNCHRONIZED };
+            } 
+            break;
+
+        case XR_SESSION_STATE_SYNCHRONIZED:
+            if(exitRequested || !isMainSessionRunning || (currentMainXrSessionState == XR_SESSION_STATE_STOPPING)) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_STOPPING };
+            } else if(currentMainXrSessionState == XR_SESSION_STATE_VISIBLE) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_VISIBLE };
+            } 
+
+        case XR_SESSION_STATE_VISIBLE:
+            if(exitRequested || !isMainSessionRunning || (currentMainXrSessionState == XR_SESSION_STATE_STOPPING)) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_SYNCHRONIZED };
+            } else if(currentMainXrSessionState == XR_SESSION_STATE_SYNCHRONIZED) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_SYNCHRONIZED };
+            } else if(currentMainXrSessionState == XR_SESSION_STATE_FOCUSED) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_FOCUSED };
+            }
+            break;
+
+        case XR_SESSION_STATE_FOCUSED:
+            if(exitRequested || !isMainSessionRunning || (currentMainXrSessionState == XR_SESSION_STATE_STOPPING)) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_VISIBLE };
+            } else if(currentMainXrSessionState == XR_SESSION_STATE_VISIBLE) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_VISIBLE };
+            }
+            break;
+
+        case XR_SESSION_STATE_STOPPING:
+            if(!isOverlaySessionRunning) {
+                return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_IDLE };
+            }
+            break;
+
+        default:
+            // No other combination of states requires an Overlay SessionStateChange
+            break;
+    }
+
+    return OptionalSessionStateChange { false, XR_SESSION_STATE_UNKNOWN };
+}
 
 #ifdef __cplusplus    // If used by C++ code, 
 extern "C" {          // we need to export the C interface
