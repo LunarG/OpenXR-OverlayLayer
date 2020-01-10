@@ -537,6 +537,11 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain);
 XR_OVERLAY_EXT_API XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(XrInstance instance, XrSystemId systemId, XrGraphicsRequirementsD3D11KHR* graphicsRequirements);
 XR_OVERLAY_EXT_API XrResult Overlay_xrPollEvent(XrInstance instance, XrEventDataBuffer* event);
 XR_OVERLAY_EXT_API XrResult Overlay_xrGetSystem(XrInstance instance, const XrSystemGetInfo* getInfo, XrSystemId* systemId);
+XR_OVERLAY_EXT_API XrResult Overlay_xrLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* spaceLocation);
+XR_OVERLAY_EXT_API XrResult Overlay_xrAcquireSwapchainImage(XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquireInfo, uint32_t* index);
+XR_OVERLAY_EXT_API XrResult Overlay_xrWaitSwapchainImage(XrSwapchain swapchain, const XrSwapchainImageWaitInfo* waitInfo);
+XR_OVERLAY_EXT_API XrResult Overlay_xrReleaseSwapchainImage(XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* releaseInfo);
+
 
 
 // Function used to negotiate an interface betewen the loader and a layer.
