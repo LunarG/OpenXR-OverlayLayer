@@ -492,9 +492,16 @@ enum {
 };
 
 enum IPCWaitResult {
-    IPC_GUEST_REQUEST_READY,
+    IPC_REMOTE_REQUEST_READY,
+    IPC_HOST_RESPONSE_READY,
     IPC_REMOTE_PROCESS_TERMINATED,
     IPC_WAIT_ERROR,
+};
+
+enum IPCConnectResult {
+    IPC_CONNECT_SUCCESS,
+    IPC_CONNECT_TIMEOUT,
+    IPC_CONNECT_ERROR,
 };
 
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer();
@@ -508,12 +515,13 @@ XR_OVERLAY_EXT_API bool MapSharedMemory(UINT32 size);
 XR_OVERLAY_EXT_API bool UnmapSharedMemory();
 
 XR_OVERLAY_EXT_API void* IPCGetSharedMemory();
-XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequest();
-XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForGuestRequestOrTermination(HANDLE remoteProcessHandle);
-XR_OVERLAY_EXT_API void IPCFinishGuestRequest();
-XR_OVERLAY_EXT_API bool IPCWaitForHostResponse();
+XR_OVERLAY_EXT_API IPCConnectResult IPCXrConnectToHost();
+XR_OVERLAY_EXT_API IPCConnectResult IPCWaitForRemoteConnection();
+XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForRemoteRequestOrTermination();
+XR_OVERLAY_EXT_API void IPCFinishRemoteRequest();
+XR_OVERLAY_EXT_API IPCWaitResult IPCWaitForHostResponse();
 XR_OVERLAY_EXT_API void IPCFinishHostResponse();
-
+XR_OVERLAY_EXT_API void IPCSetupForRemoteConnection();
 
 // Exported entry points
 XR_OVERLAY_EXT_API XrResult Overlay_xrCreateInstance(const XrInstanceCreateInfo*, XrInstance*);

@@ -37,20 +37,35 @@ static size_t  mem_size = 256;   // TBD HACK! - can't default, need to pass via 
 static LPVOID shared_mem = NULL;        // pointer to shared memory
 static HANDLE shared_mem_handle = NULL; // handle to file mapping
 static HANDLE mutex_handle = NULL;      // handle to sync object
+static HANDLE gHostProcessHandle = NULL;      // handle to Host process, local to Remote process
+static HANDLE gRemoteProcessHandle = NULL;      // handle to Remote process, local to Host process
 
 LPCWSTR kSharedMemName = TEXT("XR_EXT_overlay_shared_mem");     // Shared Memory known name
 LPCWSTR kSharedMutexName = TEXT("XR_EXT_overlay_mutex");        // Shared Memory sync mutex known name
 
+// Semaphore for signalling the Host process has connected
+LPCWSTR kHostConnectSemaName = TEXT("LUNARG_XR_IPC_host_connect_sema");
+HANDLE gRemoteWaitingOnConnectionSema;
+
+// Semaphore for signalling the Remote process has connected
+LPCWSTR kRemoteConnectSemaName = TEXT("LUNARG_XR_IPC_remote_connect_sema");
+HANDLE gHostWaitingOnConnectionSema;
+
 // Semaphore for releasing Host when a Remote RPC has been assembled
-LPCWSTR kGuestRequestSemaName = TEXT("LUNARG_XR_IPC_guest_request_sema");
-HANDLE gGuestRequestSema;
+LPCWSTR kRemoteRequestSemaName = TEXT("LUNARG_XR_IPC_remote_request_sema");
+HANDLE gRemoteRequestSema;
 
 // Semaphore for releasing Remote when a Host RPC response has been assembled
 LPCWSTR kHostResponseSemaName = TEXT("LUNARG_XR_IPC_host_response_sema");
 HANDLE gHostResponseSema;
 
-static const DWORD GUEST_REQUEST_WAIT_MILLIS = 100;
+static const DWORD REMOTE_REQUEST_WAIT_MILLIS = 100;
 static const DWORD HOST_RESPONSE_WAIT_MILLIS = 100000;
+static const DWORD CONNECT_WAIT_MILLIS = 3000;
+static const DWORD CONNECT_HANDSHAKE_WAIT_MILLIS = 100;
+
+static const int REMOTE_PROCESS_ID_WORD = 0;
+static const int HOST_PROCESS_ID_WORD = 1;
 
 // Get the shared memory wrapped in a convenient structure
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
@@ -453,9 +468,21 @@ extern "C" {          // we need to export the C interface
 
 bool CreateIPCSemaphores()
 {
-    gGuestRequestSema = CreateSemaphore(nullptr, 0, 1, kGuestRequestSemaName);
-    if(gGuestRequestSema == NULL) {
-        OutputDebugStringA("Creation of gGuestRequestSema failed");
+    gRemoteWaitingOnConnectionSema = CreateSemaphore(nullptr, 0, 1, kHostConnectSemaName);
+    if(gRemoteWaitingOnConnectionSema == NULL) {
+        OutputDebugStringA("Creation of gRemoteWaitingOnConnectionSema failed");
+        DebugBreak();
+        return false;
+    }
+    gHostWaitingOnConnectionSema = CreateSemaphore(nullptr, 0, 1, kRemoteConnectSemaName);
+    if(gHostWaitingOnConnectionSema == NULL) {
+        OutputDebugStringA("Creation of gHostWaitingOnConnectionSema failed");
+        DebugBreak();
+        return false;
+    }
+    gRemoteRequestSema = CreateSemaphore(nullptr, 0, 1, kRemoteRequestSemaName);
+    if(gRemoteRequestSema == NULL) {
+        OutputDebugStringA("Creation of gRemoteRequestSema failed");
         DebugBreak();
         return false;
     }
@@ -473,42 +500,99 @@ void* IPCGetSharedMemory()
     return shared_mem;
 }
 
-// Call from Guest when request in shmem is complete
-void IPCFinishGuestRequest()
+// Call from Remote to connect to the Host or timeout
+IPCConnectResult IPCXrConnectToHost()
 {
-    ReleaseSemaphore(gGuestRequestSema, 1, nullptr);
+    // store our process ID for handshake
+    ((DWORD*)shared_mem)[REMOTE_PROCESS_ID_WORD] = GetCurrentProcessId();
+
+    // Wait on the Host to set up connection
+    DWORD result = WaitForSingleObject(gRemoteWaitingOnConnectionSema, CONNECT_WAIT_MILLIS);
+
+    if(result == WAIT_TIMEOUT) {
+        return IPC_CONNECT_TIMEOUT;
+    }
+
+    if(result == WAIT_OBJECT_0 + 0) {
+        // Get the Host's process ID
+        DWORD hostProcessId = ((DWORD*)shared_mem)[HOST_PROCESS_ID_WORD];
+        gHostProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, hostProcessId);
+
+        // Release the Host to get our process Id and continue
+        ReleaseSemaphore(gHostWaitingOnConnectionSema, 1, nullptr);
+
+        // Then wait one more time until we know the Host has our process
+        // ID so we don't overwrite it with something else
+        DWORD result = WaitForSingleObject(gRemoteWaitingOnConnectionSema, CONNECT_HANDSHAKE_WAIT_MILLIS);
+
+        if(result == WAIT_TIMEOUT) {
+            return IPC_CONNECT_TIMEOUT;
+        }
+
+        return IPC_CONNECT_SUCCESS;
+    }
+
+    return IPC_CONNECT_ERROR;
 }
 
-// Call from Host to get complete request in shmem
-IPCWaitResult IPCWaitForGuestRequest()
+// Call from Host to set up connection from the Remote
+void IPCSetupForRemoteConnection()
 {
+    // store our process ID for handshake
+    ((DWORD*)shared_mem)[HOST_PROCESS_ID_WORD] = GetCurrentProcessId();
+
+    // Signal the remote that the host is waiting on a connection
+    ReleaseSemaphore(gRemoteWaitingOnConnectionSema, 1, nullptr);
+}
+
+// Call from Host to get Remote Connection or timeout
+IPCConnectResult IPCWaitForRemoteConnection()
+{
+    // Wait on the remote connection
     DWORD result;
-    do {
-        result = WaitForSingleObject(gGuestRequestSema, GUEST_REQUEST_WAIT_MILLIS);
-    } while(result == WAIT_TIMEOUT);
+    result = WaitForSingleObject(gHostWaitingOnConnectionSema, CONNECT_WAIT_MILLIS);
+
+    if(result == WAIT_TIMEOUT) {
+        return IPC_CONNECT_TIMEOUT;
+    }
 
     if(result == WAIT_OBJECT_0) {
-        return IPC_GUEST_REQUEST_READY;
+
+        // Get the Remote's process ID
+        DWORD remoteProcessId = ((DWORD*)shared_mem)[REMOTE_PROCESS_ID_WORD];
+        gRemoteProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, remoteProcessId);
+
+        // Finally, let the Remote know we have its ID
+        ReleaseSemaphore(gRemoteWaitingOnConnectionSema, 1, nullptr);
+
+        return IPC_CONNECT_SUCCESS;
     }
-    return IPC_WAIT_ERROR;
+
+    return IPC_CONNECT_ERROR;
+}
+
+// Call from Remote when request in shmem is complete
+void IPCFinishRemoteRequest()
+{
+    ReleaseSemaphore(gRemoteRequestSema, 1, nullptr);
 }
 
 // Call from Host to get complete request in shmem
-IPCWaitResult IPCWaitForGuestRequestOrTermination(HANDLE remoteProcessHandle)
+IPCWaitResult IPCWaitForRemoteRequestOrTermination()
 {
     HANDLE handles[2];
 
-    handles[0] = gGuestRequestSema;
-    handles[1] = remoteProcessHandle;
+    handles[0] = gRemoteRequestSema;
+    handles[1] = gRemoteProcessHandle;
 
     DWORD result;
 
     do {
-        result = WaitForMultipleObjects(2, handles, FALSE, GUEST_REQUEST_WAIT_MILLIS);
+        result = WaitForMultipleObjects(2, handles, FALSE, REMOTE_REQUEST_WAIT_MILLIS);
     } while(result == WAIT_TIMEOUT);
 
     if(result == WAIT_OBJECT_0 + 0) {
-        return IPC_GUEST_REQUEST_READY;
+        return IPC_REMOTE_REQUEST_READY;
     }
 
     if(result == WAIT_OBJECT_0 + 1) {
@@ -524,12 +608,35 @@ void IPCFinishHostResponse()
     ReleaseSemaphore(gHostResponseSema, 1, nullptr);
 }
 
-// Call from Guest to get complete request in shmem
-bool IPCWaitForHostResponse()
+// Call from Remote to get complete request in shmem
+IPCWaitResult IPCWaitForHostResponse()
 {
+
     WaitForSingleObject(gHostResponseSema, HOST_RESPONSE_WAIT_MILLIS);
-    // XXX TODO something sane on very long timeout
-		return true;
+    return IPC_HOST_RESPONSE_READY;
+	 
+#if 0
+    DWORD result;
+
+    HANDLE handles[2];
+
+    handles[0] = gHostResponseSema;
+    handles[1] = gHostProcessHandle;
+
+    do {
+        result = WaitForMultipleObjects(2, handles, FALSE, HOST_RESPONSE_WAIT_MILLIS);
+    } while(result == WAIT_TIMEOUT);
+
+    if(result == WAIT_OBJECT_0 + 0) {
+        return IPC_HOST_RESPONSE_READY;
+    }
+
+    if(result == WAIT_OBJECT_0 + 1) {
+        return IPC_REMOTE_PROCESS_TERMINATED;
+    }
+
+    return IPC_WAIT_ERROR;
+#endif
 }
 
 // Set up shared memory using a named file-mapping object. 

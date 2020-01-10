@@ -33,6 +33,20 @@
 #include <chrono>
 #include <thread>
 
+#if 0
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.  Don't be vocal, just error
+        gConnectionLost = true;
+        return XR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        OutputDebugStringA(fmt("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__).c_str());
+        gConnectionLost = true;
+        return XR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+#endif
+
 #define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "../XR_overlay_ext/xr_overlay_dll.h"
@@ -127,6 +141,7 @@ std::map<XrSession, LocalSessionPtr> gLocalSessionMap;
 
 // The Id of the RPC Host Process
 DWORD gHostProcessId;
+bool gConnectionLost = false;
 
 // Local "Swapchain" in Xr parlance - others would call it RenderTarget
 struct LocalSwapchain
@@ -428,8 +443,9 @@ XrResult xrEnumerateSwapchainFormats(
     IPCXrEnumerateSwapchainFormats* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -479,7 +495,7 @@ XrResult xrEnumerateViewConfigurations(
     IPCXrEnumerateViewConfigurations* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -524,7 +540,7 @@ XrResult xrGetInstanceProperties (
     IPCXrGetInstanceProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -569,7 +585,7 @@ XrResult xrPollEvent (
     IPCXrPollEvent* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -619,7 +635,7 @@ XrResult xrGetSystemProperties (
     IPCXrGetSystemProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -668,7 +684,7 @@ XrResult xrLocateSpace (
     IPCXrLocateSpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -715,7 +731,7 @@ XrResult xrGetD3D11GraphicsRequirementsKHR  (
     IPCXrGetD3D11GraphicsRequirementsKHR* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -782,7 +798,7 @@ XrResult xrCreateSwapchain(
     IPCXrCreateSwapchain* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -838,7 +854,7 @@ XrResult xrWaitFrame(
     IPCXrWaitFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -874,7 +890,7 @@ XrResult xrBeginFrame(
     IPCXrBeginFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -910,7 +926,7 @@ XrResult xrEndFrame(
     IPCXrEndFrame* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -956,7 +972,7 @@ XrResult xrAcquireSwapchainImage(
     IPCXrAcquireSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1003,7 +1019,7 @@ XrResult xrWaitSwapchainImage(
     IPCXrWaitSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1063,7 +1079,7 @@ XrResult xrReleaseSwapchainImage(
     IPCXrReleaseSwapchainImage* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1098,7 +1114,7 @@ XrResult xrDestroySession(
     IPCXrDestroySession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1162,7 +1178,7 @@ XrResult xrCreateSession(
     IPCXrCreateSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
     header->makePointersRelative(ipcbuf.base);
 
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
 
     header->makePointersAbsolute(ipcbuf.base);
@@ -1213,7 +1229,7 @@ XrResult xrGetSystem(
     IPCXrGetSystem* argsSerialized = IPCSerialize(ipcbuf, header, &args);
     header->makePointersRelative(ipcbuf.base);
 
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
 
     header->makePointersAbsolute(ipcbuf.base);
@@ -1260,7 +1276,7 @@ XrResult xrCreateReferenceSpace(
     IPCXrCreateReferenceSpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
     header->makePointersRelative(ipcbuf.base);
 
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
 
     header->makePointersAbsolute(ipcbuf.base);
@@ -1311,7 +1327,7 @@ XrResult xrCreateInstance(
 
     header->makePointersRelative(ipcbuf.base);
 
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
 
     header->makePointersAbsolute(ipcbuf.base);
@@ -1344,7 +1360,7 @@ XrResult xrDestroySwapchain(
     IPCXrDestroySwapchain* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1379,7 +1395,7 @@ XrResult xrDestroySpace(
     IPCXrDestroySpace* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1412,7 +1428,7 @@ XrResult xrRequestExitSession(
     IPCXrRequestExitSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1445,7 +1461,7 @@ XrResult xrEndSession(
     IPCXrEndSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
 
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
@@ -1482,7 +1498,7 @@ XrResult xrBeginSession(
     IPCXrBeginSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1531,7 +1547,7 @@ XrResult xrGetViewConfigurationProperties(
     IPCXrGetViewConfigurationProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1601,7 +1617,7 @@ XrResult xrEnumerateInstanceExtensionProperties(
     IPCXrEnumerateInstanceExtensionProperties* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1667,7 +1683,7 @@ XrResult xrEnumerateViewConfigurationViews(
     IPCXrEnumerateViewConfigurationViews* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
     header->makePointersRelative(ipcbuf.base);
-    IPCFinishGuestRequest();
+    IPCFinishRemoteRequest();
     IPCWaitForHostResponse();
     header->makePointersAbsolute(ipcbuf.base);
 

@@ -566,6 +566,19 @@ int main( void )
     bool useDebugMessenger = false;
     bool usePermissions = false;
 
+#if COMPILE_REMOTE_OVERLAY_APP
+    IPCConnectResult connectResult = IPC_CONNECT_TIMEOUT;
+    do {
+        connectResult = IPCXrConnectToHost();
+        if(connectResult == IPC_CONNECT_TIMEOUT) {
+            std::cout << "Connection to Host OpenXR Application timed out.  Attempting again.\n";
+        } else if(connectResult == IPC_CONNECT_ERROR) {
+            std::cerr << "Connection to Host OpenXR Application Failed other than timing out.  Exiting\n";
+            exit(EXIT_FAILURE);
+        }
+    } while(connectResult == IPC_CONNECT_TIMEOUT);
+#endif
+
     bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
 
     std::map<std::string, uint32_t> extensions;
