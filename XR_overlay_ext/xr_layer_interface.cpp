@@ -97,6 +97,23 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
     }
 }
 
+struct ScopedMutex
+{
+	HANDLE mutex;
+    ScopedMutex(HANDLE mutex, DWORD millis, const char *file, int line) :
+		mutex(mutex)
+    {
+        DWORD waitresult = WaitForSingleObject(mutex, millis);
+        if (waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", file, line).c_str());
+            DebugBreak();
+        }
+    }
+    ~ScopedMutex() {
+        ReleaseMutex(mutex);
+    }
+};
+
 
 // Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
 #define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
@@ -145,7 +162,7 @@ bool gSerializeEverything = true;
 
 enum { MAX_OVERLAY_LAYER_COUNT = 2 };
 
-const int OVERLAY_WAITFRAME_NORMAL_MILLIS = 32000;
+const int OVERLAY_WAITFRAME_NORMAL_MILLIS = 32;
 
 // Compositor layers from Overlay Session to overlay on Main Session's layers
 uint32_t gOverlayLayerCount = 0;
@@ -330,6 +347,20 @@ struct OverlayAppSession
 
     bool hasMainSessionCalledWaitFrame;
     XrFrameState savedFrameState; // XXX this is a struct and as such needs to be deep copied
+
+    std::set<XrSpace> ownedSpaces;
+    void AddSpace(XrSpace space)
+    {
+        ownedSpaces.insert(space);
+    }
+    bool OwnsSpace(XrSpace space)
+    {
+        return ownedSpaces.find(space) != ownedSpaces.end();
+    }
+    void ReleaseSpace(XrSpace space)
+    {
+        ownedSpaces.erase(space);
+    }
 
     OverlayAppSession() :
         currentOverlayXrSessionState(XR_SESSION_STATE_IDLE),
@@ -521,27 +552,21 @@ DWORD WINAPI ThreadBody(LPVOID)
 
         if(result == IPC_REMOTE_PROCESS_TERMINATED) {
 
-            DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-            if(waitresult == WAIT_TIMEOUT) {
-                OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-                DebugBreak();
+            {
+                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+                gSwapchainMap.clear();
+                ClearOverlayLayers();
             }
-            gSwapchainMap.clear();
-            ClearOverlayLayers();
-            ReleaseMutex(gOverlayCallMutex);
             connectionIsActive = false;
             continue;
 
         } else if(result == IPC_WAIT_ERROR) {
 
-            DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-            if(waitresult == WAIT_TIMEOUT) {
-                OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-                DebugBreak();
+            {
+                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+                gSwapchainMap.clear();
+                ClearOverlayLayers();
             }
-            gSwapchainMap.clear();
-            ClearOverlayLayers();
-            ReleaseMutex(gOverlayCallMutex);
             connectionIsActive = false;
             OutputDebugStringA("IPC Wait Error\n");
             break;
@@ -751,13 +776,8 @@ DWORD WINAPI ThreadBody(LPVOID)
             case IPC_XR_DESTROY_SESSION: { 
                 auto args = ipcbuf.getAndAdvance<IPCXrDestroySession>();
                 hdr->result = Overlay_xrDestroySession(args->session);
-                DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-                if(waitresult == WAIT_TIMEOUT) {
-                    OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-                    DebugBreak();
-                }
+                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
                 gSwapchainMap.clear();
-                ReleaseMutex(gOverlayCallMutex);
                 break;
             }
 
@@ -818,11 +838,7 @@ DWORD WINAPI ThreadBody(LPVOID)
 
             case IPC_XR_POLL_EVENT: {
                 auto args = ipcbuf.getAndAdvance<IPCXrPollEvent>();
-                DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-                if(waitresult == WAIT_TIMEOUT) {
-                    OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-                    DebugBreak();
-                }
+                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
                 OptionalSessionStateChange pendingStateChange;
                 pendingStateChange = overlayAppSession.GetAndDoPendingStateChange();
@@ -882,7 +898,6 @@ DWORD WINAPI ThreadBody(LPVOID)
                     hdr->result = XR_SUCCESS;
                     // event goes out of scope and is deleted
                 }
-                ReleaseMutex(gOverlayCallMutex);
 
                 break;
             }
@@ -999,28 +1014,21 @@ XrResult Overlay_xrBeginSession(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
         if(overlayAppSession.currentOverlayXrSessionState != XR_SESSION_STATE_READY) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_NOT_READY;
         }
-        overlayAppSession.DoOverlaySessionCommand(OverlayAppSession::BEGIN_SESSION);
 
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
             // simulate the operation if possible
-            ReleaseMutex(gOverlayCallMutex);
             return XR_SESSION_LOSS_PENDING;
         }
+        overlayAppSession.DoOverlaySessionCommand(OverlayAppSession::BEGIN_SESSION);
         result = XR_SUCCESS;
 
     } else {
@@ -1030,8 +1038,6 @@ XrResult Overlay_xrBeginSession(
 
     }
 
-    ReleaseMutex(gOverlayCallMutex);
-
     return result;
 }
 
@@ -1040,33 +1046,29 @@ XrResult Overlay_xrRequestExitSession(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
             // simulate the operation if possible
-            ReleaseMutex(gOverlayCallMutex);
             return XR_SESSION_LOSS_PENDING;
         }
-        overlayAppSession.DoOverlaySessionCommand(OverlayAppSession::REQUEST_EXIT_SESSION);
-        result = downchain->RequestExitSession(gSavedMainSession);
+        if(!overlayAppSession.isOverlaySessionRunning) {
+            result = XR_ERROR_SESSION_NOT_RUNNING;
+        } else {
+            overlayAppSession.DoOverlaySessionCommand(OverlayAppSession::REQUEST_EXIT_SESSION);
+            result = XR_SUCCESS;
+        }
 
     } else {
 
         result = downchain->RequestExitSession(session);
 
     }
-
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
@@ -1076,26 +1078,19 @@ XrResult Overlay_xrEndSession(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
         if(overlayAppSession.currentOverlayXrSessionState != XR_SESSION_STATE_STOPPING) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_NOT_STOPPING;
         }
         overlayAppSession.DoOverlaySessionCommand(OverlayAppSession::END_SESSION);
 
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
-            ReleaseMutex(gOverlayCallMutex);
             // simulate the operation if possible
             return XR_SESSION_LOSS_PENDING;
         }
@@ -1108,45 +1103,30 @@ XrResult Overlay_xrEndSession(
 
     }
 
-    ReleaseMutex(gOverlayCallMutex);
-
     return result;
 }
 
 XrResult Overlay_xrDestroySession(
     XrSession session)
 {
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+
     XrResult result;
 
     if(session == kOverlayFakeSession) {
         // overlay session
 
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if (waitresult == WAIT_TIMEOUT) {
-                OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-                DebugBreak();
-        }
-
         ClearOverlayLayers();
         result = XR_SUCCESS;
-
-        ReleaseMutex(gOverlayCallMutex);
 
     } else {
         // main session
 
         gExitIPCLoop = true;
 
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if (waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-            DebugBreak();
-        }
-
         result = downchain->DestroySession(session);
         overlayAppSession.DoMainSessionLost();
 
-        ReleaseMutex(gOverlayCallMutex);
     }
 
     return result;
@@ -1154,13 +1134,9 @@ XrResult Overlay_xrDestroySession(
 
 XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
 {
-    XrResult result;
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    XrResult result;
 
     bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) == nullptr);
 
@@ -1171,8 +1147,6 @@ XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
         result = downchain->DestroySwapchain(swapchain);
     }
 
-    ReleaseMutex(gOverlayCallMutex);
-
     return result;
 }
 
@@ -1180,22 +1154,32 @@ XrResult Overlay_xrDestroySpace(XrSpace space)
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
-    bool isSubmitted = (FindLayerReferencingSpace(space) == nullptr);
+    if(overlayAppSession.OwnsSpace(space)) {
 
-    if(isSubmitted) {
-        gSpacesDestroyPending.insert(space);
-        result = XR_SUCCESS;
+        if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
+            return XR_ERROR_SESSION_LOST;
+        }
+        if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
+            // simulate the operation if possible
+            return XR_SESSION_LOSS_PENDING;
+        }
+        overlayAppSession.ReleaseSpace(space);
+
+        bool isSubmitted = (FindLayerReferencingSpace(space) == nullptr);
+
+        if(isSubmitted) {
+            gSpacesDestroyPending.insert(space);
+            result = XR_SUCCESS;
+        } else {
+            result = downchain->DestroySpace(space);
+        }
+
     } else {
+
         result = downchain->DestroySpace(space);
     }
-
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
@@ -1270,21 +1254,15 @@ XrResult Overlay_xrEnumerateSwapchainFormats(
     uint32_t*                                   formatCountOutput,
     int64_t*                                    formats)
 { 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
             // simulate the operation if possible
             *formatCountOutput = 0;
-            ReleaseMutex(gOverlayCallMutex);
             return XR_SESSION_LOSS_PENDING;
         }
         session = gSavedMainSession;
@@ -1292,73 +1270,50 @@ XrResult Overlay_xrEnumerateSwapchainFormats(
 
     XrResult result = downchain->EnumerateSwapchainFormats(session, formatCapacityInput, formatCountOutput, formats);
 
-    ReleaseMutex(gOverlayCallMutex);
-
     return result;
 }
 
 XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images)
 { 
-    if(gSerializeEverything) {
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-            DebugBreak();
-        }
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     XrResult result = downchain->EnumerateSwapchainImages(swapchain, imageCapacityInput, imageCountOutput, images);
-
-    if(gSerializeEverything) {
-        ReleaseMutex(gOverlayCallMutex);
-    }
 
     return result;
 }
 
 XrResult Overlay_xrCreateReferenceSpace(XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
 { 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    XrResult result;
+
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
             // simulate the operation if possible
-            ReleaseMutex(gOverlayCallMutex);
             return XR_SESSION_LOSS_PENDING;
         }
-        session = gSavedMainSession;
+        result = downchain->CreateReferenceSpace(gSavedMainSession, createInfo, space);
+        overlayAppSession.AddSpace(*space);
+    } else {
+        result = downchain->CreateReferenceSpace(session, createInfo, space);
     }
-
-    XrResult result = downchain->CreateReferenceSpace(session, createInfo, space);
-
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
 
 XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateInfo *createInfo, XrSwapchain *swapchain) 
 { 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
-            ReleaseMutex(gOverlayCallMutex);
             // simulate the operation if possible
             return XR_SESSION_LOSS_PENDING;
         }
@@ -1366,22 +1321,26 @@ XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateIn
     }
 
     XrResult result = downchain->CreateSwapchain(session, createInfo, swapchain);
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
 
 XrResult Overlay_xrLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 { 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+
+    if(overlayAppSession.OwnsSpace(space)) {
+
+        if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
+            return XR_ERROR_SESSION_LOST;
+        }
+        if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
+            // simulate the operation if possible
+            return XR_SESSION_LOSS_PENDING;
+        }
     }
 
-	XrResult result = downchain->LocateSpace(space, baseSpace, time, location);
-
-    ReleaseMutex(gOverlayCallMutex);
+    XrResult result = downchain->LocateSpace(space, baseSpace, time, location);
 
     return result;
 }
@@ -1401,16 +1360,13 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
             return XR_ERROR_SESSION_LOST;
         }
 
-        waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE); // XXX should timeout gracefully
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-            DebugBreak();
+		bool waitOnHostWaitFrame = false;
+		{
+            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+
+            // XXX Main may even change states between this and the WaitForSingleObject.
+            waitOnHostWaitFrame = overlayAppSession.isMainSessionRunning && (overlayAppSession.currentMainXrSessionState != XR_SESSION_STATE_STOPPING);
         }
-
-        // XXX Main may even change states between this and the WaitForSingleObject.
-        bool waitOnHostWaitFrame = overlayAppSession.isMainSessionRunning && (overlayAppSession.currentMainXrSessionState != XR_SESSION_STATE_STOPPING);
-
-        ReleaseMutex(gOverlayCallMutex);
 
         // Wait on main session
         if(waitOnHostWaitFrame) {
@@ -1433,17 +1389,13 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
 
     } else {
 
-        DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-        if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-            DebugBreak();
+        {
+            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+
+            result = downchain->WaitFrame(session, info, state);
+            overlayAppSession.savedFrameState = *state;
+            overlayAppSession.DoMainSessionCommand(OverlayAppSession::WAIT_FRAME);
         }
-
-        result = downchain->WaitFrame(session, info, state);
-        overlayAppSession.savedFrameState = *state;
-        overlayAppSession.DoMainSessionCommand(OverlayAppSession::WAIT_FRAME);
-
-        ReleaseMutex(gOverlayCallMutex);
 
         ReleaseSemaphore(gOverlayWaitFrameSema, 1, nullptr);
     }
@@ -1455,22 +1407,16 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
 { 
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
         // Do nothing in overlay session
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
             // simulate the operation if possible
-            ReleaseMutex(gOverlayCallMutex);
             return XR_SESSION_LOSS_PENDING;
         }
         result = XR_SUCCESS;
@@ -1481,7 +1427,6 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
 
     }
 
-    ReleaseMutex(gOverlayCallMutex);
     return result;
 }
 
@@ -1489,22 +1434,16 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
 {
     XrResult result = XR_SUCCESS;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
         // TODO: validate blend mode matches main session
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOST) {
-            ReleaseMutex(gOverlayCallMutex);
             return XR_ERROR_SESSION_LOST;
         }
         if(overlayAppSession.GetSessionLossState() == OverlayAppSession::LOSS_PENDING) {
             // simulate the operation if possible
-            ReleaseMutex(gOverlayCallMutex);
             return XR_SESSION_LOSS_PENDING;
         }
 
@@ -1545,7 +1484,6 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
             if(!isSubmitted) {
                 result = downchain->DestroySwapchain(swapchain);
                 if(result != XR_SUCCESS) {
-                    ReleaseMutex(gOverlayCallMutex);
                     return result;
                 }
                 gSwapchainsDestroyPending.erase(swapchain);
@@ -1558,7 +1496,6 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
             if(!isSubmitted) {
                 result = downchain->DestroySpace(space);
                 if(result != XR_SUCCESS) {
-                    ReleaseMutex(gOverlayCallMutex);
                     return result;
                 }
                 gSpacesDestroyPending.erase(space);
@@ -1566,7 +1503,6 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         }
     }
 
-    ReleaseMutex(gOverlayCallMutex);
     return result;
 }
 
@@ -1577,15 +1513,9 @@ XrResult XRAPI_CALL Overlay_xrAcquireSwapchainImage(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     result = downchain->AcquireSwapchainImage(swapchain, acquireInfo, index);
-
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
@@ -1596,15 +1526,9 @@ XrResult Overlay_xrWaitSwapchainImage(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     result = downchain->WaitSwapchainImage(swapchain, waitInfo);
-
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
@@ -1615,15 +1539,9 @@ XrResult Overlay_xrReleaseSwapchainImage(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
     result = downchain->ReleaseSwapchainImage(swapchain, releaseInfo);
-
-    ReleaseMutex(gOverlayCallMutex);
 
     return result;
 }
@@ -1634,11 +1552,7 @@ XrResult Overlay_xrPollEvent(
 {
     XrResult result;
 
-    DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
-    if(waitresult == WAIT_TIMEOUT) {
-        OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
-        DebugBreak();
-    }
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
     result = downchain->PollEvent(instance, eventData);
 
     if(result == XR_SUCCESS) {
@@ -1691,7 +1605,6 @@ XrResult Overlay_xrPollEvent(
         }
     }
 
-    ReleaseMutex(gOverlayCallMutex);
     return result;
 }
 
@@ -1712,7 +1625,7 @@ XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(
     XrSystemId                                  systemId,
     XrGraphicsRequirementsD3D11KHR*             graphicsRequirements)
 {
-   	XrResult result;
+    XrResult result;
     if(!gGetGraphicsRequirementsD3D11KHRWasCalled) {
         auto foo = downchain->GetD3D11GraphicsRequirementsKHR;
         result = foo /* downchain->GetD3D11GraphicsRequirementsKHR */(instance, systemId, graphicsRequirements);
