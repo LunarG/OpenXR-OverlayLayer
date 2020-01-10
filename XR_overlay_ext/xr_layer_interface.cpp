@@ -353,9 +353,9 @@ struct OverlayAppSession
     void DoOverlaySessionCommand(OpenXRCommand command)
     {
         if(command == BEGIN_SESSION) {
-            isMainSessionRunning = true;
+            isOverlaySessionRunning = true;
         } else if (command == END_SESSION) {
-            isMainSessionRunning = false;
+            isOverlaySessionRunning = false;
         } else if (command == REQUEST_EXIT_SESSION) {
             exitRequested = true;
         }
@@ -417,9 +417,10 @@ OptionalSessionStateChange OverlayAppSession::GetAndDoPendingStateChange()
         case XR_SESSION_STATE_SYNCHRONIZED:
             if(exitRequested || !isMainSessionRunning || (currentMainXrSessionState == XR_SESSION_STATE_STOPPING)) {
                 return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_STOPPING };
-            } else if(currentMainXrSessionState == XR_SESSION_STATE_VISIBLE) {
+            } else if((currentMainXrSessionState == XR_SESSION_STATE_VISIBLE) || (currentMainXrSessionState == XR_SESSION_STATE_FOCUSED)) {
                 return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_VISIBLE };
             } 
+            break;
 
         case XR_SESSION_STATE_VISIBLE:
             if(exitRequested || !isMainSessionRunning || (currentMainXrSessionState == XR_SESSION_STATE_STOPPING)) {
@@ -434,7 +435,7 @@ OptionalSessionStateChange OverlayAppSession::GetAndDoPendingStateChange()
         case XR_SESSION_STATE_FOCUSED:
             if(exitRequested || !isMainSessionRunning || (currentMainXrSessionState == XR_SESSION_STATE_STOPPING)) {
                 return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_VISIBLE };
-            } else if(currentMainXrSessionState == XR_SESSION_STATE_VISIBLE) {
+            } else if((currentMainXrSessionState == XR_SESSION_STATE_VISIBLE) || (currentMainXrSessionState == XR_SESSION_STATE_SYNCHRONIZED)) {
                 return OptionalSessionStateChange { true, currentOverlayXrSessionState = XR_SESSION_STATE_VISIBLE };
             }
             break;
@@ -1474,7 +1475,7 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
         ReleaseMutex(gOverlayCallMutex);
 
         // Wait on main session
-        while(waitOnHostWaitFrame) {
+        if(waitOnHostWaitFrame) {
             waitresult = WaitForSingleObject(gOverlayWaitFrameSema, OVERLAY_WAITFRAME_NORMAL_MILLIS); // Try to sync up with Main WaitFrame
             if(waitresult == WAIT_TIMEOUT) {
                 // Overlay can't hang - Main may have transitioned to STOPPING or out of "running".
