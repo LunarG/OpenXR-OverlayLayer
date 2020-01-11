@@ -370,18 +370,18 @@ struct OverlaySession
         gHandlesThatWereLostBySessions.erase(space);
     }
 
-    std::set<XrSpace> ownedSwapchains;
+    std::set<XrSwapchain> ownedSwapchains;
     void AddSwapchain(XrSwapchain sc)
     {
-        ownedSwapchain.insert(sc);
+        ownedSwapchains.insert(sc);
     }
     bool OwnsSwapchain(XrSwapchain sc)
     {
-        return ownedSwapchain.find(sc) != ownedSwapchain.end();
+        return ownedSwapchains.find(sc) != ownedSwapchains.end();
     }
     void ReleaseSwapchain(XrSwapchain sc)
     {
-        ownedSwapchain.erase(sc);
+        ownedSwapchains.erase(sc);
         gHandlesThatWereLostBySessions.erase(sc);
     }
 
@@ -395,7 +395,7 @@ struct OverlaySession
             gHandlesThatWereLostBySessions.insert(space);
         }
         for(auto& sc: ownedSwapchains) {
-            gHandlesThatWereLostBySessions.insert(space);
+            gHandlesThatWereLostBySessions.insert(sc);
         }
         ownedSpaces.clear();
     }
