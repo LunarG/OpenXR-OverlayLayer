@@ -501,7 +501,7 @@ void* IPCGetSharedMemory()
 }
 
 // Call from Remote to connect to the Host or timeout
-IPCConnectResult IPCXrConnectToHost()
+ IPCConnectResult IPCXrConnectToHost()
 {
     // store our process ID for handshake
     ((DWORD*)shared_mem)[REMOTE_PROCESS_ID_WORD] = GetCurrentProcessId();
@@ -538,6 +538,22 @@ IPCConnectResult IPCXrConnectToHost()
 // Call from Host to set up connection from the Remote
 void IPCSetupForRemoteConnection()
 {
+    DWORD result;
+
+    // clear request and response semaphores
+    result = WaitForSingleObject(gHostResponseSema, 0);
+    if(result == WAIT_OBJECT_0) {
+        OutputDebugStringA("**OVERLAY** Ah, indeed there was a HostResponse sema posted\n");
+    } else {
+        OutputDebugStringA("**OVERLAY** No HostResponse sema posted\n");
+    }
+    result = WaitForSingleObject(gRemoteRequestSema, 0);
+    if(result == WAIT_OBJECT_0) {
+        OutputDebugStringA("**OVERLAY** Ah, indeed there was a RemoteRequest sema posted\n");
+    } else {
+        OutputDebugStringA("**OVERLAY** No RemoteRequest sema posted\n");
+    }
+
     // store our process ID for handshake
     ((DWORD*)shared_mem)[HOST_PROCESS_ID_WORD] = GetCurrentProcessId();
 
@@ -656,6 +672,7 @@ bool MapSharedMemory(UINT32 req_memsize)
 
     if (NULL == shared_mem_handle)
     {
+        OutputDebugStringA("**OVERLAY** failed to CreateFileMapping\n");
         if (first) ReleaseMutex(mutex_handle); 
         CloseHandle(mutex_handle);
         return false; 
@@ -665,6 +682,7 @@ bool MapSharedMemory(UINT32 req_memsize)
     shared_mem = MapViewOfFile(shared_mem_handle, FILE_MAP_WRITE, 0, 0, 0);
     if (NULL == shared_mem) 
     {
+        OutputDebugStringA("**OVERLAY** failed to MapViewOfFile\n");
         if (first) ReleaseMutex(mutex_handle); 
         CloseHandle(mutex_handle);
         return false; 
@@ -711,6 +729,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
         BOOL success = CreateIPCSemaphores();
         if(success) {
             MapSharedMemory(32768);
+        } else {
+            OutputDebugStringA("**OVERLAY** failed to create IPC semaphores\n");
         }
         break;
     }

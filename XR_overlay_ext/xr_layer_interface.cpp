@@ -648,6 +648,7 @@ XrResult Overlay_xrCreateInstance(const XrInstanceCreateInfo *info, XrInstance *
 XrResult Overlay_xrDestroyInstance(XrInstance instance) 
 { 
     // Layer cleanup here
+	gExitIPCLoop = true;
     return XR_SUCCESS; 
 }
 
@@ -1035,6 +1036,10 @@ DWORD WINAPI ThreadBody(LPVOID)
                 hdr->makePointersRelative(ipcbuf.base);
 
                 IPCFinishHostResponse();
+            }
+
+            if(connectionLost && gMainSession->overlaySession) {
+                gMainSession->DestroyOverlaySession();
             }
 
         } while(!connectionLost && !gExitIPCLoop);
