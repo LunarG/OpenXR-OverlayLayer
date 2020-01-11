@@ -1,5 +1,5 @@
 //
-// Copyright 2019 LunarG Inc. and PlutoVR Inc.
+// Copyright 2019-2020 LunarG Inc. and PlutoVR Inc.
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a
 // copy of this software and associated documentation files (the "Software"),
