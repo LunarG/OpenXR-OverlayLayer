@@ -370,6 +370,21 @@ struct OverlaySession
         gHandlesThatWereLostBySessions.erase(space);
     }
 
+    std::set<XrSpace> ownedSwapchains;
+    void AddSwapchain(XrSwapchain sc)
+    {
+        ownedSwapchain.insert(sc);
+    }
+    bool OwnsSwapchain(XrSwapchain sc)
+    {
+        return ownedSwapchain.find(sc) != ownedSwapchain.end();
+    }
+    void ReleaseSwapchain(XrSwapchain sc)
+    {
+        ownedSwapchain.erase(sc);
+        gHandlesThatWereLostBySessions.erase(sc);
+    }
+
     ~OverlaySession()
     {
         // Special handling for child handles of a session - if Session
@@ -377,6 +392,9 @@ struct OverlaySession
         // mark child handles lost so we don't call downchain on those and
         // cause an assertion or validation failure
         for(auto& space: ownedSpaces) {
+            gHandlesThatWereLostBySessions.insert(space);
+        }
+        for(auto& sc: ownedSwapchains) {
             gHandlesThatWereLostBySessions.insert(space);
         }
         ownedSpaces.clear();
@@ -1512,9 +1530,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
 
     if(session == kOverlayFakeSession) {
 
-
         SESSION_FUNCTION_PREAMBLE();
-
 
         // TODO: validate blend mode matches main session
         ClearOverlayLayers();
