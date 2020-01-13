@@ -457,7 +457,7 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool* quit, XrSes
 {
     const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
     if(e.session == session) {
-        if(true) std::cout << "transition to " << SessionStateToString.at(e.state) << "\n";
+        if(false) std::cout << "transition to " << SessionStateToString.at(e.state) << "\n";
 
         // Handle state change of our session
         if((e.state == XR_SESSION_STATE_EXITING) ||
