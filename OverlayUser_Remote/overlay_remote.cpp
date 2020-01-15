@@ -566,6 +566,10 @@ int main( void )
     bool useDebugMessenger = false;
     bool usePermissions = false;
 
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
+    std::cout << "Connecting to Host OpenXR Application...\n";
 #if COMPILE_REMOTE_OVERLAY_APP
     IPCConnectResult connectResult = IPC_CONNECT_TIMEOUT;
     do {
