@@ -409,7 +409,7 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
             for(int32_t x = 0; x < recommendedWidth; x++) {
                 int srcX = x * width / recommendedWidth;
                 int srcY = y * height / recommendedHeight;
-                unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + 4 * (recommendedWidth * y + x);
+                unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + mapped.RowPitch * y + 4 * x;
                 unsigned char *src = imageBytes + 4 * (width * srcY + srcX);
                 // Source data is in RGBA
                 if(format == DXGI_FORMAT_R8G8B8A8_UNORM || DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) { 
