@@ -99,7 +99,7 @@ static void CheckXrResult(XrResult a, const char* what, const char *file, int li
 
 struct ScopedMutex
 {
-	HANDLE mutex;
+    HANDLE mutex;
     ScopedMutex(HANDLE mutex, DWORD millis, const char *file, int line) :
 		mutex(mutex)
     {
@@ -263,7 +263,7 @@ void ClearOverlayLayers()
 const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain swapchain)
 {
     for(const auto* l : gOverlayLayers) {
-        while(l != nullptr) {
+        while(l) {
             switch(l->type) {
                 case XR_TYPE_COMPOSITION_LAYER_QUAD: {
                     auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
@@ -290,6 +290,7 @@ const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain sw
                 }
                 default: {
                     OutputDebugStringA(fmt("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type).c_str());
+                    break;
                 }
             }
             l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
@@ -301,7 +302,7 @@ const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain sw
 const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
 {
     for(const auto* l : gOverlayLayers) {
-        while(l != nullptr) {
+        while(l) {
             switch(l->type) {
                 case XR_TYPE_COMPOSITION_LAYER_QUAD: {
                     auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
@@ -323,6 +324,7 @@ const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
                 }
                 default: {
                     OutputDebugStringA(fmt("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type).c_str());
+                    break;
                 }
             }
             l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
@@ -460,7 +462,7 @@ struct MainSession
 
     XrSession CreateOverlaySession()
     {
-        assert(overlaySession == nullptr);
+        assert(!overlaySession);
         overlaySession = new OverlaySession;
         return kOverlayFakeSession; // XXX Means there's only one!
     }
@@ -583,10 +585,10 @@ OptionalSessionStateChange OverlaySession::GetAndDoPendingStateChange(MainSessio
 MainSession *gMainSession = nullptr;
 
 #define SESSION_FUNCTION_PREAMBLE() \
-        if(gMainSession == nullptr) { \
+        if(!gMainSession) { \
             return XR_ERROR_SESSION_LOST; \
         } \
-        if(gMainSession->overlaySession == nullptr) { \
+        if(!gMainSession->overlaySession) { \
             return XR_ERROR_SESSION_LOST; \
         } \
         if(gMainSession->overlaySession->GetLossState() == SessionLossState::LOST) { \
@@ -607,7 +609,7 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrNegotiateLoaderApiLayerInterface(const XrN
                                                     const char *layerName,
                                                     XrNegotiateApiLayerRequest *layerRequest) 
 {
-    if (nullptr != layerName)
+    if (layerName)
     {
         if (0 != strncmp(kOverlayLayerName, layerName, strnlen_s(kOverlayLayerName, XR_MAX_API_LAYER_NAME_SIZE)))
         {
@@ -615,8 +617,8 @@ XR_OVERLAY_EXT_API XrResult Overlay_xrNegotiateLoaderApiLayerInterface(const XrN
         }
     }
 
-    if (nullptr == loaderInfo || 
-        nullptr == layerRequest || 
+    if (!loaderInfo || 
+        !layerRequest || 
         loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO ||
         loaderInfo->structVersion != XR_LOADER_INFO_STRUCT_VERSION || 
         loaderInfo->structSize != sizeof(XrNegotiateLoaderInfo) ||
@@ -669,7 +671,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
             auto args = ipcbuf.getAndAdvance<IPCXrCreateInstance>();
 
             // Wait on main session
-            if(gMainSession == nullptr) {
+            if(!gMainSession) {
                 DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, INFINITE);
                 if(waitresult == WAIT_TIMEOUT) {
                     OutputDebugStringA("**OVERLAY** create session timeout\n");
@@ -944,7 +946,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
                 // Find all XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED.  If the session is our Main,
                 // change the session to be our overlay session stand-in.
                 const void *next = args->event;
-                while(next != nullptr) {
+                while(next) {
                     const auto* e = reinterpret_cast<const XrEventDataBaseHeader*>(next);
                     if(e->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
                         const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(e);
@@ -961,7 +963,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
                 // Add all newly created *subsequent* next pointers in
                 // the chain, too.
                 const void** tofix = &(args->event->next);
-                while (*tofix != nullptr) {
+                while (*tofix) {
                     hdr->addOffsetToPointer(ipcbuf.base, tofix);
                     const XrEventDataBaseHeader* qq = reinterpret_cast<const XrEventDataBaseHeader*>(*tofix);
                     tofix = const_cast<const void **>(&(qq->next));
@@ -1066,7 +1068,7 @@ void CreateOverlaySessionThread()
 XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance) 
 {
     assert(0 == strncmp(kOverlayLayerName, apiLayerInfo->nextInfo->layerName, strnlen_s(kOverlayLayerName, XR_MAX_API_LAYER_NAME_SIZE)));
-    assert(nullptr != apiLayerInfo->nextInfo);
+    assert(apiLayerInfo->nextInfo);
 
     gSavedRequestedExtensions.clear();
     gSavedRequestedExtensions.insert("XR_EXT_overlay");
@@ -1256,7 +1258,7 @@ XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
 
     XrResult result;
 
-    bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) == nullptr);
+    bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) != nullptr);
 
     if(isSubmitted) {
         gSwapchainsDestroyPending.insert(swapchain);
@@ -1278,13 +1280,13 @@ XrResult Overlay_xrDestroySpace(XrSpace space)
         return XR_SUCCESS;
     }
 
-    if((gMainSession != nullptr) && (gMainSession->overlaySession != nullptr) && (gMainSession->overlaySession->OwnsSpace(space))) {
+    if(gMainSession && gMainSession->overlaySession && (gMainSession->overlaySession->OwnsSpace(space))) {
 
         SESSION_FUNCTION_PREAMBLE();
 
         gMainSession->overlaySession->ReleaseSpace(space);
 
-        bool isSubmitted = (FindLayerReferencingSpace(space) == nullptr);
+        bool isSubmitted = (FindLayerReferencingSpace(space) != nullptr);
 
         if(isSubmitted) {
             gSpacesDestroyPending.insert(space);
@@ -1312,7 +1314,7 @@ XrResult Overlay_xrCreateSession(
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
     const XrSessionCreateInfoOverlayEXT* cio = nullptr;
     const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
-    while(p != nullptr) {
+    while(p) {
         if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
             cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(p);
         }
@@ -1334,7 +1336,7 @@ XrResult Overlay_xrCreateSession(
 
     // TODO handle the case where Main session passes the
     // overlaycreateinfo but overlaySession = FALSE
-    if(cio == nullptr) {
+    if(!cio) {
 
         // Main session
 
@@ -1544,7 +1546,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         } else {
             for(uint32_t i = 0; (result == XR_SUCCESS) && (i < info->layerCount); i++) {
                 const XrBaseInStructure *copy = CopyXrStructChainWithMalloc(info->layers[i]);
-                if(copy == nullptr) {
+                if(!copy) {
                     result = XR_ERROR_OUT_OF_MEMORY;
                     ClearOverlayLayers();
                 } else {
@@ -1570,7 +1572,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         // XXX there's probably an elegant C++ find with lambda that would do this:
         auto copyOfPendingDestroySwapchains = gSwapchainsDestroyPending;
         for(auto swapchain : copyOfPendingDestroySwapchains) {
-            bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) == nullptr);
+            bool isSubmitted = (FindLayerReferencingSwapchain(swapchain) != nullptr);
 
             if(!isSubmitted) {
                 result = downchain->DestroySwapchain(swapchain);
@@ -1582,7 +1584,7 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
         }
         auto copyOfPendingDestroySpaces = gSpacesDestroyPending;
         for(auto space : copyOfPendingDestroySpaces) {
-            bool isSubmitted = (FindLayerReferencingSpace(space) == nullptr);
+            bool isSubmitted = (FindLayerReferencingSpace(space) != nullptr);
 
             if(!isSubmitted) {
                 result = downchain->DestroySpace(space);
@@ -1653,7 +1655,7 @@ XrResult Overlay_xrPollEvent(
             // XXX ignoring all chained event data
             const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
             gMainSession->DoStateChange(ssc->state, ssc->time);
-            if(ssc->next != nullptr) {
+            if(ssc->next) {
                 OutputDebugStringA(fmt("**OVERLAY** ignoring a struct chained from a SESSION_STATE_CHANGED Event\n").c_str());
             }
 
@@ -1786,11 +1788,11 @@ XrResult Overlay_xrGetInstanceProcAddr(XrInstance instance, const char *name, PF
   }
 
       // If we setup the function, just return
-    if (*function != nullptr) {
+    if (*function) {
         return XR_SUCCESS;
     }
 
-    if(downchain == nullptr) {
+    if(!downchain) {
         return XR_ERROR_HANDLE_INVALID;
     }
 

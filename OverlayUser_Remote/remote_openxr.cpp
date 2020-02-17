@@ -1159,7 +1159,7 @@ XrResult xrCreateSession(
 {
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
     const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
-    while(p != nullptr) {
+    while(p) {
         if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
             d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
         }
@@ -1563,7 +1563,7 @@ IPCXrEnumerateInstanceExtensionProperties* IPCSerialize(IPCBuffer& ipcbuf, IPCXr
 {
     auto dst = new(ipcbuf) IPCXrEnumerateInstanceExtensionProperties;
 
-    if(src->layerName != nullptr) {
+    if(src->layerName) {
         char *dstLayerName = new(ipcbuf) char[strlen(src->layerName) + 1];
         dst->layerName = dstLayerName;
         strncpy_s(dstLayerName, strlen(src->layerName) + 1, src->layerName, strlen(src->layerName) + 1);
@@ -1731,7 +1731,7 @@ XrResult xrGetInstanceProcAddr(XrInstance instance, const char *name, PFN_xrVoid
     // Really should do all the base ones, too?
 
     // If we setup the function, just return
-    if (*function != nullptr) {
+    if (*function) {
         return XR_SUCCESS;
     }
 

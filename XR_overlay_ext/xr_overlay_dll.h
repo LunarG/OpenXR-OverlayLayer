@@ -312,7 +312,7 @@ struct IPCXrHeader
             unsigned char* pointerToByte = base + pointerOffsets[i];
             unsigned char** pointerToPointer = reinterpret_cast<unsigned char **>(pointerToByte);
             unsigned char*& pointer = *pointerToPointer;
-            if(pointer != nullptr) { // nullptr remains nulltpr
+            if(pointer) { // nullptr remains nulltpr
                 pointer = pointer - (base - reinterpret_cast<unsigned char *>(0));
             }
         }
@@ -325,7 +325,7 @@ struct IPCXrHeader
             unsigned char* pointerToByte = base + pointerOffsets[i];
             unsigned char** pointerToPointer = reinterpret_cast<unsigned char **>(pointerToByte);
             unsigned char*& pointer = *pointerToPointer;
-            if(pointer != nullptr) { // nullptr remains nulltpr
+            if(pointer) { // nullptr remains nulltpr
                 pointer = pointer + (base - reinterpret_cast<unsigned char *>(0));
             }
         }

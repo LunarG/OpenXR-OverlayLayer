@@ -355,8 +355,8 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
 
 XR_OVERLAY_EXT_API void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free)
 {
-    if(p == nullptr) {
-		return;
+    if(!p) {
+        return;
     }
 
     switch(p->type) {
