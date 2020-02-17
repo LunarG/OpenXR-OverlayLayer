@@ -68,14 +68,6 @@ enum {
 
 XR_DEFINE_ATOM(XrPermissionIdEXT)
 
-typedef struct XrSessionCreateInfoOverlayEXT
-{
-    XrStructureType             type;
-    const void* XR_MAY_ALIAS    next;
-    XrBool32                    overlaySession;
-    uint32_t                    sessionLayersPlacement;
-} XrSessionCreateInfoOverlayEXT;
-
 typedef struct XrPermissionPropertiesEXT {
     XrStructureType type;
     const void* XR_MAY_ALIAS next;
@@ -108,9 +100,6 @@ typedef XrResult (XRAPI_PTR *PFN_xrEnumerateInstancePermissionsEXT)(XrInstance i
 
 enum {
     // XXX need to do this with an enum generated from ext as part of build
-
-    // XR_EXT_overlay
-    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000090000,
 
     // XR_EXT_permission_support
     XR_TYPE_PERMISSION_PROPERTIES_EXT,

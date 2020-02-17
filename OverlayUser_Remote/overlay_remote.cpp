@@ -252,7 +252,7 @@ void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId sy
 #if COMPILE_REMOTE_OVERLAY_APP
         XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
         sessionCreateInfoOverlay.next = chain;
-        sessionCreateInfoOverlay.overlaySession = XR_TRUE;
+        sessionCreateInfoOverlay.createFlags = 0;
         sessionCreateInfoOverlay.sessionLayersPlacement = 1; 
         chain = &sessionCreateInfoOverlay;
 #endif  // COMPILE_REMOTE_OVERLAY_APP

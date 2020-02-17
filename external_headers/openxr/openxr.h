@@ -2,7 +2,7 @@
 #define OPENXR_H_ 1
 
 /*
-** Copyright (c) 2017-2019 The Khronos Group Inc.
+** Copyright (c) 2017-2020 The Khronos Group Inc.
 **
 ** Licensed under the Apache License, Version 2.0 (the "License");
 ** you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ extern "C" {
     ((((major) & 0xffffULL) << 48) | (((minor) & 0xffffULL) << 32) | ((patch) & 0xffffffffULL))
 
 // OpenXR current version number.
-#define XR_CURRENT_API_VERSION XR_MAKE_VERSION(1, 0, 5)
+#define XR_CURRENT_API_VERSION XR_MAKE_VERSION(1, 0, 6)
 
 #define XR_VERSION_MAJOR(version) (uint16_t)(((uint64_t)(version) >> 48)& 0xffffULL)
 #define XR_VERSION_MINOR(version) (uint16_t)(((uint64_t)(version) >> 32) & 0xffffULL)
@@ -278,6 +278,8 @@ typedef enum XrStructureType {
     XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR = 1000028002,
     XR_TYPE_VISIBILITY_MASK_KHR = 1000031000,
     XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR = 1000031001,
+    XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT = 1000033000,
+    XR_TYPE_EVENT_DATA_MAIN_SESSION_VISIBILITY_CHANGED_EXT = 1000033003,
     XR_TYPE_SPATIAL_ANCHOR_CREATE_INFO_MSFT = 1000039000,
     XR_TYPE_SPATIAL_ANCHOR_SPACE_CREATE_INFO_MSFT = 1000039001,
     XR_TYPE_VIEW_CONFIGURATION_DEPTH_RANGE_EXT = 1000046000,
@@ -1533,6 +1535,35 @@ XRAPI_ATTR XrResult XRAPI_CALL xrSessionInsertDebugUtilsLabelEXT(
 #endif
 
 
+#define XR_EXT_overlay_preview 1
+#define XR_EXT_overlay_preview_SPEC_VERSION 2
+#define XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME "XR_EXT_overlay_preview"
+typedef XrFlags64 XrOverlaySessionCreateFlagsEXT;
+
+// Flag bits for XrOverlaySessionCreateFlagsEXT
+static const XrOverlaySessionCreateFlagsEXT XR_OVERLAY_SESSION_CREATE_RELAXED_DISPLAY_TIME_EXT = 0x00000001;
+
+typedef XrFlags64 XrOverlayMainSessionFlagsEXT;
+
+// Flag bits for XrOverlayMainSessionFlagsEXT
+static const XrOverlayMainSessionFlagsEXT XR_MAIN_SESSION_BIT_ENABLED_COMPOSITION_LAYER_INFO_DEPTH_EXT = 0x00000001;
+
+typedef struct XrSessionCreateInfoOverlayEXT {
+    XrStructureType                   type;
+    const void* XR_MAY_ALIAS          next;
+    XrOverlaySessionCreateFlagsEXT    createFlags;
+    uint32_t                          sessionLayersPlacement;
+} XrSessionCreateInfoOverlayEXT;
+
+typedef struct XrEventDataMainSessionVisibilityChangedEXT {
+    XrStructureType                 type;
+    const void* XR_MAY_ALIAS        next;
+    XrBool32                        visible;
+    XrOverlayMainSessionFlagsEXT    flags;
+} XrEventDataMainSessionVisibilityChangedEXT;
+
+
+
 #define XR_VARJO_quad_views 1
 #define XR_VARJO_quad_views_SPEC_VERSION  1
 #define XR_VARJO_QUAD_VIEWS_EXTENSION_NAME "XR_VARJO_quad_views"
@@ -1647,6 +1678,11 @@ XRAPI_ATTR XrResult XRAPI_CALL xrSetInputDeviceLocationEXT(
     XrSpace                                     space,
     XrPosef                                     pose);
 #endif
+
+
+#define XR_EXT_win32_appcontainer_compatible 1
+#define XR_EXT_win32_appcontainer_compatible_SPEC_VERSION 1
+#define XR_EXT_WIN32_APPCONTAINER_COMPATIBLE_EXTENSION_NAME "XR_EXT_win32_appcontainer_compatible"
 
 #ifdef __cplusplus
 }
