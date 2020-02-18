@@ -351,6 +351,14 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
                 break;
             }
 
+            case XR_TYPE_EXTENSION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrExtensionProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrExtensionProperties*>(dstbase);
+                strncpy_s(dst->extensionName, src->extensionName, XR_MAX_EXTENSION_NAME_SIZE);
+                dst->extensionVersion = src->extensionVersion;
+                break;
+            }
+
             case XR_TYPE_SYSTEM_PROPERTIES: {
                 auto src = reinterpret_cast<const XrSystemProperties*>(srcbase);
                 auto dst = reinterpret_cast<XrSystemProperties*>(dstbase);
