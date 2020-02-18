@@ -11,7 +11,7 @@
        },
        "instance_extensions": [
            {
-               "name": "XR_EXT_overlay",
+               "name": "XR_EXT_overlay_preview",
                "spec_version": "1"
            }
        ]
