@@ -654,60 +654,276 @@ XrResult Overlay_xrDestroyInstance(XrInstance instance)
     return XR_SUCCESS; 
 }
 
+XrResult Remote_xrEnumerateInstanceExtensionProperties(IPCXrEnumerateInstanceExtensionProperties* args)
+{
+    PFN_xrEnumerateInstanceExtensionProperties EnumerateInstanceExtensionProperties = (PFN_xrEnumerateInstanceExtensionProperties)GetProcAddress(GetModuleHandleA(NULL), "xrEnumerateInstanceExtensionProperties");
+
+    if(!EnumerateInstanceExtensionProperties) {
+        EnumerateInstanceExtensionProperties = (PFN_xrEnumerateInstanceExtensionProperties)GetProcAddress(GetModuleHandleA("openxr_loader.dll"), "xrEnumerateInstanceExtensionProperties");
+    }
+
+    if(!EnumerateInstanceExtensionProperties) {
+        OutputDebugStringA("**OVERLAY** couldn't get xrEnumerateInstanceExtensionProperties function from loader\n");
+        DebugBreak();
+    }
+
+    return EnumerateInstanceExtensionProperties(args->layerName, args->propertyCapacityInput, args->propertyCountOutput, args->properties);
+}
+
+XrResult Remote_xrCreateInstance(IPCXrCreateInstance* args)
+{
+    XrResult result;
+    // Wait on main session
+    if(!gMainSession) {
+        DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, INFINITE);
+        if(waitresult == WAIT_TIMEOUT) {
+            OutputDebugStringA("**OVERLAY** create session timeout\n");
+            DebugBreak();
+        }
+    }
+
+    bool extensionsSupported = true;
+    for(unsigned int i = 0; extensionsSupported && (i < args->createInfo->enabledExtensionCount); i++) {
+        extensionsSupported = gSavedRequestedExtensions.find(args->createInfo->enabledExtensionNames[i]) != gSavedRequestedExtensions.end();
+    }
+
+    bool apiLayersSupported = true;
+    for(unsigned int i = 0; apiLayersSupported && (i < args->createInfo->enabledApiLayerCount); i++) {
+        apiLayersSupported = gSavedRequestedApiLayers.find(args->createInfo->enabledApiLayerNames[i]) != gSavedRequestedApiLayers.end();
+    }
+
+    if(!apiLayersSupported) {
+        result = XR_ERROR_API_LAYER_NOT_PRESENT;
+    } else if(!extensionsSupported) {
+        result = XR_ERROR_EXTENSION_NOT_PRESENT;
+    } else {
+        result = XR_SUCCESS;
+        // remote process handle no longer saved here
+        *(args->instance) = gSavedInstance;
+        *(args->hostProcessId) = GetCurrentProcessId();
+    }
+
+    return result;
+}
+
+XrResult Remote_xrGetSystem(IPCXrGetSystem *args)
+{
+    XrResult result;
+
+    if(args->getInfo->formFactor == gSavedFormFactor) {
+        *args->systemId = gSavedSystemId;
+        result = XR_SUCCESS;
+    } else {
+        *args->systemId = XR_NULL_SYSTEM_ID;
+        result = XR_ERROR_FORM_FACTOR_UNAVAILABLE;
+    }
+
+    return result;
+}
+
+XrResult Remote_xrGetSystemProperties(IPCXrGetSystemProperties *args)
+{
+    XrResult result;
+
+    result = downchain->GetSystemProperties(args->instance, args->system, args->properties);
+    args->properties->graphicsProperties.maxLayerCount = MAX_OVERLAY_LAYER_COUNT;
+
+    return result;
+}
+
+XrResult Remote_xrCreateSwapChain(IPCXrCreateSwapchain* args)
+{
+    XrResult result;
+
+    result = Overlay_xrCreateSwapchain(args->session, args->createInfo, args->swapchain);
+    if(result == XR_SUCCESS) {
+
+        uint32_t count;
+        CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, 0, &count, nullptr));
+
+        std::vector<XrSwapchainImageD3D11KHR> swapchainImages(count);
+        std::vector<ID3D11Texture2D*> swapchainTextures(count);
+        for(uint32_t i = 0; i < count; i++) {
+            swapchainImages[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+            swapchainImages[i].next = nullptr;
+        }
+        CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages.data())));
+
+        for(uint32_t i = 0; i < count; i++) {
+            swapchainTextures[i] = swapchainImages[i].texture;
+        }
+      
+        gSwapchainMap[*args->swapchain] = SwapchainCachedDataPtr(new SwapchainCachedData(*args->swapchain, swapchainTextures));
+        *args->swapchainCount = count;
+    }
+    return result;
+}
+
+XrResult Remote_xrAcquireSwapchainImage(IPCXrAcquireSwapchainImage* args)
+{
+    XrResult result;
+
+    result = Overlay_xrAcquireSwapchainImage(args->swapchain, args->acquireInfo, args->index);
+    if(result == XR_SUCCESS) {
+        auto& cache = gSwapchainMap[args->swapchain];
+        cache->acquired.push_back(*args->index);
+    }
+
+    return result;
+}
+
+XrResult Remote_xrWaitSwapchainImage(IPCXrWaitSwapchainImage* args)
+{
+    XrResult result;
+
+    result = Overlay_xrWaitSwapchainImage(args->swapchain, args->waitInfo);
+
+    if(result != XR_SUCCESS) {
+        return result;
+    }
+
+    auto& cache = gSwapchainMap[args->swapchain];
+    if(cache->remoteImagesAcquired.find(args->sourceImage) != cache->remoteImagesAcquired.end()) {
+        IDXGIKeyedMutex* keyedMutex;
+        {
+            ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
+            CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+        }
+        cache->remoteImagesAcquired.erase(args->sourceImage);
+        CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
+        keyedMutex->Release();
+    }
+
+    return result;
+}
+
+XrResult Remote_xrReleaseSwapchainImage(IPCXrReleaseSwapchainImage* args)
+{
+    XrResult result;
+
+    auto& cache = gSwapchainMap[args->swapchain];
+
+    ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
+
+    {
+        IDXGIKeyedMutex* keyedMutex;
+        CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
+        CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
+        keyedMutex->Release();
+    }
+
+    cache->remoteImagesAcquired.insert(args->sourceImage);
+    int which = cache->acquired[0];
+    cache->acquired.erase(cache->acquired.begin());
+
+    ID3D11DeviceContext* d3dContext;
+    gSavedD3DDevice->GetImmediateContext(&d3dContext);
+    d3dContext->CopyResource(cache->swapchainImages[which], sharedTexture);
+
+    result = Overlay_xrReleaseSwapchainImage(args->swapchain, args->releaseInfo);
+
+    return result;
+}
+
+XrResult Remote_xrDestroySession(IPCXrDestroySession* args)
+{
+    XrResult result;
+
+    result = Overlay_xrDestroySession(args->session);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    gSwapchainMap.clear();
+
+    return result;
+}
+
+XrResult Remote_xrPollEvent(IPCBuffer& ipcbuf, IPCXrHeader *hdr, IPCXrPollEvent *args)
+{
+    XrResult result;
+
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+
+    OptionalSessionStateChange pendingStateChange;
+    pendingStateChange = gMainSession->overlaySession->GetAndDoPendingStateChange(gMainSession);
+
+    if(pendingStateChange.first) {
+
+        EventDataBufferPtr event(new XrEventDataBuffer);
+        auto* ssc = reinterpret_cast<XrEventDataSessionStateChanged*>(event.get());
+        ssc->type = XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;
+        ssc->next = nullptr;
+        ssc->session = kOverlayFakeSession;
+        ssc->state = pendingStateChange.second;
+        XrTime calculatedTime = 0; // XXX Must not be 0 - should calculate from system time but cannot guarantee conversion routines will be available
+        ssc->time = calculatedTime;
+        OutputDebugStringA(fmt("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state).c_str());
+        CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader *>(event.get()), args->event);
+        result = XR_SUCCESS;
+
+    } else if(gHostEventsSaved.size() == 0) {
+
+        result = XR_EVENT_UNAVAILABLE;
+
+    } else {
+
+        EventDataBufferPtr event(std::move(gHostEventsSaved.front()));
+        gHostEventsSaved.pop();
+        OutputDebugStringA(fmt("**OVERLAY** dequeued a %d Event, length %d\n", event->type, gHostEventsSaved.size()).c_str());
+        CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader*>(event.get()), args->event);
+
+        // Find all XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED.  If the session is our Main,
+        // change the session to be our overlay session stand-in.
+        const void *next = args->event;
+        while(next) {
+            const auto* e = reinterpret_cast<const XrEventDataBaseHeader*>(next);
+            if(e->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+                const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(e);
+                if(ssc->session == gMainSession->session) {
+                    auto* ssc2 = const_cast<XrEventDataSessionStateChanged*>(ssc);
+                    ssc2->session = kOverlayFakeSession;
+                }
+            }
+            next = e->next;
+        }
+
+        // args->event is already registered as a pointer
+        // that has to be updated as it passes over IPC.
+        // Add all newly created *subsequent* next pointers in
+        // the chain, too.
+        const void** tofix = &(args->event->next);
+        while (*tofix) {
+            hdr->addOffsetToPointer(ipcbuf.base, tofix);
+            const XrEventDataBaseHeader* qq = reinterpret_cast<const XrEventDataBaseHeader*>(*tofix);
+            tofix = const_cast<const void **>(&(qq->next));
+        }
+        // add next pointers to the pointer list
+
+        result = XR_SUCCESS;
+        // event goes out of scope and is deleted
+    }
+
+	return result;
+}
+
 bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader *hdr)
 {
     switch(hdr->requestType) {
 
-        // XXX make all these into functions
+        // Call into "Remote_" function to handle functionality
+        // altered by Remote connection and may not be disambiguated by XrSession,
+        // or call into "Overlay_" function to handle functionality only altered
+        // for the purposes of Overlay composition layers that can be disambiguated
+        // by XrSession or child handles
 
         case IPC_XR_ENUMERATE_INSTANCE_EXTENSION_PROPERTIES: {
             auto args = ipcbuf.getAndAdvance<IPCXrEnumerateInstanceExtensionProperties>();
-            PFN_xrEnumerateInstanceExtensionProperties EnumerateInstanceExtensionProperties = (PFN_xrEnumerateInstanceExtensionProperties)GetProcAddress(GetModuleHandleA(NULL), "xrEnumerateInstanceExtensionProperties");
-            if(!EnumerateInstanceExtensionProperties) {
-                EnumerateInstanceExtensionProperties = (PFN_xrEnumerateInstanceExtensionProperties)GetProcAddress(GetModuleHandleA("openxr_loader.dll"), "xrEnumerateInstanceExtensionProperties");
-            }
-            if(!EnumerateInstanceExtensionProperties) {
-                OutputDebugStringA("**OVERLAY** couldn't get xrEnumerateInstanceExtensionProperties function from loader\n");
-                DebugBreak();
-            }
-            hdr->result = EnumerateInstanceExtensionProperties(args->layerName, args->propertyCapacityInput, args->propertyCountOutput, args->properties);
+            hdr->result = Remote_xrEnumerateInstanceExtensionProperties(args);
             break;
         }
 
         case IPC_XR_CREATE_INSTANCE: {
             // Establish IPC parameters and make initial handshake
             auto args = ipcbuf.getAndAdvance<IPCXrCreateInstance>();
-
-            // Wait on main session
-            if(!gMainSession) {
-                DWORD waitresult = WaitForSingleObject(gOverlayCreateSessionSema, INFINITE);
-                if(waitresult == WAIT_TIMEOUT) {
-                    OutputDebugStringA("**OVERLAY** create session timeout\n");
-                    DebugBreak();
-                }
-            }
-
-            bool extensionsSupported = true;
-            for(unsigned int i = 0; extensionsSupported && (i < args->createInfo->enabledExtensionCount); i++) {
-                extensionsSupported = gSavedRequestedExtensions.find(args->createInfo->enabledExtensionNames[i]) != gSavedRequestedExtensions.end();
-            }
-
-            bool apiLayersSupported = true;
-            for(unsigned int i = 0; apiLayersSupported && (i < args->createInfo->enabledApiLayerCount); i++) {
-                apiLayersSupported = gSavedRequestedApiLayers.find(args->createInfo->enabledApiLayerNames[i]) != gSavedRequestedApiLayers.end();
-            }
-
-            if(!apiLayersSupported) {
-                hdr->result = XR_ERROR_API_LAYER_NOT_PRESENT;
-            } else if(!extensionsSupported) {
-                hdr->result = XR_ERROR_EXTENSION_NOT_PRESENT;
-            } else {
-                hdr->result = XR_SUCCESS;
-                // remote process handle no longer saved here
-                *(args->instance) = gSavedInstance;
-                *(args->hostProcessId) = GetCurrentProcessId();
-            }
-
+            hdr->result = Remote_xrCreateInstance(args);
             break;
         }
 
@@ -719,13 +935,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
 
         case IPC_XR_GET_SYSTEM: {
             auto args = ipcbuf.getAndAdvance<IPCXrGetSystem>();
-            if(args->getInfo->formFactor == gSavedFormFactor) {
-                *args->systemId = gSavedSystemId;
-                hdr->result = XR_SUCCESS;
-            } else {
-                *args->systemId = XR_NULL_SYSTEM_ID;
-                hdr->result = XR_ERROR_FORM_FACTOR_UNAVAILABLE;
-            }
+            hdr->result = Remote_xrGetSystem(args);
             break;
         }
 
@@ -743,9 +953,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
 
         case IPC_XR_GET_SYSTEM_PROPERTIES: {
             auto args = ipcbuf.getAndAdvance<IPCXrGetSystemProperties>();
-            hdr->result = downchain->GetSystemProperties(args->instance, args->system, args->properties);
-            // Remote only gets the overlay layers
-            args->properties->graphicsProperties.maxLayerCount = MAX_OVERLAY_LAYER_COUNT;
+            hdr->result = Remote_xrGetSystemProperties(args);
             break;
         }
 
@@ -763,27 +971,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
 
         case IPC_XR_CREATE_SWAPCHAIN: {
             auto args = ipcbuf.getAndAdvance<IPCXrCreateSwapchain>();
-            hdr->result = Overlay_xrCreateSwapchain(args->session, args->createInfo, args->swapchain);
-            if(hdr->result == XR_SUCCESS) {
-
-                uint32_t count;
-                CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, 0, &count, nullptr));
-
-                std::vector<XrSwapchainImageD3D11KHR> swapchainImages(count);
-                std::vector<ID3D11Texture2D*> swapchainTextures(count);
-                for(uint32_t i = 0; i < count; i++) {
-                    swapchainImages[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
-                    swapchainImages[i].next = nullptr;
-                }
-                CHECK_XR(downchain->EnumerateSwapchainImages(*args->swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages.data())));
-
-                for(uint32_t i = 0; i < count; i++) {
-                    swapchainTextures[i] = swapchainImages[i].texture;
-                }
-              
-                gSwapchainMap[*args->swapchain] = SwapchainCachedDataPtr(new SwapchainCachedData(*args->swapchain, swapchainTextures));
-                *args->swapchainCount = count;
-            }
+            hdr->result = Remote_xrCreateSwapChain(args);
             break;
         }
 
@@ -807,60 +995,26 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
 
         case IPC_XR_ACQUIRE_SWAPCHAIN_IMAGE: {
             auto args = ipcbuf.getAndAdvance<IPCXrAcquireSwapchainImage>();
-            hdr->result = Overlay_xrAcquireSwapchainImage(args->swapchain, args->acquireInfo, args->index);
-            if(hdr->result == XR_SUCCESS) {
-                auto& cache = gSwapchainMap[args->swapchain];
-                cache->acquired.push_back(*args->index);
-            }
+            hdr->result = Remote_xrAcquireSwapchainImage(args);
+
             break;
         }
 
         case IPC_XR_WAIT_SWAPCHAIN_IMAGE: {
             auto args = ipcbuf.getAndAdvance<IPCXrWaitSwapchainImage>();
-            hdr->result = Overlay_xrWaitSwapchainImage(args->swapchain, args->waitInfo);
-            auto& cache = gSwapchainMap[args->swapchain];
-            if(cache->remoteImagesAcquired.find(args->sourceImage) != cache->remoteImagesAcquired.end()) {
-                IDXGIKeyedMutex* keyedMutex;
-                {
-                    ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
-                    CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-                }
-                cache->remoteImagesAcquired.erase(args->sourceImage);
-                CHECK(keyedMutex->ReleaseSync(KEYED_MUTEX_IPC_REMOTE));
-                keyedMutex->Release();
-            }
+            hdr->result = Remote_xrWaitSwapchainImage(args);
             break;
         }
 
         case IPC_XR_RELEASE_SWAPCHAIN_IMAGE: {
             auto args = ipcbuf.getAndAdvance<IPCXrReleaseSwapchainImage>();
-            auto& cache = gSwapchainMap[args->swapchain];
-
-            ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
-
-            {
-                IDXGIKeyedMutex* keyedMutex;
-                CHECK(sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex));
-                CHECK(keyedMutex->AcquireSync(KEYED_MUTEX_IPC_HOST, INFINITE));
-                keyedMutex->Release();
-            }
-
-            cache->remoteImagesAcquired.insert(args->sourceImage);
-            int which = cache->acquired[0];
-            cache->acquired.erase(cache->acquired.begin());
-
-            ID3D11DeviceContext* d3dContext;
-            gSavedD3DDevice->GetImmediateContext(&d3dContext);
-            d3dContext->CopyResource(cache->swapchainImages[which], sharedTexture);
-            hdr->result = Overlay_xrReleaseSwapchainImage(args->swapchain, args->releaseInfo);
+            hdr->result = Remote_xrReleaseSwapchainImage(args);
             break;
         }
 
         case IPC_XR_DESTROY_SESSION: { 
             auto args = ipcbuf.getAndAdvance<IPCXrDestroySession>();
-            hdr->result = Overlay_xrDestroySession(args->session);
-            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
-            gSwapchainMap.clear();
+            hdr->result = Remote_xrDestroySession(args);
             break;
         }
 
@@ -921,67 +1075,7 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
 
         case IPC_XR_POLL_EVENT: {
             auto args = ipcbuf.getAndAdvance<IPCXrPollEvent>();
-            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
-
-            OptionalSessionStateChange pendingStateChange;
-            pendingStateChange = gMainSession->overlaySession->GetAndDoPendingStateChange(gMainSession);
-
-            if(pendingStateChange.first) {
-
-                EventDataBufferPtr event(new XrEventDataBuffer);
-                auto* ssc = reinterpret_cast<XrEventDataSessionStateChanged*>(event.get());
-                ssc->type = XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;
-                ssc->next = nullptr;
-                ssc->session = kOverlayFakeSession;
-                ssc->state = pendingStateChange.second;
-                XrTime calculatedTime = 0; // XXX Must not be 0 - should calculate from system time but cannot guarantee conversion routines will be available
-                ssc->time = calculatedTime;
-                OutputDebugStringA(fmt("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state).c_str());
-                CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader *>(event.get()), args->event);
-                hdr->result = XR_SUCCESS;
-
-            } else if(gHostEventsSaved.size() == 0) {
-
-                hdr->result = XR_EVENT_UNAVAILABLE;
-
-            } else {
-
-                EventDataBufferPtr event(std::move(gHostEventsSaved.front()));
-                gHostEventsSaved.pop();
-                OutputDebugStringA(fmt("**OVERLAY** dequeued a %d Event, length %d\n", event->type, gHostEventsSaved.size()).c_str());
-                CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader*>(event.get()), args->event);
-
-                // Find all XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED.  If the session is our Main,
-                // change the session to be our overlay session stand-in.
-                const void *next = args->event;
-                while(next) {
-                    const auto* e = reinterpret_cast<const XrEventDataBaseHeader*>(next);
-                    if(e->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
-                        const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(e);
-                        if(ssc->session == gMainSession->session) {
-                            auto* ssc2 = const_cast<XrEventDataSessionStateChanged*>(ssc);
-                            ssc2->session = kOverlayFakeSession;
-                        }
-                    }
-                    next = e->next;
-                }
-
-                // args->event is already registered as a pointer
-                // that has to be updated as it passes over IPC.
-                // Add all newly created *subsequent* next pointers in
-                // the chain, too.
-                const void** tofix = &(args->event->next);
-                while (*tofix) {
-                    hdr->addOffsetToPointer(ipcbuf.base, tofix);
-                    const XrEventDataBaseHeader* qq = reinterpret_cast<const XrEventDataBaseHeader*>(*tofix);
-                    tofix = const_cast<const void **>(&(qq->next));
-                }
-                // add next pointers to the pointer list
-
-                hdr->result = XR_SUCCESS;
-                // event goes out of scope and is deleted
-            }
-
+            hdr->result = Remote_xrPollEvent(ipcbuf, hdr, args);
             break;
         }
 
