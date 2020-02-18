@@ -662,7 +662,15 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
 
         case IPC_XR_ENUMERATE_INSTANCE_EXTENSION_PROPERTIES: {
             auto args = ipcbuf.getAndAdvance<IPCXrEnumerateInstanceExtensionProperties>();
-            hdr->result = downchain->EnumerateInstanceExtensionProperties(args->layerName, args->propertyCapacityInput, args->propertyCountOutput, args->properties);
+            PFN_xrEnumerateInstanceExtensionProperties EnumerateInstanceExtensionProperties = (PFN_xrEnumerateInstanceExtensionProperties)GetProcAddress(GetModuleHandleA(NULL), "xrEnumerateInstanceExtensionProperties");
+            if(!EnumerateInstanceExtensionProperties) {
+                EnumerateInstanceExtensionProperties = (PFN_xrEnumerateInstanceExtensionProperties)GetProcAddress(GetModuleHandleA("openxr_loader.dll"), "xrEnumerateInstanceExtensionProperties");
+            }
+            if(!EnumerateInstanceExtensionProperties) {
+                OutputDebugStringA("**OVERLAY** couldn't get xrEnumerateInstanceExtensionProperties function from loader\n");
+                DebugBreak();
+            }
+            hdr->result = EnumerateInstanceExtensionProperties(args->layerName, args->propertyCapacityInput, args->propertyCountOutput, args->properties);
             break;
         }
 
@@ -1071,7 +1079,7 @@ XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, cons
     assert(apiLayerInfo->nextInfo);
 
     gSavedRequestedExtensions.clear();
-    gSavedRequestedExtensions.insert("XR_EXT_overlay");
+    gSavedRequestedExtensions.insert(XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME);
     gSavedRequestedExtensions.insert(info->enabledExtensionNames, info->enabledExtensionNames + info->enabledExtensionCount);
 
     gSavedRequestedApiLayers.clear();
