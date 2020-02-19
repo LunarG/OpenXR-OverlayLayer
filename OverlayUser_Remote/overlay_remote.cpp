@@ -161,8 +161,6 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
 
 void GetInstanceExtensions(std::map<std::string, uint32_t>& extensionMap)
 {
-// #if !COMPILE_REMOTE_OVERLAY_APP
-    // XXX Layer doesn't support calling downchain->EnumerateInstanceExtensionProperties
     uint32_t extPropCount;
     CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
     if(extPropCount > 0) {
@@ -176,7 +174,6 @@ void GetInstanceExtensions(std::map<std::string, uint32_t>& extensionMap)
             extensionMap.insert({p.extensionName, p.extensionVersion});
         }
     }
-// #endif // COMPILE_REMOTE_OVERLAY_APP
 }
 
 void CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion, uint64_t apiVersion, std::vector<const char*> extensionNames, XrInstance* instance)
