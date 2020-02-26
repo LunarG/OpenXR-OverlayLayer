@@ -80,8 +80,7 @@ HANDLE gOverlayWaitFrameSema;
 // Main Session context that we hold on to for processing and interleaving
 // Overlay Session commands
 ID3D11Device *gSavedD3DDevice;
-XrGraphicsRequirementsD3D11KHR gGraphicsRequirementsD3D11Saved; // XXX this is a struct and as such needs to be deep copied
-bool gGetGraphicsRequirementsD3D11KHRWasCalled = false;
+XrGraphicsRequirementsD3D11KHR *gGraphicsRequirementsD3D11Saved = nullptr;
 XrInstance gSavedInstance;
 std::set<std::string> gSavedRequestedExtensions;
 std::set<std::string> gSavedRequestedApiLayers;
@@ -99,7 +98,7 @@ const int OVERLAY_WAITFRAME_NORMAL_MILLIS = 32;
 
 // Compositor layers from Overlay Session to overlay on Main Session's layers
 uint32_t gOverlayLayerCount = 0;
-std::vector<const XrCompositionLayerBaseHeader *>gOverlayLayers; // XXX this is a struct and as such needs to be deep copied
+std::vector<const XrCompositionLayerBaseHeader *>gOverlayLayers;
 std::set<XrSwapchain> gSwapchainsDestroyPending;
 std::set<XrSpace> gSpacesDestroyPending;
 #if (XR_PTR_SIZE == 8) // a la openxr.h
@@ -378,7 +377,7 @@ struct MainSession
     bool exitRequested;
 
     bool hasCalledWaitFrame;
-    XrFrameState savedFrameState; // XXX this is a struct and as such needs to be deep copied
+    XrFrameState *savedFrameState;
 
     ~MainSession()
     {
@@ -391,7 +390,8 @@ struct MainSession
         sessionState(XR_SESSION_STATE_UNKNOWN),
         isRunning(false),
         exitRequested(false),
-        hasCalledWaitFrame(false)
+        hasCalledWaitFrame(false),
+        savedFrameState(nullptr)
     {
     }
 
@@ -442,7 +442,9 @@ struct MainSession
     
     void IncrementPredictedDisplayTime()
     {
-        savedFrameState.predictedDisplayTime += 1; // XXX This is legal, but unclear that it won't cause a FP exception...
+        if(savedFrameState) {
+            savedFrameState->predictedDisplayTime += 1; // XXX This is legal, but not really what we want
+        }
     }
 
 };
@@ -585,6 +587,10 @@ XrResult Overlay_xrCreateInstance(const XrInstanceCreateInfo *info, XrInstance *
 XrResult Overlay_xrDestroyInstance(XrInstance instance) 
 { 
     // Layer cleanup here
+    if(gGraphicsRequirementsD3D11Saved) {
+        FreeXrStructChainWithFree(gGraphicsRequirementsD3D11Saved);
+        gGraphicsRequirementsD3D11Saved = nullptr;
+    }
 	gExitIPCLoop = true;
     return XR_SUCCESS; 
 }
@@ -788,7 +794,7 @@ XrResult Remote_xrPollEvent(IPCBuffer& ipcbuf, IPCXrHeader *hdr, IPCXrPollEvent 
         ssc->next = nullptr;
         ssc->session = kOverlayFakeSession;
         ssc->state = pendingStateChange.second;
-        XrTime calculatedTime = 0; // XXX Must not be 0 - should calculate from system time but cannot guarantee conversion routines will be available
+        XrTime calculatedTime = 1; // XXX Legal but not what we want - should calculate from system time but cannot guarantee conversion routines will be available
         ssc->time = calculatedTime;
         outputDebugF("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state);
         CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader *>(event.get()), args->event);
@@ -1525,7 +1531,12 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
 
         // TODO pass back any failure recorded by main session waitframe
         result = XR_SUCCESS;
-        *state = gMainSession->savedFrameState;
+
+        // XXX this is incomplete; need to descend next chain and copy as possible from saved requirements.
+        state->predictedDisplayTime = gMainSession->savedFrameState->predictedDisplayTime;
+        state->predictedDisplayPeriod = gMainSession->savedFrameState->predictedDisplayPeriod;
+        state->shouldRender = gMainSession->savedFrameState->shouldRender;
+
         gMainSession->IncrementPredictedDisplayTime();
 
     } else {
@@ -1534,7 +1545,10 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
             ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
 
             result = downchain->WaitFrame(session, info, state);
-            gMainSession->savedFrameState = *state;
+            if(gMainSession->savedFrameState) {
+                FreeXrStructChainWithFree(gMainSession->savedFrameState);
+            }
+            gMainSession->savedFrameState = reinterpret_cast<XrFrameState*>(CopyXrStructChainWithMalloc(state));
             gMainSession->DoCommand(OpenXRCommand::WAIT_FRAME);
         }
 
@@ -1689,7 +1703,7 @@ XrResult Overlay_xrPollEvent(
     if(result == XR_SUCCESS) {
         if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 
-            // XXX ignoring all chained event data
+            // XXX ignores any chained event data
             const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
             gMainSession->DoStateChange(ssc->state, ssc->time);
             if(ssc->next) {
@@ -1757,16 +1771,15 @@ XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(
     XrGraphicsRequirementsD3D11KHR*             graphicsRequirements)
 {
     XrResult result;
-    if(!gGetGraphicsRequirementsD3D11KHRWasCalled) {
-        auto foo = downchain->GetD3D11GraphicsRequirementsKHR;
-        result = foo /* downchain->GetD3D11GraphicsRequirementsKHR */(instance, systemId, graphicsRequirements);
+    if(!gGraphicsRequirementsD3D11Saved) {
+        result = downchain->GetD3D11GraphicsRequirementsKHR(instance, systemId, graphicsRequirements);
         if (result == XR_SUCCESS) {
-            gGraphicsRequirementsD3D11Saved = *graphicsRequirements; // XXX Need deep copy for next chains...
-            gGraphicsRequirementsD3D11Saved.next = nullptr;
-            gGetGraphicsRequirementsD3D11KHRWasCalled = true;
+            gGraphicsRequirementsD3D11Saved = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(CopyXrStructChainWithMalloc(graphicsRequirements));
         }
     } else {
-        *graphicsRequirements = gGraphicsRequirementsD3D11Saved; // XXX Need deep copy for next chains...
+        // XXX this is incomplete; need to descend next chain and copy as possible from saved requirements.
+        graphicsRequirements->adapterLuid = gGraphicsRequirementsD3D11Saved->adapterLuid;
+        graphicsRequirements->featureLevel = gGraphicsRequirementsD3D11Saved->featureLevel;
         result = XR_SUCCESS;
     }
     return result;
