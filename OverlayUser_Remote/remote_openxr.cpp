@@ -41,7 +41,7 @@
         return XR_RUNTIME_FAILURE;
     } else if(result == IPC_WAIT_ERROR) {
         // Unknown exception on wait...  Note for debugging purposes
-        OutputDebugStringA(fmt("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__).c_str());
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
         gConnectionLost = true;
         return XR_RUNTIME_FAILURE;
     } // else IPC_HOST_RESPONSE_READY is what we expect.
@@ -50,76 +50,12 @@
 #define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "../XR_overlay_ext/xr_overlay_dll.h"
+#include "../include/util.h"
 #include <openxr/openxr_platform.h>
 
 #include <dxgi1_2.h>
 #include <d3d11_1.h>
 
-static std::string fmt(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    int size = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if(size >= 0) {
-        int provided = size + 1;
-        std::unique_ptr<char[]> buf(new char[provided]);
-
-        va_start(args, fmt);
-        int size = vsnprintf(buf.get(), provided, fmt, args);
-        va_end(args);
-
-        return std::string(buf.get());
-    }
-    return "(fmt() failed, vsnprintf returned -1)";
-}
-
-static void CheckResultWithLastError(bool success, const char* what, const char *file, int line)
-{
-    if(!success) {
-        DWORD lastError = GetLastError();
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-static void CheckResult(HRESULT result, const char* what, const char *file, int line)
-{
-    if(result != S_OK) {
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-static void CheckXrResult(XrResult a, const char* what, const char *file, int line)
-{
-    if(a != XR_SUCCESS) {
-        std::string str = fmt("%s at %s:%d failed with %d\n", what, file, line, a);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-    }
-}
-
-// Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
-#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
-
-// Use this macro to test if functions succeeded that also update LastError
-#define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
-
-// Use this macro to test Direct3D functions
-#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
-
-// Use this macro to test OpenXR functions
-#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
 // Local bookkeeping information associated with an XrSession (Mostly just a place to cache D3D11 device)
 struct LocalSession
@@ -392,8 +328,7 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
 
             default: {
                 // I don't know what this is, drop it and keep going
-                std::string str = fmt("IPCCopyOut called to copy out to %p of unknown type %d - skipped.\n", dstbase, dstbase->type);
-                OutputDebugStringA(str.data());
+                outputDebugF("IPCCopyOut called to copy out to %p of unknown type %d - skipped.\n", dstbase, dstbase->type);
 
                 dstbase = dstbase->next;
                 skipped = true;

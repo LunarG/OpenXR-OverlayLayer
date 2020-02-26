@@ -39,63 +39,10 @@
 #include <d3d11_4.h>
 #include <d3d12.h>
 
+#include "../include/util.h"
 #include "xr_overlay_dll.h"
 #include "xr_generated_dispatch_table.h"
 #include "xr_linear.h"
-
-static std::string fmt(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    int size = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if(size >= 0) {
-        int provided = size + 1;
-        std::unique_ptr<char[]> buf(new char[provided]);
-
-        va_start(args, fmt);
-        int size = vsnprintf(buf.get(), provided, fmt, args);
-        va_end(args);
-
-        return std::string(buf.get());
-    }
-    return "(fmt() failed, vsnprintf returned -1)";
-}
-
-static void CheckResultWithLastError(bool success, const char* what, const char *file, int line)
-{
-    if(!success) {
-        DWORD lastError = GetLastError();
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-static void CheckResult(HRESULT result, const char* what, const char *file, int line)
-{
-    if(result != S_OK) {
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-static void CheckXrResult(XrResult a, const char* what, const char *file, int line)
-{
-    if(a != XR_SUCCESS) {
-        std::string str = fmt("%s at %s:%d failed with %d\n", what, file, line, a);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-    }
-}
 
 struct ScopedMutex
 {
@@ -105,7 +52,7 @@ struct ScopedMutex
     {
         DWORD waitresult = WaitForSingleObject(mutex, millis);
         if (waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", file, line).c_str());
+            outputDebugF("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", file, line);
             DebugBreak();
         }
     }
@@ -114,18 +61,6 @@ struct ScopedMutex
     }
 };
 
-
-// Use this macro to test if HANDLE or pointer functions succeeded that also update LastError
-#define CHECK_NOT_NULL(a) CheckResultWithLastError(((a) != NULL), #a, __FILE__, __LINE__)
-
-// Use this macro to test if functions succeeded that also update LastError
-#define CHECK_LAST_ERROR(a) CheckResultWithLastError((a), #a, __FILE__, __LINE__)
-
-// Use this macro to test Direct3D functions
-#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
-
-// Use this macro to test OpenXR functions
-#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
 // Supports only a single overlay / RPC session at this time
 
@@ -289,7 +224,7 @@ const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain sw
                     break;
                 }
                 default: {
-                    OutputDebugStringA(fmt("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type).c_str());
+                    outputDebugF("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type);
                     break;
                 }
             }
@@ -323,7 +258,7 @@ const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
                     break;
                 }
                 default: {
-                    OutputDebugStringA(fmt("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type).c_str());
+                    outputDebugF("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type);
                     break;
                 }
             }
@@ -477,7 +412,7 @@ struct MainSession
     {
         sessionState = state;
         currentTime = when;
-        OutputDebugStringA(fmt("**OVERLAY** main session is now state %d\n", state).c_str());
+        outputDebugF("**OVERLAY** main session is now state %d\n", state);
     }
 
     void DoCommand(OpenXRCommand command)
@@ -855,7 +790,7 @@ XrResult Remote_xrPollEvent(IPCBuffer& ipcbuf, IPCXrHeader *hdr, IPCXrPollEvent 
         ssc->state = pendingStateChange.second;
         XrTime calculatedTime = 0; // XXX Must not be 0 - should calculate from system time but cannot guarantee conversion routines will be available
         ssc->time = calculatedTime;
-        OutputDebugStringA(fmt("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state).c_str());
+        outputDebugF("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state);
         CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader *>(event.get()), args->event);
         result = XR_SUCCESS;
 
@@ -867,7 +802,7 @@ XrResult Remote_xrPollEvent(IPCBuffer& ipcbuf, IPCXrHeader *hdr, IPCXrPollEvent 
 
         EventDataBufferPtr event(std::move(gHostEventsSaved.front()));
         gHostEventsSaved.pop();
-        OutputDebugStringA(fmt("**OVERLAY** dequeued a %d Event, length %d\n", event->type, gHostEventsSaved.size()).c_str());
+        outputDebugF("**OVERLAY** dequeued a %d Event, length %d\n", event->type, gHostEventsSaved.size());
         CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader*>(event.get()), args->event);
 
         // Find all XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED.  If the session is our Main,
@@ -1221,7 +1156,7 @@ XrResult Overlay_xrGetSystemProperties(
     if(gSerializeEverything) {
         DWORD waitresult = WaitForSingleObject(gOverlayCallMutex, INFINITE);
         if(waitresult == WAIT_TIMEOUT) {
-            OutputDebugStringA(fmt("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__).c_str());
+            outputDebugF("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", __FILE__, __LINE__);
             DebugBreak();
         }
     }
@@ -1758,7 +1693,7 @@ XrResult Overlay_xrPollEvent(
             const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
             gMainSession->DoStateChange(ssc->state, ssc->time);
             if(ssc->next) {
-                OutputDebugStringA(fmt("**OVERLAY** ignoring a struct chained from a SESSION_STATE_CHANGED Event\n").c_str());
+                outputDebugF("**OVERLAY** ignoring a struct chained from a SESSION_STATE_CHANGED Event\n");
             }
 
         } else {
@@ -1788,13 +1723,13 @@ XrResult Overlay_xrPollEvent(
                     lost->next = nullptr;
                     lost->lostEventCount = 1;
                     gHostEventsSaved.emplace(std::move(newEvent));
-                    OutputDebugStringA(fmt("**OVERLAY** enqueued a Lost Event, length %d\n", gHostEventsSaved.size()).c_str());
+                    outputDebugF("**OVERLAY** enqueued a Lost Event, length %d\n", gHostEventsSaved.size());
 
                 } else {
 
-                    OutputDebugStringA(fmt("**OVERLAY** will enqueue a %d Event\n", newEvent->type).c_str());
+                    outputDebugF("**OVERLAY** will enqueue a %d Event\n", newEvent->type);
                     gHostEventsSaved.emplace(std::move(newEvent));
-                    OutputDebugStringA(fmt("**OVERLAY** queue is now size %d\n", gHostEventsSaved.size()).c_str());
+                    outputDebugF("**OVERLAY** queue is now size %d\n", gHostEventsSaved.size());
                     
                 }
             }

@@ -63,6 +63,8 @@
 XR_DEFINE_ATOM(XrPermissionIdEXT)
 #endif // COMPILE_REMOTE_OVERLAY_APP
 
+#include "../include/util.h"
+
 #include <openxr/openxr_platform.h>
 
 
@@ -76,53 +78,6 @@ extern "C" {
     extern unsigned char Image1Bytes[];
 };
 
-
-static std::string fmt(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    int size = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if(size >= 0) {
-        int provided = size + 1;
-        std::unique_ptr<char[]> buf(new char[provided]);
-
-        va_start(args, fmt);
-        vsnprintf(buf.get(), provided, fmt, args);
-        va_end(args);
-
-        return std::string(buf.get());
-    }
-    return "(fmt() failed, vsnprintf returned -1)";
-}
-
-static void CheckResult(HRESULT result, const char* what, const char *file, int line)
-{
-    if(result != S_OK) {
-        LPVOID messageBuf;
-        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-        std::string str = fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-        LocalFree(messageBuf);
-    }
-}
-
-static void CheckXrResult(XrResult a, const char* what, const char *file, int line)
-{
-    if(a != XR_SUCCESS) {
-        std::string str = fmt("%s at %s:%d failed with %d\n", what, file, line, a);
-        OutputDebugStringA(str.data());
-        DebugBreak();
-    }
-}
-
-// Use this macro to test Direct3D functions
-#define CHECK(a) CheckResult(a, #a, __FILE__, __LINE__)
-
-// Use this macro to test OpenXR functions
-#define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 
@@ -153,7 +108,7 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
         1, D3D11_SDK_VERSION, &d3d11Device, &featureLevel, NULL));
     if (featureLevel != D3D_FEATURE_LEVEL_11_1)
     {
-        OutputDebugStringA("Direct3D Feature Level 11.1 not created\n");
+        outputDebugF("Direct3D Feature Level 11.1 not created\n");
         abort();
     }
     return d3d11Device;
@@ -309,7 +264,7 @@ void ChooseSwapchainFormat(XrSession session, uint64_t* chosenFormat)
     std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
     auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
     if(formatFound == runtimeFormats.end()) {
-        OutputDebugStringA("No supported swapchain format found\n");
+        outputDebugF("No supported swapchain format found\n");
         DebugBreak();
     }
     *chosenFormat = *formatFound;

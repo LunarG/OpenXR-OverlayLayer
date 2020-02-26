@@ -26,6 +26,7 @@
 // xr_overlay_dll.cpp : Defines the exported functions for the DLL application.
 //
 
+#include "../include/util.h"
 #include "xr_overlay_dll.h"
 #include <string>
 #include <memory>
@@ -71,26 +72,6 @@ static const int HOST_PROCESS_ID_WORD = 1;
 XR_OVERLAY_EXT_API IPCBuffer IPCGetBuffer()
 {
     return IPCBuffer(shared_mem, mem_size);
-}
-
-static std::string fmt(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    int size = vsnprintf(nullptr, 0, fmt, args);
-    va_end(args);
-
-    if(size >= 0) {
-        int provided = size + 1;
-        std::unique_ptr<char[]> buf(new char[provided]);
-
-        va_start(args, fmt);
-        int size = vsnprintf(buf.get(), provided, fmt, args);
-        va_end(args);
-
-        return std::string(buf.get());
-    }
-    return "(fmt() failed, vsnprintf returned -1)";
 }
 
 template <class XR_STRUCT>
@@ -338,8 +319,7 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
 
             default: {
                 // I don't know what this is, skip it and try the next one
-                std::string str = fmt("CopyXrStructChain called on %p of unknown type %d - dropped from \"next\" chain.\n", srcbase, srcbase->type);
-                OutputDebugStringA(str.data());
+                outputDebugF("CopyXrStructChain called on %p of unknown type %d - dropped from \"next\" chain.\n", srcbase, srcbase->type);
                 srcbase = srcbase->next;
                 skipped = true;
                 break;
@@ -430,8 +410,7 @@ XR_OVERLAY_EXT_API void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc f
 
         default: {
             // I don't know what this is, skip it and try the next one
-            std::string str = fmt("Warning: Free called on %p of unknown type %d - will descend \"next\" but don't know any other pointers.\n", p, p->type);
-            OutputDebugStringA(str.data());
+            outputDebugF("Warning: Free called on %p of unknown type %d - will descend \"next\" but don't know any other pointers.\n", p, p->type);
             break;
         }
     }
