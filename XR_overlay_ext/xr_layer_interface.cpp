@@ -604,8 +604,27 @@ XrResult Remote_xrEnumerateInstanceExtensionProperties(IPCXrEnumerateInstanceExt
     }
 
     if(!EnumerateInstanceExtensionProperties) {
-        OutputDebugStringA("**OVERLAY** couldn't get xrEnumerateInstanceExtensionProperties function from loader\n");
-        DebugBreak();
+
+        OutputDebugStringA("**OVERLAY** couldn't get xrEnumerateInstanceExtensionProperties function from loader.  Is loader linked statically?\n");
+        OutputDebugStringA("Will punt by declaring " XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME " and " XR_KHR_D3D11_ENABLE_EXTENSION_NAME ".\n");
+
+        if(args->propertyCapacityInput == 0) {
+
+            *args->propertyCountOutput = 2;
+
+        } else {
+
+            *args->propertyCountOutput = 1;
+            strncpy_s(args->properties[0].extensionName, XR_MAX_EXTENSION_NAME_SIZE, XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME, XR_MAX_EXTENSION_NAME_SIZE - 1);
+            args->properties[0].extensionVersion = XR_EXT_overlay_preview_SPEC_VERSION;
+
+            if(args->propertyCapacityInput > 1) {
+                (*args->propertyCountOutput)++;
+                strncpy_s(args->properties[1].extensionName, XR_MAX_EXTENSION_NAME_SIZE, XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_MAX_EXTENSION_NAME_SIZE - 1);
+                args->properties[1].extensionVersion = XR_KHR_D3D11_enable_SPEC_VERSION;
+            }
+        }
+        return XR_SUCCESS;
     }
 
     return EnumerateInstanceExtensionProperties(args->layerName, args->propertyCapacityInput, args->propertyCountOutput, args->properties);
@@ -1779,7 +1798,7 @@ XrResult Overlay_xrGetD3D11GraphicsRequirementsKHR(
     } else {
         // XXX this is incomplete; need to descend next chain and copy as possible from saved requirements.
         graphicsRequirements->adapterLuid = gGraphicsRequirementsD3D11Saved->adapterLuid;
-        graphicsRequirements->featureLevel = gGraphicsRequirementsD3D11Saved->featureLevel;
+        graphicsRequirements->minFeatureLevel = gGraphicsRequirementsD3D11Saved->minFeatureLevel;
         result = XR_SUCCESS;
     }
     return result;
