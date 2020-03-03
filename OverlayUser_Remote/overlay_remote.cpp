@@ -67,6 +67,8 @@ XR_DEFINE_ATOM(XrPermissionIdEXT)
 
 #include <openxr/openxr_platform.h>
 
+#include <FreeImagePlus.h>
+
 
 // Fun images for page-flipping the quad
 extern "C" {
@@ -327,16 +329,17 @@ void CreateSwapchainsAndGetImages(XrSession session, uint64_t chosenFormat, int3
     }
 }
 
-void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, ID3D11Texture2D* sourceImages[2], DXGI_FORMAT format)
+void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, std::vector<fipImage> images, std::vector<ID3D11Texture2D*> sourceImages, DXGI_FORMAT format)
 {
-	assert(
-		(format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ||
-		(format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) ||
-		(format == DXGI_FORMAT_R8G8B8A8_UNORM) ||
-		(format == DXGI_FORMAT_B8G8R8A8_UNORM)
-	);
+    assert(
+        (format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ||
+        (format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) ||
+        (format == DXGI_FORMAT_R8G8B8A8_UNORM) ||
+        (format == DXGI_FORMAT_B8G8R8A8_UNORM)
+    );
 
-    for(int i = 0; i < 2; i++) {
+    for(int i = 0; i < images.size(); i++) {
+        ID3D11Texture2D* texture;
         D3D11_TEXTURE2D_DESC desc;
         desc.Width = recommendedWidth;
         desc.Height = recommendedHeight;
@@ -349,25 +352,30 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
         desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         desc.MiscFlags = 0;
 
-        CHECK(d3d11Device->CreateTexture2D(&desc, NULL, &sourceImages[i]));
+        CHECK(d3d11Device->CreateTexture2D(&desc, NULL, &texture));
+        sourceImages.push_back(texture);
 
         D3D11_MAPPED_SUBRESOURCE mapped;
         CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
 
-        unsigned char *imageBytes = (i == 0) ? Image1Bytes : Image2Bytes;
-        int width = (i == 0) ? Image1Width : Image2Width;
-        int height = (i == 0) ? Image1Height : Image2Height;
         for(int32_t y = 0; y < recommendedHeight; y++)
             for(int32_t x = 0; x < recommendedWidth; x++) {
-                int srcX = x * width / recommendedWidth;
-                int srcY = y * height / recommendedHeight;
+                int srcX = x * images[i].getWidth() / recommendedWidth;
+                int srcY = y * images[i].getHeight() / recommendedHeight;
                 unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + mapped.RowPitch * y + 4 * x;
-                unsigned char *src = imageBytes + 4 * (width * srcY + srcX);
-                // Source data is in RGBA
+
+                RGBAQUAD rgba;
+                images[i].getPixelColor(srcX, srcY, &rgb);
                 if(format == DXGI_FORMAT_R8G8B8A8_UNORM || DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) { 
-                    dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+                    dst[0] = rgba.rgbaRed / 255.0f;
+                    dst[1] = rgba.rgbaGreen / 255.0f;
+                    dst[2] = rgba.rgbaBlue / 255.0f;
+                    dst[3] = rgba.rgbaAlpha / 255.0f;
                 } else if(format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) { 
-                    dst[0] = src[2]; dst[1] = src[1]; dst[2] = src[0]; dst[3] = src[3];
+                    dst[2] = rgba.rgbaRed / 255.0f;
+                    dst[1] = rgba.rgbaGreen / 255.0f;
+                    dst[0] = rgba.rgbaBlue / 255.0f;
+                    dst[3] = rgba.rgbaAlpha / 255.0f;
                 }
             }
         d3dContext->Unmap(sourceImages[i], 0);
@@ -521,6 +529,17 @@ int main( void )
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    FreeImage_Initialise();
+
+    std::vector<fipImage> images;
+    std::string imageFilename;
+    images.push_back(fipImage());
+    // XXX std::move instead
+    if (!images[0].load(imageFilename.c_str()) {
+        std::cerr << "failed to load image " << imageFilename << "\n";
+        return false;
+    }
+
     std::cout << "Connecting to Host OpenXR Application...\n";
 #if COMPILE_REMOTE_OVERLAY_APP
     IPCConnectResult connectResult = IPC_CONNECT_TIMEOUT;
@@ -623,8 +642,8 @@ int main( void )
     ID3D11DeviceContext* d3dContext;
     d3d11Device->GetImmediateContext(&d3dContext);
 
-    ID3D11Texture2D* sourceImages[2];
-    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, sourceImages, (DXGI_FORMAT)chosenFormat);
+    std::vector<ID3D11Texture2D*> sourceImages;
+    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, images, sourceImages, (DXGI_FORMAT)chosenFormat);
 
     std::cout << "Created Swapchain and enumerated SwapchainImages and made local\n";
     std::cout << "    images as texture sources!\n";
@@ -666,7 +685,7 @@ int main( void )
     do {
         auto now = std::chrono::steady_clock::now();
         if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
-            whichImage = (whichImage + 1) % 2;
+            whichImage = (whichImage + 1) % sourceImages.size();
             then = std::chrono::steady_clock::now();
         }
 
