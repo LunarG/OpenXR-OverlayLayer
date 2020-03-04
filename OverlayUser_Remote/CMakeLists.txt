@@ -30,12 +30,24 @@ project(OverlayUser_Remote)
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release"
     CACHE STRING "Configuration types" FORCE)
 
+set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR})
+
+set(FREEIMAGE_FIND_REQUIRED, TRUE)
+find_package(FreeImage)
+
+set(FREEIMAGEPLUS_FIND_REQUIRED, TRUE)
+find_package(FreeImagePlus)
+
 add_executable(OverlayUser_Remote
-  image1.c 
-  image2.c
   overlay_remote.cpp
   remote_openxr.cpp
 )
+
+target_include_directories(OverlayUser_Remote SYSTEM PRIVATE ${FREEIMAGE_INCLUDE_DIRS})
+target_link_libraries(OverlayUser_Remote PRIVATE ${FREEIMAGE_LIBRARIES})
+
+target_include_directories(OverlayUser_Remote SYSTEM PRIVATE ${FREEIMAGEPLUS_INCLUDE_DIRS})
+target_link_libraries(OverlayUser_Remote PRIVATE ${FREEIMAGEPLUS_LIBRARIES})
 
 set_target_properties(OverlayUser_Remote PROPERTIES FOLDER "Users")
 
@@ -103,15 +115,10 @@ set_property(TARGET OverlayUser_Remote
   "$<$<CONFIG:Release>:XR_overlay_ext>"
 )
 
-find_package(OpenGL)
-if (OPENGL_FOUND)
-    add_definitions(-DXR_USE_GRAPHICS_API_OPENGL)
-elseif(BUILD_ALL_EXTENSIONS)
-    message(FATAL_ERROR "OpenGL not found")
-endif()
-
 if(WIN32)
     add_definitions(-DXR_USE_GRAPHICS_API_D3D11)
     add_definitions(-DXR_USE_GRAPHICS_API_D3D12)
 endif()
 
+file(COPY assets/avatar1.png DESTINATION ${CMAKE_BINARY_DIR}/OverlayUser_Remote)
+file(COPY assets/avatar2.png DESTINATION ${CMAKE_BINARY_DIR}/OverlayUser_Remote)

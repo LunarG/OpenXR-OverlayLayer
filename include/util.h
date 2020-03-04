@@ -95,4 +95,3 @@ inline void CheckXrResult(XrResult a, const char* what, const char *file, int li
 
 // Use this macro to test OpenXR functions
 #define CHECK_XR(a) CheckXrResult(a, #a, __FILE__, __LINE__)
-

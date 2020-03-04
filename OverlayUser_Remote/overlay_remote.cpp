@@ -23,6 +23,8 @@
 //
 
 
+#define _CRT_SECURE_NO_WARNINGS 1
+
 #include <string>
 #include <iostream>
 #include <vector>
@@ -68,18 +70,6 @@ XR_DEFINE_ATOM(XrPermissionIdEXT)
 #include <openxr/openxr_platform.h>
 
 #include <FreeImagePlus.h>
-
-
-// Fun images for page-flipping the quad
-extern "C" {
-    extern int Image2Width;
-    extern int Image2Height;
-    extern unsigned char Image2Bytes[];
-    extern int Image1Width;
-    extern int Image1Height;
-    extern unsigned char Image1Bytes[];
-};
-
 
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 
@@ -329,7 +319,7 @@ void CreateSwapchainsAndGetImages(XrSession session, uint64_t chosenFormat, int3
     }
 }
 
-void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, std::vector<fipImage> images, std::vector<ID3D11Texture2D*> sourceImages, DXGI_FORMAT format)
+void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, std::vector<fipImage> images, std::vector<ID3D11Texture2D*>& sourceImages, DXGI_FORMAT format)
 {
     assert(
         (format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ||
@@ -339,6 +329,8 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
     );
 
     for(int i = 0; i < images.size(); i++) {
+        fipImage& image = images[i];
+
         ID3D11Texture2D* texture;
         D3D11_TEXTURE2D_DESC desc;
         desc.Width = recommendedWidth;
@@ -358,26 +350,32 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
         D3D11_MAPPED_SUBRESOURCE mapped;
         CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
 
-        for(int32_t y = 0; y < recommendedHeight; y++)
-            for(int32_t x = 0; x < recommendedWidth; x++) {
-                int srcX = x * images[i].getWidth() / recommendedWidth;
-                int srcY = y * images[i].getHeight() / recommendedHeight;
-                unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + mapped.RowPitch * y + 4 * x;
+        image.rescale(recommendedWidth, recommendedHeight, FILTER_BILINEAR);
 
-                RGBAQUAD rgba;
-                images[i].getPixelColor(srcX, srcY, &rgb);
-                if(format == DXGI_FORMAT_R8G8B8A8_UNORM || DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) { 
-                    dst[0] = rgba.rgbaRed / 255.0f;
-                    dst[1] = rgba.rgbaGreen / 255.0f;
-                    dst[2] = rgba.rgbaBlue / 255.0f;
-                    dst[3] = rgba.rgbaAlpha / 255.0f;
-                } else if(format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) { 
-                    dst[2] = rgba.rgbaRed / 255.0f;
-                    dst[1] = rgba.rgbaGreen / 255.0f;
-                    dst[0] = rgba.rgbaBlue / 255.0f;
-                    dst[3] = rgba.rgbaAlpha / 255.0f;
+        for (int32_t y = 0; y < recommendedHeight; y++) {
+            unsigned char *src = image.getScanLine(recommendedHeight - 1 - y);
+            unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + mapped.RowPitch * y;
+
+            if (format == DXGI_FORMAT_R8G8B8A8_UNORM || DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
+                for (int32_t x = 0; x < recommendedWidth; x++) {
+                    unsigned char *srcPixel = src + x * 4;
+                    unsigned char *dstPixel = dst + x * 4;
+                    dstPixel[0] = srcPixel[2];
+                    dstPixel[1] = srcPixel[1];
+                    dstPixel[2] = srcPixel[0];
+                    dstPixel[3] = srcPixel[3];
+                }
+            } else if (format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
+                for (int32_t x = 0; x < recommendedWidth; x++) {
+                    unsigned char *srcPixel = src + x * 4;
+                    unsigned char *dstPixel = dst + x * 4;
+                    dstPixel[0] = srcPixel[0];
+                    dstPixel[1] = srcPixel[1];
+                    dstPixel[2] = srcPixel[2];
+                    dstPixel[3] = srcPixel[3];
                 }
             }
+        }
         d3dContext->Unmap(sourceImages[i], 0);
     }
 }
@@ -508,11 +506,11 @@ void ProcessEvent(XrEventDataBuffer *event, bool* quit, XrSession session, bool&
     }
 }
 
-void SetLayer(XrCompositionLayerQuad *layer, XrSpace space, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
+void SetLayer(XrCompositionLayerQuad *layer, XrCompositionLayerFlags flags, XrSpace space, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
 {
     layer->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
     layer->next = nullptr;
-    layer->layerFlags = 0;
+    layer->layerFlags = flags;
     layer->space = space;
     layer->eyeVisibility = visibility;
     layer->subImage = subImage;
@@ -526,18 +524,37 @@ int main( void )
     bool useDebugMessenger = false;
     bool usePermissions = false;
 
+    std::vector<std::string> imageFilenames;
+
+    imageFilenames.push_back("avatar1.png");
+    //imageFilenames.push_back("avatar2.png");
+
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 
     FreeImage_Initialise();
 
     std::vector<fipImage> images;
-    std::string imageFilename;
-    images.push_back(fipImage());
-    // XXX std::move instead
-    if (!images[0].load(imageFilename.c_str()) {
-        std::cerr << "failed to load image " << imageFilename << "\n";
-        return false;
+    for(auto filename: imageFilenames) {
+        images.push_back(fipImage());
+        fipImage& image = images.back();
+        // XXX std::move instead
+        if (!image.load(filename.c_str())) {
+            std::cerr << "failed to load image " << filename << "\n";
+            exit(EXIT_FAILURE);
+        }
+        image.convertTo32Bits();
+        FILE *blarg = fopen("blarg.pgm", "wb");
+        fprintf(blarg, "P5 %d %d 255\n", image.getWidth(), image.getHeight());
+        for (uint32_t y = 0; y < image.getHeight(); y++) {
+            unsigned char *src = image.getScanLine(y);
+
+            for (uint32_t x = 0; x < image.getWidth(); x++) {
+                unsigned char *srcPixel = src + x * 4;
+                fprintf(blarg, "%c", srcPixel[3]);
+            }
+        }
+        fclose(blarg);
     }
 
     std::cout << "Connecting to Host OpenXR Application...\n";
@@ -769,7 +786,7 @@ int main( void )
 
                         for(uint32_t eye = 0; eye < 2; eye++) {
                             XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                            SetLayer(&layers[eye], myspace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, {0.33f, 0.33f});
+                            SetLayer(&layers[eye], XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, myspace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, {0.33f, 0.33f});
                             layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
                         }
 
@@ -778,7 +795,7 @@ int main( void )
                     } else {
 
                         XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                        SetLayer(&layers[0], myspace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, {0.33f, 0.33f});
+                        SetLayer(&layers[0], XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, myspace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, {0.33f, 0.33f});
 
                         layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
                         frameEndInfo.layerCount = 1;
