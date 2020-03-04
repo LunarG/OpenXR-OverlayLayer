@@ -518,23 +518,8 @@ void SetLayer(XrCompositionLayerQuad *layer, XrCompositionLayerFlags flags, XrSp
     layer->size = extent;
 }
 
-int main( void )
+void LoadImages(const std::vector<std::string>& imageFilenames, std::vector<fipImage>& images)
 {
-    bool sawFirstSuccessfulFrame = false;
-    bool useDebugMessenger = false;
-    bool usePermissions = false;
-
-    std::vector<std::string> imageFilenames;
-
-    imageFilenames.push_back("avatar1.png");
-    //imageFilenames.push_back("avatar2.png");
-
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
-
-    FreeImage_Initialise();
-
-    std::vector<fipImage> images;
     for(auto filename: imageFilenames) {
         images.push_back(fipImage());
         fipImage& image = images.back();
@@ -544,17 +529,31 @@ int main( void )
             exit(EXIT_FAILURE);
         }
         image.convertTo32Bits();
-        FILE *blarg = fopen("blarg.pgm", "wb");
-        fprintf(blarg, "P5 %d %d 255\n", image.getWidth(), image.getHeight());
-        for (uint32_t y = 0; y < image.getHeight(); y++) {
-            unsigned char *src = image.getScanLine(y);
+    }
+}
 
-            for (uint32_t x = 0; x < image.getWidth(); x++) {
-                unsigned char *srcPixel = src + x * 4;
-                fprintf(blarg, "%c", srcPixel[3]);
-            }
-        }
-        fclose(blarg);
+int main( void )
+{
+    bool sawFirstSuccessfulFrame = false;
+    bool useDebugMessenger = false;
+    bool usePermissions = false;
+
+    std::vector<std::string> imageFilenames;
+
+    imageFilenames.push_back("avatar1.png");
+    imageFilenames.push_back("avatar2.png");
+
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
+    FreeImage_Initialise();
+
+    std::vector<fipImage> images;
+    LoadImages(imageFilenames, images);
+
+    std::vector<float> imageAspectRatios;
+    for(auto& image: images) {
+        imageAspectRatios.push_back(image.getWidth() / (float)image.getHeight());
     }
 
     std::cout << "Connecting to Host OpenXR Application...\n";
@@ -695,13 +694,13 @@ int main( void )
     auto then = std::chrono::steady_clock::now();
     XrSessionState sessionState = XR_SESSION_STATE_IDLE;
     bool runFrameLoop = false;
-    XrSpace myspace = localSpace;
+    XrSpace myspace = viewSpace;
 
     bool quit = false;
 
     do {
         auto now = std::chrono::steady_clock::now();
-        if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 1000) {
+        if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 2000) {
             whichImage = (whichImage + 1) % sourceImages.size();
             then = std::chrono::steady_clock::now();
         }
@@ -780,13 +779,16 @@ int main( void )
                     XrCompositionLayerBaseHeader* layerPointers[2];
                     frameEndInfo.layers = layerPointers;
 
-                    XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {-0.25f, 0.125f, -1.5f}};
+                    XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -1.0f}};
                     
+                    XrCompositionLayerFlags flags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                    XrExtent2Df extent {1.0f * imageAspectRatios[whichImage], 1.0f};
+
                     if(useSeparateLeftRightEyes) {
 
                         for(uint32_t eye = 0; eye < 2; eye++) {
                             XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                            SetLayer(&layers[eye], XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, myspace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, {0.33f, 0.33f});
+                            SetLayer(&layers[eye], flags, myspace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, extent);
                             layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
                         }
 
@@ -795,7 +797,7 @@ int main( void )
                     } else {
 
                         XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                        SetLayer(&layers[0], XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT, myspace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, {0.33f, 0.33f});
+                        SetLayer(&layers[0], flags, myspace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, extent);
 
                         layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
                         frameEndInfo.layerCount = 1;
