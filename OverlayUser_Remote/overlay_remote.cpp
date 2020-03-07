@@ -37,6 +37,9 @@
 
 #include <cassert>
 
+// To compile this application as a "Main" OpenXR app (no overlays) set this to 0:
+#define COMPILE_REMOTE_OVERLAY_APP 1
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif  // !WIN32_LEAN_AND_MEAN
@@ -57,8 +60,6 @@
 #undef XR_USE_GRAPHICS_API_VULKAN
 #define XR_USE_GRAPHICS_API_D3D11 1
 
-#define COMPILE_REMOTE_OVERLAY_APP 1
-
 #if COMPILE_REMOTE_OVERLAY_APP
 #include "../XR_overlay_ext/xr_overlay_dll.h"
 #else // undef COMPILE_REMOTE_OVERLAY_APP
@@ -66,13 +67,19 @@
 XR_DEFINE_ATOM(XrPermissionIdEXT)
 #endif // COMPILE_REMOTE_OVERLAY_APP
 
-#include "../include/util.h"
-
 #include <openxr/openxr_platform.h>
 
 #include <FreeImagePlus.h>
 
+#include "../include/util.h"
+
+
 const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
+
+
+// OpenXR will give us a LUID.  This function will walk adapters to find
+// the adapter matching that LUID, then create an ID3D11Device* from it so
+// we can issue D3D11 commands.
 
 ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
 {
@@ -107,109 +114,28 @@ ID3D11Device* GetD3D11DeviceFromAdapter(LUID adapterLUID)
     return d3d11Device;
 }
 
-void GetInstanceExtensions(std::map<std::string, uint32_t>& extensionMap)
+
+// Load FreeImagePlus "fipImage"s from a list of filenames
+
+void LoadImages(const std::vector<std::string>& imageFilenames, std::vector<fipImage>& images)
 {
-    uint32_t extPropCount;
-    CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
-    if(extPropCount > 0) {
-        std::vector<XrExtensionProperties> extensionProperties(extPropCount);
-        for(auto& p: extensionProperties) {
-            p.type = XR_TYPE_EXTENSION_PROPERTIES;
-            p.next = nullptr;
+    for(auto filename: imageFilenames) {
+        images.push_back(fipImage());
+        fipImage& image = images.back();
+        // XXX std::move instead
+        if (!image.load(filename.c_str())) {
+            std::cerr << "failed to load image " << filename << "\n";
+            exit(EXIT_FAILURE);
         }
-        CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, extPropCount, &extPropCount, extensionProperties.data()));
-        for(auto& p: extensionProperties) {
-            extensionMap.insert({p.extensionName, p.extensionVersion});
-        }
+        image.convertTo32Bits();
     }
 }
 
 
-XrBool32 processDebugMessage(
-    XrDebugUtilsMessageSeverityFlagsEXT /* messageSeverity */,
-    XrDebugUtilsMessageTypeFlagsEXT /* messageTypes */,
-    const XrDebugUtilsMessengerCallbackDataEXT* callbackData,
-    void* /* userData */)
-{
-    std::cout << "XR: " << callbackData->message << "\n";
+// Create D3D11 textures from existing FreeImagePlus images, with the
+// specified format, scaled to the specified size.
 
-    // typedef struct XrDebugUtilsMessengerCallbackDataEXT {
-        // XrStructureType type;
-        // const void* next;
-        // const char* messageId;
-        // const char* functionName;
-        // const char* message;
-        // uint32_t objectCount;
-        // XrDebugUtilsObjectNameInfoEXT* objects;
-        // uint32_t sessionLabelCount;
-        // XrDebugUtilsLabelEXT* sessionLabels;
-    // } XrDebugUtilsMessengerCallbackDataEXT;
-
-    return XR_FALSE;
-}
-
-void CreateDebugMessenger(XrInstance instance, XrDebugUtilsMessengerEXT* messenger)
-{
-    PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
-    CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
-        reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
-
-    XrDebugUtilsMessengerCreateInfoEXT dumCreateInfo { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
-    dumCreateInfo.messageSeverities = 
-        XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-        XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
-        XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-        XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    dumCreateInfo.messageTypes = XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                    XR_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-        XR_DEBUG_UTILS_MESSAGE_TYPE_CONFORMANCE_BIT_EXT |
-       XR_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-    dumCreateInfo.userCallback = processDebugMessage;
-    dumCreateInfo.userData = nullptr;
-    CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, messenger));
-}
-
-void CreateSpace(XrSession session, XrReferenceSpaceType spaceType, const XrPosef& pose, XrSpace* viewSpace)
-{
-    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-    createSpaceInfo.next = nullptr;
-    createSpaceInfo.referenceSpaceType = spaceType;
-    createSpaceInfo.poseInReferenceSpace = pose;
-    CHECK_XR(xrCreateReferenceSpace(session, &createSpaceInfo, viewSpace));
-}
-
-void FindRecommendedDimensions(XrInstance instance, XrSystemId systemId, int32_t* recommendedWidth, int32_t* recommendedHeight)
-{
-    uint32_t count;
-    CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, 0, &count, nullptr));
-    std::vector<XrViewConfigurationType> viewConfigurations(count);
-    CHECK_XR(xrEnumerateViewConfigurations(instance, systemId, count, &count, viewConfigurations.data()));
-    bool found = false;
-    for(uint32_t i = 0; i < count; i++) {
-        if(viewConfigurations[i] == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
-        found = true;
-    }
-    if(!found) {
-        std::cerr << "Failed to find XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO in " << count << " view configurations\n";
-        abort();
-    }
-
-    XrViewConfigurationProperties configurationProperties {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES};
-    CHECK_XR(xrGetViewConfigurationProperties(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &configurationProperties));
-
-    CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &count, nullptr));
-    std::vector<XrViewConfigurationView> viewConfigurationViews(count);
-    for(uint32_t i = 0; i < count; i++) {
-        viewConfigurationViews[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
-        viewConfigurationViews[i].next = nullptr;
-    }
-    CHECK_XR(xrEnumerateViewConfigurationViews(instance, systemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, count, &count, viewConfigurationViews.data()));
-    // Be lazy and set recommended sizes to left eye
-    *recommendedWidth = viewConfigurationViews[0].recommendedImageRectWidth;
-    *recommendedHeight = viewConfigurationViews[0].recommendedImageRectHeight;
-}
-
-void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, std::vector<fipImage> images, std::vector<ID3D11Texture2D*>& sourceTextures, DXGI_FORMAT format)
+void CreateSourceTextures(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t width, int32_t height, std::vector<fipImage> images, std::vector<ID3D11Texture2D*>& sourceTextures, DXGI_FORMAT format)
 {
     assert(
         (format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ||
@@ -223,8 +149,8 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
 
         ID3D11Texture2D* texture;
         D3D11_TEXTURE2D_DESC desc;
-        desc.Width = recommendedWidth;
-        desc.Height = recommendedHeight;
+        desc.Width = width;
+        desc.Height = height;
         desc.MipLevels = desc.ArraySize = 1;
         desc.Format = format;
         desc.SampleDesc.Count = 1;
@@ -240,14 +166,14 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
         D3D11_MAPPED_SUBRESOURCE mapped;
         CHECK(d3dContext->Map(sourceTextures[i], 0, D3D11_MAP_WRITE, 0, &mapped));
 
-        image.rescale(recommendedWidth, recommendedHeight, FILTER_BILINEAR);
+        image.rescale(width, height, FILTER_BILINEAR);
 
-        for (int32_t y = 0; y < recommendedHeight; y++) {
-            unsigned char *src = image.getScanLine(recommendedHeight - 1 - y);
+        for (int32_t y = 0; y < height; y++) {
+            unsigned char *src = image.getScanLine(height - 1 - y);
             unsigned char *dst = reinterpret_cast<unsigned char*>(mapped.pData) + mapped.RowPitch * y;
 
             if (format == DXGI_FORMAT_R8G8B8A8_UNORM || DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
-                for (int32_t x = 0; x < recommendedWidth; x++) {
+                for (int32_t x = 0; x < width; x++) {
                     unsigned char *srcPixel = src + x * 4;
                     unsigned char *dstPixel = dst + x * 4;
                     dstPixel[0] = srcPixel[2];
@@ -256,7 +182,7 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
                     dstPixel[3] = srcPixel[3];
                 }
             } else if (format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
-                for (int32_t x = 0; x < recommendedWidth; x++) {
+                for (int32_t x = 0; x < width; x++) {
                     unsigned char *srcPixel = src + x * 4;
                     unsigned char *dstPixel = dst + x * 4;
                     dstPixel[0] = srcPixel[0];
@@ -270,6 +196,10 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
     }
 }
 
+
+//----------------------------------------------------------------------------
+// Class for calling OpenXR commands and tracking OpenXR-related State
+
 std::map<XrSessionState, std::string> SessionStateToString {
     {XR_SESSION_STATE_IDLE, "XR_SESSION_STATE_IDLE"},
     {XR_SESSION_STATE_READY, "XR_SESSION_STATE_READY"},
@@ -280,32 +210,6 @@ std::map<XrSessionState, std::string> SessionStateToString {
     {XR_SESSION_STATE_LOSS_PENDING, "XR_SESSION_STATE_LOSS_PENDING"},
     {XR_SESSION_STATE_EXITING, "XR_SESSION_STATE_EXITING"},
 };
-
-void SetLayer(XrCompositionLayerQuad *layer, XrCompositionLayerFlags flags, XrSpace space, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
-{
-    layer->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-    layer->next = nullptr;
-    layer->layerFlags = flags;
-    layer->space = space;
-    layer->eyeVisibility = visibility;
-    layer->subImage = subImage;
-    layer->pose = pose;
-    layer->size = extent;
-}
-
-void LoadImages(const std::vector<std::string>& imageFilenames, std::vector<fipImage>& images)
-{
-    for(auto filename: imageFilenames) {
-        images.push_back(fipImage());
-        fipImage& image = images.back();
-        // XXX std::move instead
-        if (!image.load(filename.c_str())) {
-            std::cerr << "failed to load image " << filename << "\n";
-            exit(EXIT_FAILURE);
-        }
-        image.convertTo32Bits();
-    }
-}
 
 class OpenXRProgram
 {
@@ -340,6 +244,7 @@ public:
     void CreateSession(ID3D11Device* d3d11Device, bool requestOverlaySession, bool requestPosePermission);
 	LUID GetD3D11AdapterLUID();
     bool ChooseBestPixelFormat(const std::vector<DXGI_FORMAT>& appFormats, uint64_t *chosenFormat);
+    void FindRecommendedDimensions();
     void CreateSwapChainsAndGetImages(DXGI_FORMAT format);
     void CreateContentSpace();
     void RequestExitSession();
@@ -386,7 +291,21 @@ private:
 void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion)
 {
     std::map<std::string, uint32_t> extensions;
-    GetInstanceExtensions(extensions);
+
+    uint32_t extPropCount;
+    CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
+    if(extPropCount > 0) {
+        std::vector<XrExtensionProperties> extensionProperties(extPropCount);
+        for(auto& p: extensionProperties) {
+            p.type = XR_TYPE_EXTENSION_PROPERTIES;
+            p.next = nullptr;
+        }
+        CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, extPropCount, &extPropCount, extensionProperties.data()));
+        for(auto& p: extensionProperties) {
+            extensions.insert({p.extensionName, p.extensionVersion});
+        }
+    }
+
     if(extensions.size() > 0) {
         std::cout << "Extensions supported:\n";
         for(const auto& p: extensions) {
@@ -542,9 +461,43 @@ LUID OpenXRProgram::GetD3D11AdapterLUID()
     return graphicsRequirements.adapterLuid;
 }
 
+void OpenXRProgram::FindRecommendedDimensions()
+{
+    uint32_t count;
+    CHECK_XR(xrEnumerateViewConfigurations(mInstance, mSystemId, 0, &count, nullptr));
+    std::vector<XrViewConfigurationType> viewConfigurations(count);
+    CHECK_XR(xrEnumerateViewConfigurations(mInstance, mSystemId, count, &count, viewConfigurations.data()));
+
+    bool found = false;
+    for(uint32_t i = 0; i < count; i++) {
+        if(viewConfigurations[i] == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) {
+            found = true;
+        }
+    }
+    if(!found) {
+        std::cerr << "Failed to find XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO in " << count << " view configurations\n";
+        DebugBreak();
+    }
+
+    XrViewConfigurationProperties configurationProperties {XR_TYPE_VIEW_CONFIGURATION_PROPERTIES, nullptr};
+    CHECK_XR(xrGetViewConfigurationProperties(mInstance, mSystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, &configurationProperties));
+
+    CHECK_XR(xrEnumerateViewConfigurationViews(mInstance, mSystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &count, nullptr));
+    std::vector<XrViewConfigurationView> viewConfigurationViews(count);
+    for(uint32_t i = 0; i < count; i++) {
+        viewConfigurationViews[i].type = XR_TYPE_VIEW_CONFIGURATION_VIEW;
+        viewConfigurationViews[i].next = nullptr;
+    }
+    CHECK_XR(xrEnumerateViewConfigurationViews(mInstance, mSystemId, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, count, &count, viewConfigurationViews.data()));
+
+    // XXX Be lazy and set recommended sizes to left eye
+    mRecommendedDimensions[0] = viewConfigurationViews[0].recommendedImageRectWidth;
+    mRecommendedDimensions[1] = viewConfigurationViews[0].recommendedImageRectHeight;
+}
+
 void OpenXRProgram::CreateSwapChainsAndGetImages(DXGI_FORMAT format)
 {
-    FindRecommendedDimensions(mInstance, mSystemId, &mRecommendedDimensions[0], &mRecommendedDimensions[1]);
+    FindRecommendedDimensions();
     std::cout << "Recommended view image dimensions are " << mRecommendedDimensions[0] << " by " << mRecommendedDimensions[1] << "\n";
 
     for(int eye = 0; eye < 2; eye++) {
@@ -573,7 +526,12 @@ void OpenXRProgram::CreateSwapChainsAndGetImages(DXGI_FORMAT format)
 
 void OpenXRProgram::CreateContentSpace()
 {
-    CreateSpace(mSession, XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &mContentSpace);
+    XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr};
+
+    createSpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+    createSpaceInfo.poseInReferenceSpace = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}};
+
+    CHECK_XR(xrCreateReferenceSpace(mSession, &createSpaceInfo, &mContentSpace));
 }
 
 bool OpenXRProgram::IsRunning()
@@ -709,8 +667,15 @@ void OpenXRProgram::BeginFrame()
 
 void OpenXRProgram::AddLayer(XrCompositionLayerFlags flags, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
 {
-    XrCompositionLayerQuad layer;
-    SetLayer(&layer, flags, mContentSpace, visibility, subImage, pose, extent);
+    XrCompositionLayerQuad layer {XR_TYPE_COMPOSITION_LAYER_QUAD, nullptr};
+
+    layer.layerFlags = flags;
+    layer.space = mContentSpace;
+    layer.eyeVisibility = visibility;
+    layer.subImage = subImage;
+    layer.pose = pose;
+    layer.size = extent;
+
     mLayers.push_back(layer);
 }
 
@@ -724,6 +689,59 @@ void OpenXRProgram::EndFrame()
     CHECK_XR(xrEndFrame(mSession, &frameEndInfo));
     mLayers.clear();
 }
+
+
+//----------------------------------------------------------------------------
+// Debug utils functions
+
+XrBool32 processDebugMessage(
+    XrDebugUtilsMessageSeverityFlagsEXT /* messageSeverity */,
+    XrDebugUtilsMessageTypeFlagsEXT /* messageTypes */,
+    const XrDebugUtilsMessengerCallbackDataEXT* callbackData,
+    void* /* userData */)
+{
+    std::cout << "XR: " << callbackData->message << "\n";
+
+    // XXX Other fields we could honor:
+    // typedef struct XrDebugUtilsMessengerCallbackDataEXT {
+        // XrStructureType type;
+        // const void* next;
+        // const char* messageId;
+        // const char* functionName;
+        // const char* message;
+        // uint32_t objectCount;
+        // XrDebugUtilsObjectNameInfoEXT* objects;
+        // uint32_t sessionLabelCount;
+        // XrDebugUtilsLabelEXT* sessionLabels;
+    // } XrDebugUtilsMessengerCallbackDataEXT;
+
+    return XR_FALSE;
+}
+
+void CreateDebugMessenger(XrInstance instance, XrDebugUtilsMessengerEXT* messenger)
+{
+    PFN_xrCreateDebugUtilsMessengerEXT createDebugUtilsMessenger;
+    CHECK_XR(xrGetInstanceProcAddr(instance, "xrCreateDebugUtilsMessengerEXT",
+        reinterpret_cast<PFN_xrVoidFunction*>(&createDebugUtilsMessenger)));
+
+    XrDebugUtilsMessengerCreateInfoEXT dumCreateInfo { XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+    dumCreateInfo.messageSeverities = 
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    dumCreateInfo.messageTypes = XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                    XR_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        XR_DEBUG_UTILS_MESSAGE_TYPE_CONFORMANCE_BIT_EXT |
+       XR_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    dumCreateInfo.userCallback = processDebugMessage;
+    dumCreateInfo.userData = nullptr;
+    CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, messenger));
+}
+
+
+//----------------------------------------------------------------------------
+// Main
 
 int main( void )
 {
@@ -805,7 +823,7 @@ int main( void )
     std::vector<ID3D11Texture2D*> sourceTextures;
     int32_t recommendedWidth = program.GetRecommendedDimensions()[0];
     int32_t recommendedHeight = program.GetRecommendedDimensions()[1];
-    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, images, sourceTextures, (DXGI_FORMAT)chosenFormat);
+    CreateSourceTextures(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, images, sourceTextures, (DXGI_FORMAT)chosenFormat);
 
     // Spawn a thread to wait for a keypress
     static bool requestExit = false;
