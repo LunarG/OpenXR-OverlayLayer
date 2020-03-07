@@ -123,22 +123,6 @@ void GetInstanceExtensions(std::map<std::string, uint32_t>& extensionMap)
     }
 }
 
-void CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion, uint64_t apiVersion, std::vector<const char*> extensionNames, XrInstance* instance)
-{
-    XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
-    createInstance.next = nullptr;
-    createInstance.createFlags = 0;
-    strncpy_s(createInstance.applicationInfo.applicationName, appName.c_str(), appName.size() + 1);
-    createInstance.applicationInfo.applicationVersion = appVersion;
-    strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
-    createInstance.applicationInfo.engineVersion = engineVersion;
-	createInstance.applicationInfo.apiVersion = apiVersion;
-    createInstance.enabledExtensionNames = extensionNames.data();
-    createInstance.enabledExtensionCount = (uint32_t) extensionNames.size();
-    createInstance.enabledApiLayerCount = 0;
-    createInstance.enabledApiLayerNames = nullptr;
-    CHECK_XR(xrCreateInstance(&createInstance, instance));
-}
 
 XrBool32 processDebugMessage(
     XrDebugUtilsMessageSeverityFlagsEXT /* messageSeverity */,
@@ -184,60 +168,6 @@ void CreateDebugMessenger(XrInstance instance, XrDebugUtilsMessengerEXT* messeng
     CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, messenger));
 }
 
-void CreateSession(ID3D11Device* d3d11Device, XrInstance instance, XrSystemId systemId, XrSession* session, bool usingOverlays, bool requestPosePermission)
-{
-    void* chain = nullptr;
-
-    XrGraphicsBindingD3D11KHR d3dBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
-    d3dBinding.device = d3d11Device;
-    chain = &d3dBinding;
-
-    if(usingOverlays) {
-#if COMPILE_REMOTE_OVERLAY_APP
-        XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
-        sessionCreateInfoOverlay.next = chain;
-        sessionCreateInfoOverlay.createFlags = 0;
-        sessionCreateInfoOverlay.sessionLayersPlacement = 1; 
-        chain = &sessionCreateInfoOverlay;
-#endif  // COMPILE_REMOTE_OVERLAY_APP
-    }  
-
-    if(requestPosePermission) {
-#if COMPILE_REMOTE_OVERLAY_APP
-        bool unfocusedPosePermissionAvailable = false;
-        XrPermissionIdEXT unfocusedPosePermissionId = 0;
-        PFN_xrEnumerateInstancePermissionsEXT enumerateInstancePermissionsEXT;
-        CHECK_XR(xrGetInstanceProcAddr(instance, "xrEnumerateInstancePermissionsEXT",
-                                        reinterpret_cast<PFN_xrVoidFunction*>(&enumerateInstancePermissionsEXT)));
-        uint32_t count;
-        CHECK_XR(enumerateInstancePermissionsEXT(instance, 0, &count, nullptr));
-        std::vector<XrPermissionPropertiesEXT> properties(count);
-        CHECK_XR(enumerateInstancePermissionsEXT(instance, count, &count, properties.data()));
-        for (auto& p : properties) {
-            if (std::string(p.permissionName) == "XR_EXT_permissions_support") {
-                unfocusedPosePermissionAvailable = true;
-                unfocusedPosePermissionId = p.permissionId;
-            }
-        }
-
-        XrSessionCreateInfoPermissionsEXT sessionCreateInfoPermissions{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_PERMISSIONS_EXT};
-        std::vector<XrPermissionRequestEXT> permissions;
-        XrPermissionRequestEXT posePermission {(XrStructureType)XR_TYPE_PERMISSION_REQUEST_EXT, nullptr, unfocusedPosePermissionId, false};
-        permissions.push_back(posePermission);
-        sessionCreateInfoPermissions.next = chain;
-        sessionCreateInfoPermissions.requestedPermissionsCount = (uint32_t)permissions.size();
-        sessionCreateInfoPermissions.requestedPermissions = permissions.data(); 
-        chain = &sessionCreateInfoPermissions;
-#endif  // COMPILE_REMOTE_OVERLAY_APP
-    }
-
-    XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
-    sessionCreateInfo.systemId = systemId;
-    sessionCreateInfo.next = chain;
-
-    CHECK_XR(xrCreateSession(instance, &sessionCreateInfo, session));
-}
-
 void CreateSpace(XrSession session, XrReferenceSpaceType spaceType, const XrPosef& pose, XrSpace* viewSpace)
 {
     XrReferenceSpaceCreateInfo createSpaceInfo{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
@@ -245,21 +175,6 @@ void CreateSpace(XrSession session, XrReferenceSpaceType spaceType, const XrPose
     createSpaceInfo.referenceSpaceType = spaceType;
     createSpaceInfo.poseInReferenceSpace = pose;
     CHECK_XR(xrCreateReferenceSpace(session, &createSpaceInfo, viewSpace));
-}
-
-void ChooseSwapchainFormat(XrSession session, uint64_t* chosenFormat)
-{
-    uint32_t count;
-    CHECK_XR(xrEnumerateSwapchainFormats(session, 0, &count, nullptr));
-    std::vector<int64_t> runtimeFormats(count);
-    CHECK_XR(xrEnumerateSwapchainFormats(session, (uint32_t)count, &count, runtimeFormats.data()));
-    std::vector<DXGI_FORMAT> appFormats { DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB };
-    auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
-    if(formatFound == runtimeFormats.end()) {
-        outputDebugF("No supported swapchain format found\n");
-        DebugBreak();
-    }
-    *chosenFormat = *formatFound;
 }
 
 void FindRecommendedDimensions(XrInstance instance, XrSystemId systemId, int32_t* recommendedWidth, int32_t* recommendedHeight)
@@ -532,19 +447,191 @@ void LoadImages(const std::vector<std::string>& imageFilenames, std::vector<fipI
     }
 }
 
+class OpenXRProgram
+{
+public:
+    OpenXRProgram(bool requestOverlaySession) :
+        mRequestOverlaySession(requestOverlaySession)
+    {
+        // nothing
+    }
+
+    void CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion);
+    void GetSystem();
+    void CreateSession(ID3D11Device* d3d11Device, bool requestOverlaySession, bool requestPosePermission);
+    bool ChooseBestPixelFormat(const std::vector<DXGI_FORMAT>& appFormats, uint64_t *chosenFormat);
+
+    XrInstance GetInstance() const { return mInstance; }
+    XrSystemId GetSystemId() const { return mSystemId; }
+    XrSession GetSession() const { return mSession; }
+
+    bool IsDebugUtilsAvailable() const { return mDebugUtilsAvailable; }
+    bool IsPermissionsSupportAvailable() const { return mPermissionsSupportAvailable; }
+
+private:
+    bool        mRequestOverlaySession;
+    bool        mDebugUtilsAvailable;
+    bool        mPermissionsSupportAvailable;
+    XrInstance  mInstance;
+    XrSystemId  mSystemId;
+    XrSession   mSession;
+};
+
+
+void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion)
+{
+    std::map<std::string, uint32_t> extensions;
+    GetInstanceExtensions(extensions);
+    if(extensions.size() > 0) {
+        std::cout << "Extensions supported:\n";
+        for(const auto& p: extensions) {
+            std::cout << "    " << p.first << ", version " << p.second << "\n";
+#if !COMPILE_REMOTE_OVERLAY_APP
+            if(std::string(p.first) == "XR_EXT_debug_utils") {
+                mDebugUtilsAvailable = true;
+            }
+#endif
+            if(std::string(p.first) == "XR_EXT_permissions_support") {
+                mPermissionsSupportAvailable = true;
+            }
+        }
+    } else {
+        std::cout << "Warning: No extensions supported.\n";
+    }
+
+    std::vector<const char*> requiredExtensionNames;
+    requiredExtensionNames.push_back("XR_KHR_D3D11_enable");
+#if COMPILE_REMOTE_OVERLAY_APP
+    if(mRequestOverlaySession) {
+        requiredExtensionNames.push_back(XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME);
+    }
+#endif  // COMPILE_REMOTE_OVERLAY_APP
+    if(mDebugUtilsAvailable) {
+        requiredExtensionNames.push_back("XR_EXT_debug_utils");
+    }
+    if(mPermissionsSupportAvailable) {
+        requiredExtensionNames.push_back("XR_EXT_permissions_support");
+    }
+
+    XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
+    createInstance.next = nullptr;
+    createInstance.createFlags = 0;
+    strncpy_s(createInstance.applicationInfo.applicationName, appName.c_str(), appName.size() + 1);
+    createInstance.applicationInfo.applicationVersion = appVersion;
+    strncpy_s(createInstance.applicationInfo.engineName, engineName.c_str(), engineName.size() + 1);
+    createInstance.applicationInfo.engineVersion = engineVersion;
+    createInstance.applicationInfo.apiVersion = XR_MAKE_VERSION(1 ,0, 0);
+    createInstance.enabledExtensionNames = requiredExtensionNames.data();
+    createInstance.enabledExtensionCount = (uint32_t) requiredExtensionNames.size();
+    createInstance.enabledApiLayerCount = 0;
+    createInstance.enabledApiLayerNames = nullptr;
+    CHECK_XR(xrCreateInstance(&createInstance, &mInstance));
+
+    XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES, nullptr};
+    CHECK_XR(xrGetInstanceProperties(mInstance, &instanceProperties));
+    std::cout << "Runtime \"" << instanceProperties.runtimeName << "\", version " <<
+	XR_VERSION_MAJOR(instanceProperties.runtimeVersion) << "." <<
+	XR_VERSION_MINOR(instanceProperties.runtimeVersion) << "p" <<
+	XR_VERSION_PATCH(instanceProperties.runtimeVersion) << "\n";
+}
+
+void OpenXRProgram::GetSystem()
+{
+    XrSystemGetInfo getSystem{XR_TYPE_SYSTEM_GET_INFO, nullptr, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
+    CHECK_XR(xrGetSystem(mInstance, &getSystem, &mSystemId));
+}
+
+void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlaySession, bool requestPosePermission)
+{
+
+    void* chain = nullptr;
+
+    XrGraphicsBindingD3D11KHR d3dBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
+    d3dBinding.device = d3d11Device;
+    chain = &d3dBinding;
+
+    if(requestOverlaySession) {
+#if COMPILE_REMOTE_OVERLAY_APP
+
+        XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
+        sessionCreateInfoOverlay.next = chain;
+        sessionCreateInfoOverlay.createFlags = 0;
+        sessionCreateInfoOverlay.sessionLayersPlacement = 1; 
+        chain = &sessionCreateInfoOverlay;
+
+#else // !COMPILER_REMOTE_OVERLAY_APP
+
+        std::cerr << "An overlay session was requested but the overlay extension is not available.\n";
+        exit(EXIT_FAILURE);
+
+#endif  // COMPILE_REMOTE_OVERLAY_APP
+    }  
+
+    if(requestPosePermission) {
+#if COMPILE_REMOTE_OVERLAY_APP
+        bool unfocusedPosePermissionAvailable = false;
+        XrPermissionIdEXT unfocusedPosePermissionId = 0;
+        PFN_xrEnumerateInstancePermissionsEXT enumerateInstancePermissionsEXT;
+        CHECK_XR(xrGetInstanceProcAddr(mInstance, "xrEnumerateInstancePermissionsEXT",
+                                        reinterpret_cast<PFN_xrVoidFunction*>(&enumerateInstancePermissionsEXT)));
+        uint32_t count;
+        CHECK_XR(enumerateInstancePermissionsEXT(mInstance, 0, &count, nullptr));
+        std::vector<XrPermissionPropertiesEXT> properties(count);
+        CHECK_XR(enumerateInstancePermissionsEXT(mInstance, count, &count, properties.data()));
+        for (auto& p : properties) {
+            if (std::string(p.permissionName) == "XR_EXT_permissions_support") {
+                unfocusedPosePermissionAvailable = true;
+                unfocusedPosePermissionId = p.permissionId;
+            }
+        }
+
+        XrSessionCreateInfoPermissionsEXT sessionCreateInfoPermissions{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_PERMISSIONS_EXT};
+        std::vector<XrPermissionRequestEXT> permissions;
+        XrPermissionRequestEXT posePermission {(XrStructureType)XR_TYPE_PERMISSION_REQUEST_EXT, nullptr, unfocusedPosePermissionId, false};
+        permissions.push_back(posePermission);
+        sessionCreateInfoPermissions.next = chain;
+        sessionCreateInfoPermissions.requestedPermissionsCount = (uint32_t)permissions.size();
+        sessionCreateInfoPermissions.requestedPermissions = permissions.data(); 
+        chain = &sessionCreateInfoPermissions;
+#endif  // COMPILE_REMOTE_OVERLAY_APP
+    }
+
+    XrSessionCreateInfo sessionCreateInfo{XR_TYPE_SESSION_CREATE_INFO};
+    sessionCreateInfo.systemId = mSystemId;
+    sessionCreateInfo.next = chain;
+
+    CHECK_XR(xrCreateSession(mInstance, &sessionCreateInfo, &mSession));
+}
+
+bool OpenXRProgram::ChooseBestPixelFormat(const std::vector<DXGI_FORMAT>& appFormats, uint64_t *chosenFormat)
+{
+    uint32_t count;
+    CHECK_XR(xrEnumerateSwapchainFormats(mSession, 0, &count, nullptr));
+
+    std::vector<int64_t> runtimeFormats(count);
+    CHECK_XR(xrEnumerateSwapchainFormats(mSession, (uint32_t)count, &count, runtimeFormats.data()));
+
+    auto formatFound = std::find_first_of(runtimeFormats.begin(), runtimeFormats.end(), appFormats.begin(), appFormats.end());
+
+    if(formatFound == runtimeFormats.end()) {
+        return false;
+    }
+    *chosenFormat = *formatFound;
+    return true;
+}
+
 int main( void )
 {
-    bool sawFirstSuccessfulFrame = false;
-    bool useDebugMessenger = false;
-    bool usePermissions = false;
-
-    std::vector<std::string> imageFilenames;
-
-    imageFilenames.push_back("avatar1.png");
-    imageFilenames.push_back("avatar2.png");
-
+    // Set console unbuffered so we don't miss any output
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    bool sawFirstSuccessfulFrame = false;
+
+    // Which images to display
+    std::vector<std::string> imageFilenames;
+    imageFilenames.push_back("avatar1.png");
+    imageFilenames.push_back("avatar2.png");
 
     FreeImage_Initialise();
 
@@ -557,6 +644,7 @@ int main( void )
     }
 
     std::cout << "Connecting to Host OpenXR Application...\n";
+
 #if COMPILE_REMOTE_OVERLAY_APP
     IPCConnectResult connectResult = IPC_CONNECT_TIMEOUT;
     do {
@@ -572,88 +660,48 @@ int main( void )
 
     bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
 
-    std::map<std::string, uint32_t> extensions;
-    GetInstanceExtensions(extensions);
-    if(extensions.size() > 0) {
-        std::cout << "Extensions supported:\n";
-        for(const auto& p: extensions) {
-            std::cout << "    " << p.first << ", version " << p.second << "\n";
-#if !COMPILE_REMOTE_OVERLAY_APP
-			if(std::string(p.first) == "XR_EXT_debug_utils") {
-                useDebugMessenger = true;
-            }
-#endif
-			if(std::string(p.first) == "XR_EXT_permissions_support") {
-                usePermissions = true;
-            }
-        }
-    } else {
-        std::cout << "No extensions supported.\n";
-    }
+    OpenXRProgram program(createOverlaySession);
 
-    XrInstance instance;
-
-    std::vector<const char*> extensionNames;
-    extensionNames.push_back("XR_KHR_D3D11_enable");
-#if COMPILE_REMOTE_OVERLAY_APP
-    extensionNames.push_back(XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME);
-#endif  // COMPILE_REMOTE_OVERLAY_APP
-    if(useDebugMessenger) {
-        extensionNames.push_back("XR_EXT_debug_utils");
-    }
-    if(usePermissions) {
-        extensionNames.push_back("XR_EXT_permissions_support");
-    }
-
-    CreateInstance("Overlay Sample", 0, "none", 0, XR_MAKE_VERSION(1, 0, 0), extensionNames, &instance);
-    std::cout << "CreateInstance succeeded!\n";
+    program.CreateInstance("Overlay Sample", 0, "none", 0);
 
     XrDebugUtilsMessengerEXT messenger = XR_NULL_HANDLE;
-    if(useDebugMessenger) {
-        CreateDebugMessenger(instance, &messenger);
+    if(program.IsDebugUtilsAvailable()) {
+        CreateDebugMessenger(program.GetInstance(), &messenger);
     }
 
-    XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES, nullptr};
-    CHECK_XR(xrGetInstanceProperties(instance, &instanceProperties));
-    std::cout << "Runtime \"" << instanceProperties.runtimeName << "\", version " <<
-	XR_VERSION_MAJOR(instanceProperties.runtimeVersion) << "." <<
-	XR_VERSION_MINOR(instanceProperties.runtimeVersion) << "p" <<
-	XR_VERSION_PATCH(instanceProperties.runtimeVersion) << "\n";
-
-    XrSystemId systemId;
-    XrSystemGetInfo getSystem{XR_TYPE_SYSTEM_GET_INFO, nullptr, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
-    CHECK_XR(xrGetSystem(instance, &getSystem, &systemId));
+    program.GetSystem();
 
     PFN_xrGetD3D11GraphicsRequirementsKHR getD3D11GraphicsRequirementsKHR;
-    CHECK_XR(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&getD3D11GraphicsRequirementsKHR)));
+    CHECK_XR(xrGetInstanceProcAddr(program.GetInstance(), "xrGetD3D11GraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&getD3D11GraphicsRequirementsKHR)));
 
     XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
-    CHECK_XR(getD3D11GraphicsRequirementsKHR(instance, systemId, &graphicsRequirements));
+    CHECK_XR(getD3D11GraphicsRequirementsKHR(program.GetInstance(), program.GetSystemId(), &graphicsRequirements));
 
     ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(graphicsRequirements.adapterLuid);
 
-    XrSession session;
-
-    CreateSession(d3d11Device, instance, systemId, &session, createOverlaySession, usePermissions);
-    std::cout << "CreateSession with XrSessionCreateInfoOverlayEXT succeeded!\n";
+    bool requestPermission = program.IsPermissionsSupportAvailable();
+    program.CreateSession(d3d11Device, createOverlaySession, requestPermission);
 
     XrSpace viewSpace;
-    CreateSpace(session, XR_REFERENCE_SPACE_TYPE_VIEW, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &viewSpace);
+    CreateSpace(program.GetSession(), XR_REFERENCE_SPACE_TYPE_VIEW, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &viewSpace);
     XrSpace localSpace;
-    CreateSpace(session, XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &localSpace);
+    CreateSpace(program.GetSession(), XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &localSpace);
     XrSpace stageSpace;
-    CreateSpace(session, XR_REFERENCE_SPACE_TYPE_STAGE, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &stageSpace);
+    CreateSpace(program.GetSession(), XR_REFERENCE_SPACE_TYPE_STAGE, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &stageSpace);
 
     uint64_t chosenFormat;
-    ChooseSwapchainFormat(session, &chosenFormat);
+    if(!program.ChooseBestPixelFormat({ DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB }, &chosenFormat)) {
+        outputDebugF("No supported swapchain format found\n");
+        DebugBreak();
+    }
 
     int32_t recommendedWidth, recommendedHeight;
-    FindRecommendedDimensions(instance, systemId, &recommendedWidth, &recommendedHeight);
+    FindRecommendedDimensions(program.GetInstance(), program.GetSystemId(), &recommendedWidth, &recommendedHeight);
     std::cout << "Recommended view image dimensions are " << recommendedWidth << " by " << recommendedHeight << "\n";
 
     XrSwapchain swapchains[2];
     XrSwapchainImageD3D11KHR *swapchainImages[2];
-    CreateSwapchainsAndGetImages(session, chosenFormat, recommendedWidth, recommendedHeight, swapchains, swapchainImages);
+    CreateSwapchainsAndGetImages(program.GetSession(), chosenFormat, recommendedWidth, recommendedHeight, swapchains, swapchainImages);
 
     ID3D11DeviceContext* d3dContext;
     d3d11Device->GetImmediateContext(&d3dContext);
@@ -675,7 +723,7 @@ int main( void )
     exitPollingThread.detach();
 
     XrSystemProperties systemProperties { XR_TYPE_SYSTEM_PROPERTIES };
-    CHECK_XR(xrGetSystemProperties(instance, systemId, &systemProperties));
+    CHECK_XR(xrGetSystemProperties(program.GetInstance(), program.GetSystemId(), &systemProperties));
     std::cout << "System \"" << systemProperties.systemName << "\", vendorId " << systemProperties.vendorId << "\n";
 
     bool useSeparateLeftRightEyes;
@@ -694,7 +742,7 @@ int main( void )
     auto then = std::chrono::steady_clock::now();
     XrSessionState sessionState = XR_SESSION_STATE_IDLE;
     bool runFrameLoop = false;
-    XrSpace myspace = viewSpace;
+    XrSpace myspace = localSpace;
 
     bool quit = false;
 
@@ -717,7 +765,7 @@ int main( void )
                 // actions, state machine should carry us to EXITING
                 // state, which we will get and set quit = true.
 
-                CHECK_XR(xrRequestExitSession(session));
+                CHECK_XR(xrRequestExitSession(program.GetSession()));
                 exitRequested = true;
 
             } else {
@@ -736,9 +784,9 @@ int main( void )
             static XrEventDataBuffer event;
             event.type = XR_TYPE_EVENT_DATA_BUFFER;
             event.next = nullptr;
-            XrResult result = xrPollEvent(instance, &event);
+            XrResult result = xrPollEvent(program.GetInstance(), &event);
             if(result == XR_SUCCESS) {
-                ProcessEvent(&event, &quit, session, runFrameLoop, sessionState);
+                ProcessEvent(&event, &quit, program.GetSession(), runFrameLoop, sessionState);
             } else {
                 getAnotherEvent = false;
             }
@@ -748,7 +796,7 @@ int main( void )
             if(runFrameLoop) {
 
                 XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
-                CHECK_XR(xrWaitFrame(session, nullptr, &waitFrameState));
+                CHECK_XR(xrWaitFrame(program.GetSession(), nullptr, &waitFrameState));
                 if(false) printf("frameState: { %llu, %llu, %s }\n", waitFrameState.predictedDisplayTime, waitFrameState.predictedDisplayPeriod, waitFrameState.shouldRender ? "yes" : "no");
 
                 XrSpaceLocation viewPose { XR_TYPE_SPACE_LOCATION, nullptr };
@@ -762,7 +810,7 @@ int main( void )
                         viewPose.pose.position.y,
                         viewPose.pose.position.z);
 
-                CHECK_XR(xrBeginFrame(session, nullptr));
+                CHECK_XR(xrBeginFrame(program.GetSession(), nullptr));
 
                 XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO, nullptr};
                 frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
@@ -779,7 +827,7 @@ int main( void )
                     XrCompositionLayerBaseHeader* layerPointers[2];
                     frameEndInfo.layers = layerPointers;
 
-                    XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -1.0f}};
+                    XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -2.0f}};
                     
                     XrCompositionLayerFlags flags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                     XrExtent2Df extent {1.0f * imageAspectRatios[whichImage], 1.0f};
@@ -804,7 +852,7 @@ int main( void )
                     }
                 }
 
-                CHECK_XR(xrEndFrame(session, &frameEndInfo));
+                CHECK_XR(xrEndFrame(program.GetSession(), &frameEndInfo));
                 
                 if(!sawFirstSuccessfulFrame) {
                     sawFirstSuccessfulFrame = true;
@@ -827,7 +875,7 @@ int main( void )
         CHECK_XR(xrDestroySpace(viewSpace));
     }
 
-    CHECK_XR(xrDestroySession(session));
+    CHECK_XR(xrDestroySession(program.GetSession()));
 
     return 0;
 }
