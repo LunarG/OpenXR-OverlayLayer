@@ -270,26 +270,6 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
     }
 }
 
-void FillSwapchainImage(XrSwapchain swapchain, XrSwapchainImageD3D11KHR *swapchainImages, ID3D11Texture2D *sourceImage, ID3D11DeviceContext* d3dContext)
-{
-    uint32_t index;
-    XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    acquireInfo.next = nullptr;
-
-    CHECK_XR(xrAcquireSwapchainImage(swapchain, &acquireInfo, &index));
-
-    XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    waitInfo.next = nullptr;
-    waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
-    CHECK_XR(xrWaitSwapchainImage(swapchain, &waitInfo));
-
-    d3dContext->CopyResource(swapchainImages[index].texture, sourceImage);
-
-    XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
-    releaseInfo.next = nullptr;
-    CHECK_XR(xrReleaseSwapchainImage(swapchain, &releaseInfo));
-}
-
 std::map<XrSessionState, std::string> SessionStateToString {
     {XR_SESSION_STATE_IDLE, "XR_SESSION_STATE_IDLE"},
     {XR_SESSION_STATE_READY, "XR_SESSION_STATE_READY"},
@@ -300,98 +280,6 @@ std::map<XrSessionState, std::string> SessionStateToString {
     {XR_SESSION_STATE_LOSS_PENDING, "XR_SESSION_STATE_LOSS_PENDING"},
     {XR_SESSION_STATE_EXITING, "XR_SESSION_STATE_EXITING"},
 };
-
-void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool* quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
-{
-    const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
-    if(e.session == session) {
-
-        // Handle state change of our session
-        if((e.state == XR_SESSION_STATE_EXITING) ||
-           (e.state == XR_SESSION_STATE_LOSS_PENDING)) {
-
-            *quit = true;
-            runFrameLoop = false;
-
-        } else {
-
-            switch(sessionState) {
-                case XR_SESSION_STATE_IDLE: {
-                    if(e.state == XR_SESSION_STATE_READY) {
-                        XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
-                        CHECK_XR(xrBeginSession(session, &beginInfo));
-                        runFrameLoop = true;
-                    }
-                    // ignore other transitions
-                    break;
-                }
-                case XR_SESSION_STATE_READY: {
-                    // ignore
-                    break;
-                }
-                case XR_SESSION_STATE_SYNCHRONIZED: {
-                    if(e.state == XR_SESSION_STATE_STOPPING) {
-                        CHECK_XR(xrEndSession(session));
-                        runFrameLoop = false;
-                    }
-                    // ignore other transitions
-                    break;
-                }
-                case XR_SESSION_STATE_VISIBLE: {
-                    // ignore
-                    break;
-                }
-                case XR_SESSION_STATE_FOCUSED: {
-                    // ignore
-                    break;
-                }
-                case XR_SESSION_STATE_STOPPING: {
-                    // ignore
-                    break;
-                }
-                default: {
-                    std::cout << "Warning: ignored unknown new session state " << e.state << "\n";
-                    break;
-                }
-            }
-
-        }
-        sessionState = e.state;
-    }
-}
-
-void ProcessEvent(XrEventDataBuffer *event, bool* quit, XrSession session, bool& runFrameLoop, XrSessionState& sessionState)
-{
-    switch(event->type) {
-        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
-            // const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(event);
-            *quit = true;
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
-            ProcessSessionStateChangedEvent(event, quit, session, runFrameLoop, sessionState);
-        }
-        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
-            // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
-            // Handle reference space change pending
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
-            const auto& e = *reinterpret_cast<const XrEventDataEventsLost*>(event);
-            std::cout << "Warning: lost " << e.lostEventCount << " events\n";
-            break;
-        }
-        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
-            // const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(event);
-            // Handle data interaction profile changed
-            break;
-        }
-        default: {
-            std::cout << "Warning: ignoring event type " << event->type << "\n";
-            break;
-        }
-    }
-}
 
 void SetLayer(XrCompositionLayerQuad *layer, XrCompositionLayerFlags flags, XrSpace space, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
 {
@@ -454,18 +342,27 @@ public:
     bool ChooseBestPixelFormat(const std::vector<DXGI_FORMAT>& appFormats, uint64_t *chosenFormat);
     void CreateSwapChainsAndGetImages(DXGI_FORMAT format);
     void CreateContentSpace();
+    void RequestExitSession();
+    void ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame);
+    void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, bool& doFrame);
+    void ProcessEvents(bool& quit, bool &doFrame);
+    bool WaitFrame();
+    void BeginFrame();
+    void AddLayer(XrCompositionLayerFlags flags, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent);
+    void EndFrame();
 
     XrInstance GetInstance() const { return mInstance; }
     XrSystemId GetSystemId() const { return mSystemId; }
     XrSession GetSession() const { return mSession; }
     XrSpace GetContentSpace() const { return mContentSpace; }
     uint32_t GetMaxLayerCount() const { return mMaxLayerCount; }
-    XrSwapchain GetSwapchain(int which) const { return mSwapchains[which]; }
-    XrSwapchainImageD3D11KHR* GetSwapchainImage(int which) const { return mSwapchainImages[which]; }
+    XrSwapchain GetSwapchain(int swapchain) const { return mSwapchains[swapchain]; }
+    const XrSwapchainImageD3D11KHR& GetSwapchainImage(int swapchain, int image) const { return mSwapchainImages[swapchain][image]; }
     std::array<int32_t, 2> GetRecommendedDimensions() const { return mRecommendedDimensions; }
 
     bool IsDebugUtilsAvailable() const { return mDebugUtilsAvailable; }
     bool IsPermissionsSupportAvailable() const { return mPermissionsSupportAvailable; }
+    bool IsRunning();
 
 private:
     bool        mRequestOverlaySession;
@@ -479,6 +376,10 @@ private:
     std::array<int32_t, 2>      mRecommendedDimensions;
     XrSpace     mContentSpace;
     uint32_t    mMaxLayerCount;
+    XrSessionState      mSessionState;
+    XrFrameState        mWaitFrameState;
+    std::vector<XrCompositionLayerQuad>      mLayers;
+
 };
 
 
@@ -675,6 +576,155 @@ void OpenXRProgram::CreateContentSpace()
     CreateSpace(mSession, XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &mContentSpace);
 }
 
+bool OpenXRProgram::IsRunning()
+{
+    return (mSessionState == XR_SESSION_STATE_SYNCHRONIZED) || 
+       (mSessionState == XR_SESSION_STATE_VISIBLE) || 
+       (mSessionState == XR_SESSION_STATE_STOPPING) || 
+       (mSessionState == XR_SESSION_STATE_FOCUSED);
+}
+
+void OpenXRProgram::RequestExitSession()
+{
+    CHECK_XR(xrRequestExitSession(mSession));
+}
+
+void OpenXRProgram::ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, bool& doFrame)
+{
+    const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
+    if(e.session == mSession) {
+
+        // Handle state change of our session
+        if((e.state == XR_SESSION_STATE_EXITING) ||
+           (e.state == XR_SESSION_STATE_LOSS_PENDING)) {
+
+            quit = true;
+            doFrame = false;
+
+        } else {
+
+            switch(mSessionState) {
+                case XR_SESSION_STATE_IDLE: {
+                    if(e.state == XR_SESSION_STATE_READY) {
+                        XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
+                        CHECK_XR(xrBeginSession(mSession, &beginInfo));
+                        doFrame = true;
+                    }
+                    // ignore other transitions
+                    break;
+                }
+                case XR_SESSION_STATE_READY: {
+                    // ignore
+                    break;
+                }
+                case XR_SESSION_STATE_SYNCHRONIZED: {
+                    if(e.state == XR_SESSION_STATE_STOPPING) {
+                        CHECK_XR(xrEndSession(mSession));
+                        doFrame = false;
+                    }
+                    // ignore other transitions
+                    break;
+                }
+                case XR_SESSION_STATE_VISIBLE: {
+                    // ignore
+                    break;
+                }
+                case XR_SESSION_STATE_FOCUSED: {
+                    // ignore
+                    break;
+                }
+                case XR_SESSION_STATE_STOPPING: {
+                    // ignore
+                    break;
+                }
+                default: {
+                    std::cout << "Warning: ignored unknown new session state " << e.state << "\n";
+                    break;
+                }
+            }
+
+        }
+        mSessionState = e.state;
+    }
+}
+
+void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame)
+{
+    switch(event->type) {
+        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
+            // const auto& e = *reinterpret_cast<const XrEventDataInstanceLossPending*>(event);
+            quit = true;
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
+            ProcessSessionStateChangedEvent(event, quit, doFrame);
+        }
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
+            // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
+            // Handle reference space change pending
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_EVENTS_LOST: {
+            const auto& e = *reinterpret_cast<const XrEventDataEventsLost*>(event);
+            std::cout << "Warning: lost " << e.lostEventCount << " events\n";
+            break;
+        }
+        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
+            // const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(event);
+            // Handle data interaction profile changed
+            break;
+        }
+        default: {
+            std::cout << "Warning: ignoring event type " << event->type << "\n";
+            break;
+        }
+    }
+}
+
+void OpenXRProgram::ProcessEvents(bool& quit, bool &doFrame)
+{
+    bool getAnotherEvent = true;
+    while (getAnotherEvent && !quit) {
+        static XrEventDataBuffer event {XR_TYPE_EVENT_DATA_BUFFER, nullptr};
+        XrResult result = xrPollEvent(mInstance, &event);
+        if(result == XR_SUCCESS) {
+            ProcessEvent(&event, quit, doFrame);
+        } else {
+            getAnotherEvent = false;
+        }
+    }
+}
+
+bool OpenXRProgram::WaitFrame()
+{
+    mWaitFrameState = { XR_TYPE_FRAME_STATE, nullptr };
+    CHECK_XR(xrWaitFrame(mSession, nullptr, &mWaitFrameState));
+	return mWaitFrameState.shouldRender;
+}
+
+void OpenXRProgram::BeginFrame()
+{
+    CHECK_XR(xrBeginFrame(mSession, nullptr));
+}
+
+void OpenXRProgram::AddLayer(XrCompositionLayerFlags flags, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent)
+{
+    XrCompositionLayerQuad layer;
+    SetLayer(&layer, flags, mContentSpace, visibility, subImage, pose, extent);
+    mLayers.push_back(layer);
+}
+
+void OpenXRProgram::EndFrame()
+{
+    std::vector<XrCompositionLayerBaseHeader*> layerPointers;
+    for(auto& layer: mLayers) {
+        layerPointers.push_back(reinterpret_cast<XrCompositionLayerBaseHeader*>(&layer));
+    }
+    XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO, nullptr, mWaitFrameState.predictedDisplayTime, XR_ENVIRONMENT_BLEND_MODE_OPAQUE, (uint32_t)layerPointers.size(), layerPointers.data()};
+    CHECK_XR(xrEndFrame(mSession, &frameEndInfo));
+    mLayers.clear();
+}
+
 int main( void )
 {
     // Set console unbuffered so we don't miss any output
@@ -773,8 +823,7 @@ int main( void )
 
     int whichImage = 0;
     auto then = std::chrono::steady_clock::now();
-    XrSessionState sessionState = XR_SESSION_STATE_IDLE;
-    bool runFrameLoop = false;
+    bool doFrame = false;
 
     bool quit = false;
 
@@ -785,67 +834,45 @@ int main( void )
             then = std::chrono::steady_clock::now();
         }
 
-        if(requestExit && !exitRequested) {
-
-            if((sessionState == XR_SESSION_STATE_SYNCHRONIZED) || 
-               (sessionState == XR_SESSION_STATE_VISIBLE) || 
-               (sessionState == XR_SESSION_STATE_STOPPING) || 
-               (sessionState == XR_SESSION_STATE_FOCUSED)) {
-
-                // If we are "running" and haven't yet requested an
-                // exit, play nice by requesting exit and perform no other
-                // actions, state machine should carry us to EXITING
-                // state, which we will get and set quit = true.
-
-                CHECK_XR(xrRequestExitSession(program.GetSession()));
+        if(requestExit) {
+            if(!exitRequested) {
+                if(program.IsRunning()) {
+                    // Play nice
+                    program.RequestExitSession();
+                } else {
+                    // Just quit
+                    quit = true;
+                }
                 exitRequested = true;
-
-            } else {
-
-                // If we are not "running", we can't request an exit.
-                // But we can just destroy our session and quit.
-                // (from any state, actually)
-
-                exitRequested = true;
-                quit = true;
             }
         }
-
-        bool getAnotherEvent = true;
-        while (getAnotherEvent && !quit) {
-            static XrEventDataBuffer event;
-            event.type = XR_TYPE_EVENT_DATA_BUFFER;
-            event.next = nullptr;
-            XrResult result = xrPollEvent(program.GetInstance(), &event);
-            if(result == XR_SUCCESS) {
-                ProcessEvent(&event, &quit, program.GetSession(), runFrameLoop, sessionState);
-            } else {
-                getAnotherEvent = false;
-            }
-        }
+        program.ProcessEvents(quit, doFrame);
 
         if(!quit) {
-            if(runFrameLoop) {
+            if(doFrame) {
 
-                XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
-                CHECK_XR(xrWaitFrame(program.GetSession(), nullptr, &waitFrameState));
+                bool shouldRender = program.WaitFrame();
 
-                CHECK_XR(xrBeginFrame(program.GetSession(), nullptr));
+                program.BeginFrame();
 
-                XrFrameEndInfo frameEndInfo{XR_TYPE_FRAME_END_INFO, nullptr};
-                frameEndInfo.displayTime = waitFrameState.predictedDisplayTime;
-                frameEndInfo.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-
-                if(waitFrameState.shouldRender) {
+                if(shouldRender) {
                     for(int eye = 0; eye < 2; eye++) {
-                        FillSwapchainImage(program.GetSwapchain(eye), program.GetSwapchainImage(eye), sourceTextures[whichImage], d3dContext);
+                        uint32_t index;
+                        XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, nullptr};
+                        CHECK_XR(xrAcquireSwapchainImage(program.GetSwapchain(eye), &acquireInfo, &index));
+
+                        XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+                        waitInfo.next = nullptr;
+                        waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
+                        CHECK_XR(xrWaitSwapchainImage(program.GetSwapchain(eye), &waitInfo));
+
+                        d3dContext->CopyResource(program.GetSwapchainImage(eye, index).texture, sourceTextures[whichImage]);
+
+                        XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, nullptr};
+                        CHECK_XR(xrReleaseSwapchainImage(program.GetSwapchain(eye), &releaseInfo));
+
                     }
-
                     d3dContext->Flush();
-
-                    XrCompositionLayerQuad layers[2];
-                    XrCompositionLayerBaseHeader* layerPointers[2];
-                    frameEndInfo.layers = layerPointers;
 
                     XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -2.0f}};
                     
@@ -854,31 +881,28 @@ int main( void )
 
                     if(useSeparateLeftRightEyes) {
 
-                        for(uint32_t eye = 0; eye < 2; eye++) {
-                            XrSwapchainSubImage fullImage {program.GetSwapchain(eye), {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                            SetLayer(&layers[eye], flags, program.GetContentSpace(), (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, extent);
-                            layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
-                        }
+                        XrSwapchainSubImage leftImage {program.GetSwapchain(0), {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                        program.AddLayer(flags, XR_EYE_VISIBILITY_LEFT, leftImage, pose, extent);
 
-                        frameEndInfo.layerCount = 2;
+                        XrSwapchainSubImage rightImage {program.GetSwapchain(1), {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                        program.AddLayer(flags, XR_EYE_VISIBILITY_RIGHT, rightImage, pose, extent);
 
                     } else {
 
                         XrSwapchainSubImage fullImage {program.GetSwapchain(0), {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                        SetLayer(&layers[0], flags, program.GetContentSpace(), XR_EYE_VISIBILITY_BOTH, fullImage, pose, extent);
-
-                        layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
-                        frameEndInfo.layerCount = 1;
+                        program.AddLayer(flags, XR_EYE_VISIBILITY_BOTH, fullImage, pose, extent);
                     }
                 }
 
-                CHECK_XR(xrEndFrame(program.GetSession(), &frameEndInfo));
-                
+                program.EndFrame();
+
                 if(!sawFirstSuccessfulFrame) {
                     sawFirstSuccessfulFrame = true;
                     std::cout << "First Overlay xrEndFrame was successful!  Continuing...\n";
                 }
+
             } else {
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
             }
         }
