@@ -33,6 +33,7 @@
 #include <memory>
 #include <chrono>
 #include <thread>
+#include <array>
 
 #include <cassert>
 
@@ -208,33 +209,7 @@ void FindRecommendedDimensions(XrInstance instance, XrSystemId systemId, int32_t
     *recommendedHeight = viewConfigurationViews[0].recommendedImageRectHeight;
 }
 
-void CreateSwapchainsAndGetImages(XrSession session, uint64_t chosenFormat, int32_t recommendedWidth, int32_t recommendedHeight, XrSwapchain swapchains[2], XrSwapchainImageD3D11KHR *swapchainImages[2])
-{
-    for(int eye = 0; eye < 2; eye++) {
-        XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-        swapchainCreateInfo.arraySize = 1;
-        swapchainCreateInfo.format = chosenFormat;
-        swapchainCreateInfo.width = recommendedWidth;
-        swapchainCreateInfo.height = recommendedHeight;
-        swapchainCreateInfo.mipCount = 1;
-        swapchainCreateInfo.faceCount = 1;
-        swapchainCreateInfo.sampleCount = 1;
-        swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-        swapchainCreateInfo.next = nullptr;
-        CHECK_XR(xrCreateSwapchain(session, &swapchainCreateInfo, &swapchains[eye]));
-
-        uint32_t count;
-        CHECK_XR(xrEnumerateSwapchainImages(swapchains[eye], 0, &count, nullptr));
-        swapchainImages[eye] = new XrSwapchainImageD3D11KHR[count];
-        for(uint32_t i = 0; i < count; i++) {
-            swapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
-            swapchainImages[eye][i].next = nullptr;
-        }
-        CHECK_XR(xrEnumerateSwapchainImages(swapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages[eye])));
-    }
-}
-
-void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, std::vector<fipImage> images, std::vector<ID3D11Texture2D*>& sourceImages, DXGI_FORMAT format)
+void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dContext, int32_t recommendedWidth, int32_t recommendedHeight, std::vector<fipImage> images, std::vector<ID3D11Texture2D*>& sourceTextures, DXGI_FORMAT format)
 {
     assert(
         (format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) ||
@@ -260,10 +235,10 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
         desc.MiscFlags = 0;
 
         CHECK(d3d11Device->CreateTexture2D(&desc, NULL, &texture));
-        sourceImages.push_back(texture);
+        sourceTextures.push_back(texture);
 
         D3D11_MAPPED_SUBRESOURCE mapped;
-        CHECK(d3dContext->Map(sourceImages[i], 0, D3D11_MAP_WRITE, 0, &mapped));
+        CHECK(d3dContext->Map(sourceTextures[i], 0, D3D11_MAP_WRITE, 0, &mapped));
 
         image.rescale(recommendedWidth, recommendedHeight, FILTER_BILINEAR);
 
@@ -291,7 +266,7 @@ void CreateSourceImages(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dConte
                 }
             }
         }
-        d3dContext->Unmap(sourceImages[i], 0);
+        d3dContext->Unmap(sourceTextures[i], 0);
     }
 }
 
@@ -330,7 +305,6 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool* quit, XrSes
 {
     const auto& e = *reinterpret_cast<const XrEventDataSessionStateChanged*>(event);
     if(e.session == session) {
-        if(false) std::cout << "transition to " << SessionStateToString.at(e.state) << "\n";
 
         // Handle state change of our session
         if((e.state == XR_SESSION_STATE_EXITING) ||
@@ -346,7 +320,6 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool* quit, XrSes
                     if(e.state == XR_SESSION_STATE_READY) {
                         XrSessionBeginInfo beginInfo {XR_TYPE_SESSION_BEGIN_INFO, nullptr, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO};
                         CHECK_XR(xrBeginSession(session, &beginInfo));
-                        std::cout << "running\n";
                         runFrameLoop = true;
                     }
                     // ignore other transitions
@@ -359,7 +332,6 @@ void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool* quit, XrSes
                 case XR_SESSION_STATE_SYNCHRONIZED: {
                     if(e.state == XR_SESSION_STATE_STOPPING) {
                         CHECK_XR(xrEndSession(session));
-                        std::cout << "not running\n";
                         runFrameLoop = false;
                     }
                     // ignore other transitions
@@ -455,15 +427,42 @@ public:
     {
         // nothing
     }
+    ~OpenXRProgram()
+    {
+        if(false) {
+            // These are destroyed by xrDestroySession but written here for clarity
+            for(int eye = 0; eye < 2; eye++) {
+                if(mSwapchains[eye] != XR_NULL_HANDLE) {
+                    CHECK_XR(xrDestroySwapchain(mSwapchains[eye]));
+                }
+            }
+
+            if(mContentSpace != XR_NULL_HANDLE) {
+                CHECK_XR(xrDestroySpace(mContentSpace));
+            }
+        }
+
+        if(mSession != XR_NULL_HANDLE) {
+            CHECK_XR(xrDestroySession(mSession));
+		}
+    }
 
     void CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion);
     void GetSystem();
     void CreateSession(ID3D11Device* d3d11Device, bool requestOverlaySession, bool requestPosePermission);
+	LUID GetD3D11AdapterLUID();
     bool ChooseBestPixelFormat(const std::vector<DXGI_FORMAT>& appFormats, uint64_t *chosenFormat);
+    void CreateSwapChainsAndGetImages(DXGI_FORMAT format);
+    void CreateContentSpace();
 
     XrInstance GetInstance() const { return mInstance; }
     XrSystemId GetSystemId() const { return mSystemId; }
     XrSession GetSession() const { return mSession; }
+    XrSpace GetContentSpace() const { return mContentSpace; }
+    uint32_t GetMaxLayerCount() const { return mMaxLayerCount; }
+    XrSwapchain GetSwapchain(int which) const { return mSwapchains[which]; }
+    XrSwapchainImageD3D11KHR* GetSwapchainImage(int which) const { return mSwapchainImages[which]; }
+    std::array<int32_t, 2> GetRecommendedDimensions() const { return mRecommendedDimensions; }
 
     bool IsDebugUtilsAvailable() const { return mDebugUtilsAvailable; }
     bool IsPermissionsSupportAvailable() const { return mPermissionsSupportAvailable; }
@@ -475,6 +474,11 @@ private:
     XrInstance  mInstance;
     XrSystemId  mSystemId;
     XrSession   mSession;
+    XrSwapchain mSwapchains[2];
+    XrSwapchainImageD3D11KHR    *mSwapchainImages[2];
+    std::array<int32_t, 2>      mRecommendedDimensions;
+    XrSpace     mContentSpace;
+    uint32_t    mMaxLayerCount;
 };
 
 
@@ -539,6 +543,12 @@ void OpenXRProgram::GetSystem()
 {
     XrSystemGetInfo getSystem{XR_TYPE_SYSTEM_GET_INFO, nullptr, XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY};
     CHECK_XR(xrGetSystem(mInstance, &getSystem, &mSystemId));
+
+    XrSystemProperties systemProperties { XR_TYPE_SYSTEM_PROPERTIES };
+    CHECK_XR(xrGetSystemProperties(mInstance, mSystemId, &systemProperties));
+    std::cout << "System \"" << systemProperties.systemName << "\", vendorId " << systemProperties.vendorId << "\n";
+
+    mMaxLayerCount = systemProperties.graphicsProperties.maxLayerCount;
 }
 
 void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlaySession, bool requestPosePermission)
@@ -620,6 +630,51 @@ bool OpenXRProgram::ChooseBestPixelFormat(const std::vector<DXGI_FORMAT>& appFor
     return true;
 }
 
+LUID OpenXRProgram::GetD3D11AdapterLUID()
+{
+    PFN_xrGetD3D11GraphicsRequirementsKHR getD3D11GraphicsRequirementsKHR;
+    CHECK_XR(xrGetInstanceProcAddr(mInstance, "xrGetD3D11GraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&getD3D11GraphicsRequirementsKHR)));
+
+    XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
+    CHECK_XR(getD3D11GraphicsRequirementsKHR(mInstance, mSystemId, &graphicsRequirements));
+
+    return graphicsRequirements.adapterLuid;
+}
+
+void OpenXRProgram::CreateSwapChainsAndGetImages(DXGI_FORMAT format)
+{
+    FindRecommendedDimensions(mInstance, mSystemId, &mRecommendedDimensions[0], &mRecommendedDimensions[1]);
+    std::cout << "Recommended view image dimensions are " << mRecommendedDimensions[0] << " by " << mRecommendedDimensions[1] << "\n";
+
+    for(int eye = 0; eye < 2; eye++) {
+        XrSwapchainCreateInfo swapchainCreateInfo{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        swapchainCreateInfo.arraySize = 1;
+        swapchainCreateInfo.format = format;
+        swapchainCreateInfo.width = mRecommendedDimensions[0];
+        swapchainCreateInfo.height = mRecommendedDimensions[1];
+        swapchainCreateInfo.mipCount = 1;
+        swapchainCreateInfo.faceCount = 1;
+        swapchainCreateInfo.sampleCount = 1;
+        swapchainCreateInfo.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        swapchainCreateInfo.next = nullptr;
+        CHECK_XR(xrCreateSwapchain(mSession, &swapchainCreateInfo, &mSwapchains[eye]));
+
+        uint32_t count;
+        CHECK_XR(xrEnumerateSwapchainImages(mSwapchains[eye], 0, &count, nullptr));
+        mSwapchainImages[eye] = new XrSwapchainImageD3D11KHR[count];
+        for(uint32_t i = 0; i < count; i++) {
+            mSwapchainImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+            mSwapchainImages[eye][i].next = nullptr;
+        }
+        CHECK_XR(xrEnumerateSwapchainImages(mSwapchains[eye], count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(mSwapchainImages[eye])));
+    }
+}
+
+void OpenXRProgram::CreateContentSpace()
+{
+    CreateSpace(mSession, XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &mContentSpace);
+}
+
 int main( void )
 {
     // Set console unbuffered so we don't miss any output
@@ -671,23 +726,20 @@ int main( void )
 
     program.GetSystem();
 
-    PFN_xrGetD3D11GraphicsRequirementsKHR getD3D11GraphicsRequirementsKHR;
-    CHECK_XR(xrGetInstanceProcAddr(program.GetInstance(), "xrGetD3D11GraphicsRequirementsKHR", reinterpret_cast<PFN_xrVoidFunction*>(&getD3D11GraphicsRequirementsKHR)));
+    bool useSeparateLeftRightEyes;
+    if(program.GetMaxLayerCount() >= 2) {
+        useSeparateLeftRightEyes = true;
+    } else if(program.GetMaxLayerCount() >= 1) {
+        useSeparateLeftRightEyes = false;
+    } else {
+        std::cerr << "xrGetSystemProperties reports maxLayerCount 0, no way to display a compositor layer\n";
+        DebugBreak();
+    }
 
-    XrGraphicsRequirementsD3D11KHR graphicsRequirements{XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR};
-    CHECK_XR(getD3D11GraphicsRequirementsKHR(program.GetInstance(), program.GetSystemId(), &graphicsRequirements));
-
-    ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(graphicsRequirements.adapterLuid);
+    ID3D11Device* d3d11Device = GetD3D11DeviceFromAdapter(program.GetD3D11AdapterLUID());
 
     bool requestPermission = program.IsPermissionsSupportAvailable();
     program.CreateSession(d3d11Device, createOverlaySession, requestPermission);
-
-    XrSpace viewSpace;
-    CreateSpace(program.GetSession(), XR_REFERENCE_SPACE_TYPE_VIEW, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &viewSpace);
-    XrSpace localSpace;
-    CreateSpace(program.GetSession(), XR_REFERENCE_SPACE_TYPE_LOCAL, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &localSpace);
-    XrSpace stageSpace;
-    CreateSpace(program.GetSession(), XR_REFERENCE_SPACE_TYPE_STAGE, XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0, 0.0, 0.0}}, &stageSpace);
 
     uint64_t chosenFormat;
     if(!program.ChooseBestPixelFormat({ DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB }, &chosenFormat)) {
@@ -695,22 +747,15 @@ int main( void )
         DebugBreak();
     }
 
-    int32_t recommendedWidth, recommendedHeight;
-    FindRecommendedDimensions(program.GetInstance(), program.GetSystemId(), &recommendedWidth, &recommendedHeight);
-    std::cout << "Recommended view image dimensions are " << recommendedWidth << " by " << recommendedHeight << "\n";
-
-    XrSwapchain swapchains[2];
-    XrSwapchainImageD3D11KHR *swapchainImages[2];
-    CreateSwapchainsAndGetImages(program.GetSession(), chosenFormat, recommendedWidth, recommendedHeight, swapchains, swapchainImages);
+    program.CreateSwapChainsAndGetImages((DXGI_FORMAT)chosenFormat);
 
     ID3D11DeviceContext* d3dContext;
     d3d11Device->GetImmediateContext(&d3dContext);
 
-    std::vector<ID3D11Texture2D*> sourceImages;
-    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, images, sourceImages, (DXGI_FORMAT)chosenFormat);
-
-    std::cout << "Created Swapchain and enumerated SwapchainImages and made local\n";
-    std::cout << "    images as texture sources!\n";
+    std::vector<ID3D11Texture2D*> sourceTextures;
+    int32_t recommendedWidth = program.GetRecommendedDimensions()[0];
+    int32_t recommendedHeight = program.GetRecommendedDimensions()[1];
+    CreateSourceImages(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, images, sourceTextures, (DXGI_FORMAT)chosenFormat);
 
     // Spawn a thread to wait for a keypress
     static bool requestExit = false;
@@ -722,19 +767,7 @@ int main( void )
     }};
     exitPollingThread.detach();
 
-    XrSystemProperties systemProperties { XR_TYPE_SYSTEM_PROPERTIES };
-    CHECK_XR(xrGetSystemProperties(program.GetInstance(), program.GetSystemId(), &systemProperties));
-    std::cout << "System \"" << systemProperties.systemName << "\", vendorId " << systemProperties.vendorId << "\n";
-
-    bool useSeparateLeftRightEyes;
-    if(systemProperties.graphicsProperties.maxLayerCount >= 2) {
-        useSeparateLeftRightEyes = true;
-    } else if(systemProperties.graphicsProperties.maxLayerCount >= 1) {
-        useSeparateLeftRightEyes = false;
-    } else {
-        std::cerr << "xrGetSystemProperties reports maxLayerCount 0, no way to display a compositor layer\n";
-        abort();
-    }
+    program.CreateContentSpace();
 
     // OpenXR Frame loop
 
@@ -742,14 +775,13 @@ int main( void )
     auto then = std::chrono::steady_clock::now();
     XrSessionState sessionState = XR_SESSION_STATE_IDLE;
     bool runFrameLoop = false;
-    XrSpace myspace = localSpace;
 
     bool quit = false;
 
     do {
         auto now = std::chrono::steady_clock::now();
         if(std::chrono::duration_cast<std::chrono::milliseconds>(now - then).count() > 2000) {
-            whichImage = (whichImage + 1) % sourceImages.size();
+            whichImage = (whichImage + 1) % sourceTextures.size();
             then = std::chrono::steady_clock::now();
         }
 
@@ -797,18 +829,6 @@ int main( void )
 
                 XrFrameState waitFrameState{ XR_TYPE_FRAME_STATE };
                 CHECK_XR(xrWaitFrame(program.GetSession(), nullptr, &waitFrameState));
-                if(false) printf("frameState: { %llu, %llu, %s }\n", waitFrameState.predictedDisplayTime, waitFrameState.predictedDisplayPeriod, waitFrameState.shouldRender ? "yes" : "no");
-
-                XrSpaceLocation viewPose { XR_TYPE_SPACE_LOCATION, nullptr };
-                CHECK_XR(xrLocateSpace(viewSpace, localSpace, waitFrameState.predictedDisplayTime, &viewPose));
-                if(false) printf("pose {{%f, %f, %f, %f}, {%f, %f, %f}}\n",
-                        viewPose.pose.orientation.x,
-                        viewPose.pose.orientation.y,
-                        viewPose.pose.orientation.z,
-                        viewPose.pose.orientation.w,
-                        viewPose.pose.position.x,
-                        viewPose.pose.position.y,
-                        viewPose.pose.position.z);
 
                 CHECK_XR(xrBeginFrame(program.GetSession(), nullptr));
 
@@ -818,7 +838,7 @@ int main( void )
 
                 if(waitFrameState.shouldRender) {
                     for(int eye = 0; eye < 2; eye++) {
-                        FillSwapchainImage(swapchains[eye], swapchainImages[eye], sourceImages[whichImage], d3dContext);
+                        FillSwapchainImage(program.GetSwapchain(eye), program.GetSwapchainImage(eye), sourceTextures[whichImage], d3dContext);
                     }
 
                     d3dContext->Flush();
@@ -835,8 +855,8 @@ int main( void )
                     if(useSeparateLeftRightEyes) {
 
                         for(uint32_t eye = 0; eye < 2; eye++) {
-                            XrSwapchainSubImage fullImage {swapchains[eye], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                            SetLayer(&layers[eye], flags, myspace, (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, extent);
+                            XrSwapchainSubImage fullImage {program.GetSwapchain(eye), {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                            SetLayer(&layers[eye], flags, program.GetContentSpace(), (eye == 0) ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT, fullImage, pose, extent);
                             layerPointers[eye] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[eye]);
                         }
 
@@ -844,8 +864,8 @@ int main( void )
 
                     } else {
 
-                        XrSwapchainSubImage fullImage {swapchains[0], {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
-                        SetLayer(&layers[0], flags, myspace, XR_EYE_VISIBILITY_BOTH, fullImage, pose, extent);
+                        XrSwapchainSubImage fullImage {program.GetSwapchain(0), {{0, 0}, {recommendedWidth, recommendedHeight}}, 0};
+                        SetLayer(&layers[0], flags, program.GetContentSpace(), XR_EYE_VISIBILITY_BOTH, fullImage, pose, extent);
 
                         layerPointers[0] = reinterpret_cast<XrCompositionLayerBaseHeader*>(&layers[0]);
                         frameEndInfo.layerCount = 1;
@@ -863,19 +883,6 @@ int main( void )
             }
         }
     } while(!quit);
-
-    if(false) {
-        // These are destroyed by xrDestroySession but written here for clarity
-        for(int eye = 0; eye < 2; eye++) {
-            CHECK_XR(xrDestroySwapchain(swapchains[eye]));
-        }
-
-        CHECK_XR(xrDestroySpace(stageSpace));
-        CHECK_XR(xrDestroySpace(localSpace));
-        CHECK_XR(xrDestroySpace(viewSpace));
-    }
-
-    CHECK_XR(xrDestroySession(program.GetSession()));
 
     return 0;
 }
