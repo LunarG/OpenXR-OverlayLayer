@@ -77,6 +77,19 @@ HANDLE gOverlayCreateSessionSema;
 LPCSTR kOverlayWaitFrameSemaName = "XR_EXT_overlay_overlay_wait_frame_sema";
 HANDLE gOverlayWaitFrameSema;
 
+#if (XR_PTR_SIZE == 8) // a la openxr.h
+    typedef void* OpenXRHandle;
+#else
+    uint64_t OpenXRHandle;
+#endif
+
+struct SessionContext
+{
+    ID3D11Device *D3DDevice;
+};
+
+std::map<XrSession,SessionContext> gSessionContexts;
+
 // Main Session context that we hold on to for processing and interleaving
 // Overlay Session commands
 ID3D11Device *gSavedD3DDevice;
@@ -101,11 +114,7 @@ uint32_t gOverlayLayerCount = 0;
 std::vector<const XrCompositionLayerBaseHeader *>gOverlayLayers;
 std::set<XrSwapchain> gSwapchainsDestroyPending;
 std::set<XrSpace> gSpacesDestroyPending;
-#if (XR_PTR_SIZE == 8) // a la openxr.h
-    std::set<void*> gHandlesThatWereLostBySessions;
-#else
-    std::set<uint64_t> gHandlesThatWereLostBySessions;
-#endif
+std::set<OpenXRHandle> gHandlesThatWereLostBySessions;
 
 template <class HANDLE_T>
 bool HandleWasLostBySession(HANDLE_T handle)
@@ -776,8 +785,10 @@ XrResult Remote_xrReleaseSwapchainImage(IPCXrReleaseSwapchainImage* args)
     int which = cache->acquired[0];
     cache->acquired.erase(cache->acquired.begin());
 
+	ID3D11Device* d3dDevice;
+	sharedTexture->GetDevice(&d3dDevice);
     ID3D11DeviceContext* d3dContext;
-    gSavedD3DDevice->GetImmediateContext(&d3dContext);
+    d3dDevice->GetImmediateContext(&d3dContext);
     d3dContext->CopyResource(cache->swapchainImages[which], sharedTexture);
 
     result = Overlay_xrReleaseSwapchainImage(args->swapchain, args->releaseInfo);
