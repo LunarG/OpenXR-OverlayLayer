@@ -659,7 +659,7 @@ bool OpenXRProgram::WaitFrame()
 {
     mWaitFrameState = { XR_TYPE_FRAME_STATE, nullptr };
     CHECK_XR(xrWaitFrame(mSession, nullptr, &mWaitFrameState));
-	return mWaitFrameState.shouldRender;
+    return mWaitFrameState.shouldRender;
 }
 
 void OpenXRProgram::BeginFrame()
@@ -772,6 +772,9 @@ int main( void )
 
     bool sawFirstSuccessfulFrame = false;
 
+    //----------------------------------------------------------------------
+    // Image flipbook stuff
+
     // Which images to display
     std::vector<std::string> imageFilenames;
     imageFilenames.push_back("avatar1.png");
@@ -787,9 +790,13 @@ int main( void )
         imageAspectRatios.push_back(image.getWidth() / (float)image.getHeight());
     }
 
+#if COMPILE_REMOTE_OVERLAY_APP
+
+    //----------------------------------------------------------------------
+    // Remote Overlay App stuff
+
     std::cout << "Connecting to Host OpenXR Application...\n";
 
-#if COMPILE_REMOTE_OVERLAY_APP
     IPCConnectResult connectResult = IPC_CONNECT_TIMEOUT;
     do {
         connectResult = IPCXrConnectToHost();
@@ -802,8 +809,10 @@ int main( void )
     } while(connectResult == IPC_CONNECT_TIMEOUT);
 #endif
 
-    bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
+    //----------------------------------------------------------------------
+    // Create OpenXR Instance and Session
 
+    bool createOverlaySession = COMPILE_REMOTE_OVERLAY_APP;
     OpenXRProgram program(createOverlaySession);
 
     program.CreateInstance("Overlay Sample", 0, "none", 0);
@@ -830,6 +839,9 @@ int main( void )
     bool requestPermission = program.IsPermissionsSupportAvailable();
     program.CreateSession(d3d11Device, createOverlaySession, requestPermission);
 
+    //----------------------------------------------------------------------
+    // Create Images to copy into SwapchainImages
+
     uint64_t chosenFormat;
     if(!program.ChooseBestPixelFormat({ DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB }, &chosenFormat)) {
         outputDebugF("No supported swapchain format found\n");
@@ -846,9 +858,10 @@ int main( void )
     int32_t recommendedHeight = program.GetRecommendedDimensions()[1];
     CreateSourceTextures(d3d11Device, d3dContext, recommendedWidth, recommendedHeight, images, sourceTextures, (DXGI_FORMAT)chosenFormat);
 
-    // Spawn a thread to wait for a keypress
-    static bool requestExit = false;
-    static bool exitRequested = false;
+    //----------------------------------------------------------------------
+    // Spawn a thread to wait for a keypress to exit
+
+    static bool requestExit = false;            // User hit ENTER to exit
     auto exitPollingThread = std::thread{[] {
         std::cout << "Press ENTER to exit...\n";
         getchar();
@@ -858,13 +871,16 @@ int main( void )
 
     program.CreateContentSpace();
 
+    //----------------------------------------------------------------------
     // OpenXR Frame loop
 
-    int whichImage = 0;
+    int whichImage = 0;                 // Which Image should we display
     auto then = std::chrono::steady_clock::now();
-    bool doFrame = false;
 
-    bool quit = false;
+    bool doFrame = false;               // Only do Frame commands if we are in OpenXR "running" mode
+
+    bool exitRequested = false;         // We requested that OpenXR exit
+    bool quit = false;                  // We set this to true when we may exit out of our frame loop
 
     do {
         auto now = std::chrono::steady_clock::now();
@@ -872,6 +888,9 @@ int main( void )
             whichImage = (whichImage + 1) % sourceTextures.size();
             then = std::chrono::steady_clock::now();
         }
+
+        //----------------------------------------------------------------------
+        // OpenXR Event Management
 
         if(requestExit) {
             if(!exitRequested) {
@@ -887,9 +906,15 @@ int main( void )
         }
         program.ProcessEvents(quit, doFrame);
 
+        // OpenXR frame loop
+
         if(!quit) {
             if(doFrame) {
 
+                // The OpenXR runtime can give us guidance on whether
+                // we should do or avoid doing heavy GPU work.  That's
+                // represented by the shouldRender variable in XrFrameState,
+                // which our utility class returns here.
                 bool shouldRender = program.WaitFrame();
 
                 program.BeginFrame();
@@ -899,7 +924,11 @@ int main( void )
                         uint32_t index;
                         index = program.AcquireAndWaitSwapchainImage(eye);
 
+                        // We don't need to do this every frame because our images are static.
+                        // But we do it anyway because a "real" program would render something new
+                        // every time through the frame loop.
                         d3dContext->CopyResource(program.GetSwapchainImage(eye, index).texture, sourceTextures[whichImage]);
+
                         program.ReleaseSwapchainImage(eye);
 
                     }
