@@ -251,6 +251,8 @@ public:
     void ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame);
     void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, bool& doFrame);
     void ProcessEvents(bool& quit, bool &doFrame);
+    uint32_t AcquireAndWaitSwapchainImage(int eye);
+    void ReleaseSwapchainImage(int eye);
     bool WaitFrame();
     void BeginFrame();
     void AddLayer(XrCompositionLayerFlags flags, XrEyeVisibility visibility, const XrSwapchainSubImage& subImage, XrPosef pose, const XrExtent2Df& extent);
@@ -739,6 +741,25 @@ void CreateDebugMessenger(XrInstance instance, XrDebugUtilsMessengerEXT* messeng
     CHECK_XR(createDebugUtilsMessenger(instance, &dumCreateInfo, messenger));
 }
 
+uint32_t OpenXRProgram::AcquireAndWaitSwapchainImage(int eye)
+{
+    uint32_t index;
+    XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, nullptr};
+    CHECK_XR(xrAcquireSwapchainImage(GetSwapchain(eye), &acquireInfo, &index));
+
+    XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+    waitInfo.next = nullptr;
+    waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
+    CHECK_XR(xrWaitSwapchainImage(GetSwapchain(eye), &waitInfo));
+    return index;
+}
+
+void OpenXRProgram::ReleaseSwapchainImage(int eye)
+{
+    XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, nullptr};
+    CHECK_XR(xrReleaseSwapchainImage(GetSwapchain(eye), &releaseInfo));
+}
+
 
 //----------------------------------------------------------------------------
 // Main
@@ -876,25 +897,17 @@ int main( void )
                 if(shouldRender) {
                     for(int eye = 0; eye < 2; eye++) {
                         uint32_t index;
-                        XrSwapchainImageAcquireInfo acquireInfo{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO, nullptr};
-                        CHECK_XR(xrAcquireSwapchainImage(program.GetSwapchain(eye), &acquireInfo, &index));
-
-                        XrSwapchainImageWaitInfo waitInfo{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-                        waitInfo.next = nullptr;
-                        waitInfo.timeout = ONE_SECOND_IN_NANOSECONDS;
-                        CHECK_XR(xrWaitSwapchainImage(program.GetSwapchain(eye), &waitInfo));
+                        index = program.AcquireAndWaitSwapchainImage(eye);
 
                         d3dContext->CopyResource(program.GetSwapchainImage(eye, index).texture, sourceTextures[whichImage]);
-
-                        XrSwapchainImageReleaseInfo releaseInfo{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO, nullptr};
-                        CHECK_XR(xrReleaseSwapchainImage(program.GetSwapchain(eye), &releaseInfo));
+                        program.ReleaseSwapchainImage(eye);
 
                     }
                     d3dContext->Flush();
 
                     XrPosef pose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -2.0f}};
-                    
-                    XrCompositionLayerFlags flags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT | XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                    XrCompositionLayerFlags flags = XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT |
+                        XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
                     XrExtent2Df extent {1.0f * imageAspectRatios[whichImage], 1.0f};
 
                     if(useSeparateLeftRightEyes) {
