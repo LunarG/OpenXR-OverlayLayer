@@ -74,7 +74,9 @@ XR_DEFINE_ATOM(XrPermissionIdEXT)
 #include "../include/util.h"
 
 
-const uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
+constexpr uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
+
+constexpr int gFudgeMinAlpha = 128;
 
 
 // OpenXR will give us a LUID.  This function will walk adapters to find
@@ -176,18 +178,32 @@ void CreateSourceTextures(ID3D11Device* d3d11Device, ID3D11DeviceContext* d3dCon
                 for (int32_t x = 0; x < width; x++) {
                     unsigned char *srcPixel = src + x * 4;
                     unsigned char *dstPixel = dst + x * 4;
-                    dstPixel[0] = srcPixel[2];
-                    dstPixel[1] = srcPixel[1];
-                    dstPixel[2] = srcPixel[0];
+                    if(srcPixel[3] < gFudgeMinAlpha) {
+                        // Alpha fix while waiting on diagnosis from FB
+                        dstPixel[0] = 0;
+                        dstPixel[1] = 0;
+                        dstPixel[2] = 0;
+                    } else {
+                        dstPixel[0] = srcPixel[2];
+                        dstPixel[1] = srcPixel[1];
+                        dstPixel[2] = srcPixel[0];
+                    }
                     dstPixel[3] = srcPixel[3];
                 }
             } else if (format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
                 for (int32_t x = 0; x < width; x++) {
                     unsigned char *srcPixel = src + x * 4;
                     unsigned char *dstPixel = dst + x * 4;
-                    dstPixel[0] = srcPixel[0];
-                    dstPixel[1] = srcPixel[1];
-                    dstPixel[2] = srcPixel[2];
+                    if(srcPixel[3] < gFudgeMinAlpha) {
+                        // Alpha fix while waiting on diagnosis from FB
+                        dstPixel[0] = 0;
+                        dstPixel[1] = 0;
+                        dstPixel[2] = 0;
+                    } else {
+                        dstPixel[0] = srcPixel[0];
+                        dstPixel[1] = srcPixel[1];
+                        dstPixel[2] = srcPixel[2];
+                    }
                     dstPixel[3] = srcPixel[3];
                 }
             }
