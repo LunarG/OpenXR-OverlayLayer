@@ -33,20 +33,6 @@
 #include <chrono>
 #include <thread>
 
-#if 0
-    IPCWaitResult result = IPCWaitForHostResponse();
-    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
-        // Remote process died for some reason.  Don't be vocal, just error
-        gConnectionLost = true;
-        return XR_RUNTIME_FAILURE;
-    } else if(result == IPC_WAIT_ERROR) {
-        // Unknown exception on wait...  Note for debugging purposes
-        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
-        gConnectionLost = true;
-        return XR_RUNTIME_FAILURE;
-    } // else IPC_HOST_RESPONSE_READY is what we expect.
-#endif
-
 #define XR_USE_GRAPHICS_API_D3D11 1
 
 #include "../XR_overlay_ext/xr_overlay_dll.h"
@@ -77,7 +63,6 @@ std::map<XrSession, LocalSessionPtr> gLocalSessionMap;
 
 // The Id of the RPC Host Process
 DWORD gHostProcessId;
-bool gConnectionLost = false;
 
 // Local "Swapchain" in Xr parlance - others would call it RenderTarget
 struct LocalSwapchain
@@ -387,7 +372,16 @@ XrResult xrEnumerateSwapchainFormats(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
 
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -439,7 +433,17 @@ XrResult xrEnumerateViewConfigurations(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -484,7 +488,17 @@ XrResult xrGetInstanceProperties (
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -529,7 +543,17 @@ XrResult xrPollEvent (
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized);
@@ -579,7 +603,17 @@ XrResult xrGetSystemProperties (
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -628,7 +662,17 @@ XrResult xrLocateSpace (
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -675,7 +719,17 @@ XrResult xrGetD3D11GraphicsRequirementsKHR  (
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -742,7 +796,17 @@ XrResult xrCreateSwapchain(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -798,7 +862,17 @@ XrResult xrWaitFrame(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -834,7 +908,17 @@ XrResult xrBeginFrame(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -870,7 +954,17 @@ XrResult xrEndFrame(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -916,7 +1010,17 @@ XrResult xrAcquireSwapchainImage(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -964,7 +1068,17 @@ XrResult xrWaitSwapchainImage(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1024,7 +1138,17 @@ XrResult xrReleaseSwapchainImage(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1059,7 +1183,17 @@ XrResult xrDestroySession(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1122,7 +1256,16 @@ XrResult xrCreateSession(
     header->makePointersRelative(ipcbuf.base);
 
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
 
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1173,7 +1316,16 @@ XrResult xrGetSystem(
     header->makePointersRelative(ipcbuf.base);
 
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
 
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1220,7 +1372,16 @@ XrResult xrCreateReferenceSpace(
     header->makePointersRelative(ipcbuf.base);
 
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
 
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1271,7 +1432,16 @@ XrResult xrCreateInstance(
     header->makePointersRelative(ipcbuf.base);
 
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
 
     header->makePointersAbsolute(ipcbuf.base);
 
@@ -1305,7 +1475,17 @@ XrResult xrDestroySwapchain(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1340,7 +1520,17 @@ XrResult xrDestroySpace(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1373,7 +1563,17 @@ XrResult xrRequestExitSession(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1406,7 +1606,17 @@ XrResult xrEndSession(
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
 
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1442,7 +1652,17 @@ XrResult xrBeginSession(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     // IPCCopyOut(&args, argsSerialized); // Nothing to copy back out
@@ -1491,7 +1711,17 @@ XrResult xrGetViewConfigurationProperties(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -1561,7 +1791,17 @@ XrResult xrEnumerateInstanceExtensionProperties(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);
@@ -1627,7 +1867,17 @@ XrResult xrEnumerateViewConfigurationViews(
 
     header->makePointersRelative(ipcbuf.base);
     IPCFinishRemoteRequest();
-    IPCWaitForHostResponse();
+    IPCWaitResult result = IPCWaitForHostResponse();
+    if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        // Remote process died for some reason.
+        outputDebugF("The Host process was terminated.\n");
+        return XR_ERROR_RUNTIME_FAILURE;
+    } else if(result == IPC_WAIT_ERROR) {
+        // Unknown exception on wait...  Note for debugging purposes
+        outputDebugF("Waiting on remote process failed without indicating the remote process died, at %s:%d\n", __FILE__, __LINE__);
+        return XR_ERROR_RUNTIME_FAILURE;
+    } // else IPC_HOST_RESPONSE_READY is what we expect.
+
     header->makePointersAbsolute(ipcbuf.base);
 
     IPCCopyOut(&args, argsSerialized);

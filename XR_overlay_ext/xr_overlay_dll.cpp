@@ -606,11 +606,6 @@ void IPCFinishHostResponse()
 // Call from Remote to get complete request in shmem
 IPCWaitResult IPCWaitForHostResponse()
 {
-
-    WaitForSingleObject(gHostResponseSema, HOST_RESPONSE_WAIT_MILLIS);
-    return IPC_HOST_RESPONSE_READY;
-	 
-#if 0
     DWORD result;
 
     HANDLE handles[2];
@@ -627,11 +622,10 @@ IPCWaitResult IPCWaitForHostResponse()
     }
 
     if(result == WAIT_OBJECT_0 + 1) {
-        return IPC_REMOTE_PROCESS_TERMINATED;
+        return IPC_HOST_PROCESS_TERMINATED;
     }
 
     return IPC_WAIT_ERROR;
-#endif
 }
 
 // Set up shared memory using a named file-mapping object. 

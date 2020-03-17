@@ -47,12 +47,12 @@
 struct ScopedMutex
 {
     HANDLE mutex;
-    ScopedMutex(HANDLE mutex, DWORD millis, const char *file, int line) :
+    ScopedMutex(HANDLE mutex, DWORD millis, const std::string& what, const char *file, int line) :
 		mutex(mutex)
     {
         DWORD waitresult = WaitForSingleObject(mutex, millis);
         if (waitresult == WAIT_TIMEOUT) {
-            outputDebugF("**OVERLAY** timeout waiting at %s:%d on gOverlayCallMutex\n", file, line);
+            outputDebugF("**OVERLAY** timeout waiting at %s:%d for %s\n", file, line, what.c_str());
             DebugBreak();
         }
     }
@@ -197,6 +197,15 @@ enum SessionLossState {
 
 typedef std::pair<bool, XrSessionState> OptionalSessionStateChange;
 
+std::set<OpenXRHandle> gHandlesLostBySessions;
+
+template <class HANDLE_T>
+bool HandleWasLostBySession(HANDLE_T handle)
+{
+    return gHandlesLostBySessions.find(handle) != gHandlesLostBySessions.end();
+}
+
+
 struct MainSessionContext;
 
 struct OverlaySession
@@ -207,103 +216,7 @@ struct OverlaySession
     bool exitRequested;
 
     // Compositor layers from Overlay Session to overlay on Main Session's layers
-    std::vector<const XrCompositionLayerBaseHeader *> layers;
-    std::set<XrSwapchain> swapchainsDestroyPending;
-    std::set<XrSpace> spacesDestroyPending;
-    std::set<OpenXRHandle> handlesLostBySessions;
     std::map<XrSwapchain, SwapchainCachedDataPtr> swapchainMap;
-
-    template <class HANDLE_T>
-    bool HandleWasLostBySession(HANDLE_T handle)
-    {
-        return handlesLostBySessions.find(handle) != handlesLostBySessions.end();
-    }
-
-    void ClearLayers()
-    {
-        for(auto* l: layers) {
-            FreeXrStructChainWithFree(l);
-        }
-        layers.clear();
-    }
-    template <class LAYERTYPE>
-    void AddLayer(LAYERTYPE copy)
-    {
-        layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(copy));
-    }
-
-    const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain swapchain)
-    {
-        for(const auto* l : layers) {
-            while(l) {
-                switch(l->type) {
-                    case XR_TYPE_COMPOSITION_LAYER_QUAD: {
-                        auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
-                        if(p2->subImage.swapchain == swapchain) {
-                            return l;
-                        }
-                        break;
-                    }
-                    case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
-                        auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(l);
-                        for(uint32_t j = 0; j < p2->viewCount; j++) {
-                            if(p2->views[j].subImage.swapchain == swapchain) {
-                                return l;
-                            }
-                        }
-                        break;
-                    }
-                    case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
-                        auto p2 = reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(l);
-                        if(p2->subImage.swapchain == swapchain) {
-                            return l;
-                        }
-                        break;
-                    }
-                    default: {
-                        outputDebugF("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type);
-                        break;
-                    }
-                }
-                l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
-            }
-        }
-        return nullptr;
-    }
-
-    const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
-    {
-        for(const auto* l : layers) {
-            while(l) {
-                switch(l->type) {
-                    case XR_TYPE_COMPOSITION_LAYER_QUAD: {
-                        auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
-                        if(p2->space == space) {
-                            return l;
-                        }
-                        break;
-                    }
-                    case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
-                        auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(l);
-                        if(p2->space == space) {
-                            return l;
-                        }
-                        break;
-                    }
-                    case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
-                        // Nothing - DepthInfoKHR Is chained from Projection, which has the space
-                        break;
-                    }
-                    default: {
-                        outputDebugF("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type);
-                        break;
-                    }
-                }
-                l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
-            }
-        }
-        return nullptr;
-    }
 
     std::set<XrSpace> ownedSpaces;
     void AddSpace(XrSpace space)
@@ -317,7 +230,7 @@ struct OverlaySession
     void ReleaseSpace(XrSpace space)
     {
         ownedSpaces.erase(space);
-        handlesLostBySessions.erase(space);
+        gHandlesLostBySessions.erase(space);
     }
 
     std::set<XrSwapchain> ownedSwapchains;
@@ -332,7 +245,7 @@ struct OverlaySession
     void ReleaseSwapchain(XrSwapchain sc)
     {
         ownedSwapchains.erase(sc);
-        handlesLostBySessions.erase(sc);
+        gHandlesLostBySessions.erase(sc);
     }
 
     ~OverlaySession()
@@ -342,10 +255,10 @@ struct OverlaySession
         // mark child handles lost so we don't call downchain on those and
         // cause an assertion or validation failure
         for(auto& space: ownedSpaces) {
-            handlesLostBySessions.insert(space);
+            gHandlesLostBySessions.insert(space);
         }
         for(auto& sc: ownedSwapchains) {
-            handlesLostBySessions.insert(sc);
+            gHandlesLostBySessions.insert(sc);
         }
         ownedSpaces.clear();
     }
@@ -461,6 +374,96 @@ struct MainSessionContext
         }
     }
 
+    std::vector<const XrCompositionLayerBaseHeader *> overlayLayers;
+    std::set<XrSwapchain> swapchainsDestroyPending;
+    std::set<XrSpace> spacesDestroyPending;
+
+    void ClearOverlayLayers()
+    {
+        for(auto* l: overlayLayers) {
+            FreeXrStructChainWithFree(l);
+        }
+        overlayLayers.clear();
+    }
+    template <class LAYERTYPE>
+    void AddOverlayLayer(LAYERTYPE copy)
+    {
+        overlayLayers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(copy));
+    }
+
+    const XrCompositionLayerBaseHeader* FindLayerReferencingSwapchain(XrSwapchain swapchain)
+    {
+        for(const auto* l : overlayLayers) {
+            while(l) {
+                switch(l->type) {
+                    case XR_TYPE_COMPOSITION_LAYER_QUAD: {
+                        auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
+                        if(p2->subImage.swapchain == swapchain) {
+                            return l;
+                        }
+                        break;
+                    }
+                    case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+                        auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(l);
+                        for(uint32_t j = 0; j < p2->viewCount; j++) {
+                            if(p2->views[j].subImage.swapchain == swapchain) {
+                                return l;
+                            }
+                        }
+                        break;
+                    }
+                    case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
+                        auto p2 = reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(l);
+                        if(p2->subImage.swapchain == swapchain) {
+                            return l;
+                        }
+                        break;
+                    }
+                    default: {
+                        outputDebugF("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type);
+                        break;
+                    }
+                }
+                l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
+            }
+        }
+        return nullptr;
+    }
+
+    const XrCompositionLayerBaseHeader* FindLayerReferencingSpace(XrSpace space)
+    {
+        for(const auto* l : overlayLayers) {
+            while(l) {
+                switch(l->type) {
+                    case XR_TYPE_COMPOSITION_LAYER_QUAD: {
+                        auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(l);
+                        if(p2->space == space) {
+                            return l;
+                        }
+                        break;
+                    }
+                    case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+                        auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(l);
+                        if(p2->space == space) {
+                            return l;
+                        }
+                        break;
+                    }
+                    case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
+                        // Nothing - DepthInfoKHR Is chained from Projection, which has the space
+                        break;
+                    }
+                    default: {
+                        outputDebugF("**OVERLAY** Warning: FindLayerReferencingSwapchain skipping compositor layer of unknown type %d\n", l->type);
+                        break;
+                    }
+                }
+                l = reinterpret_cast<const XrCompositionLayerBaseHeader*>(l->next);
+            }
+        }
+        return nullptr;
+    }
+
 };
 
 OptionalSessionStateChange OverlaySession::GetAndDoPendingStateChange(MainSessionContext *mainSession)
@@ -535,7 +538,7 @@ OptionalSessionStateChange OverlaySession::GetAndDoPendingStateChange(MainSessio
 
 MainSessionContext *gMainSession = nullptr;
 
-#define SESSION_FUNCTION_PREAMBLE() \
+#define SHARED_SESSION_FUNCTION_PREAMBLE() \
         if(!gMainSession) { \
             return XR_ERROR_SESSION_LOST; \
         } \
@@ -709,6 +712,8 @@ XrResult Remote_xrCreateSwapChain(IPCXrCreateSwapchain* args)
 {
     XrResult result;
 
+    SHARED_SESSION_FUNCTION_PREAMBLE();
+
     result = Overlay_xrCreateSwapchain(args->session, args->createInfo, args->swapchain);
     if(result == XR_SUCCESS) {
 
@@ -726,7 +731,6 @@ XrResult Remote_xrCreateSwapChain(IPCXrCreateSwapchain* args)
         for(uint32_t i = 0; i < count; i++) {
             swapchainTextures[i] = swapchainImages[i].texture;
         }
-      
         gMainSession->overlaySession->swapchainMap[*args->swapchain] = SwapchainCachedDataPtr(new SwapchainCachedData(*args->swapchain, swapchainTextures));
         *args->swapchainCount = count;
     }
@@ -739,8 +743,10 @@ XrResult Remote_xrAcquireSwapchainImage(IPCXrAcquireSwapchainImage* args)
 
     result = Overlay_xrAcquireSwapchainImage(args->swapchain, args->acquireInfo, args->index);
     if(result == XR_SUCCESS) {
-        auto& cache = gMainSession->overlaySession->swapchainMap[args->swapchain];
-        cache->acquired.push_back(*args->index);
+        if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
+            auto& cache = gMainSession->overlaySession->swapchainMap[args->swapchain];
+            cache->acquired.push_back(*args->index);
+        }
     }
 
     return result;
@@ -749,6 +755,8 @@ XrResult Remote_xrAcquireSwapchainImage(IPCXrAcquireSwapchainImage* args)
 XrResult Remote_xrWaitSwapchainImage(IPCXrWaitSwapchainImage* args)
 {
     XrResult result;
+
+    SHARED_SESSION_FUNCTION_PREAMBLE();
 
     result = Overlay_xrWaitSwapchainImage(args->swapchain, args->waitInfo);
 
@@ -775,6 +783,8 @@ XrResult Remote_xrReleaseSwapchainImage(IPCXrReleaseSwapchainImage* args)
 {
     XrResult result;
 
+    SHARED_SESSION_FUNCTION_PREAMBLE();
+
     auto& cache = gMainSession->overlaySession->swapchainMap[args->swapchain];
 
     ID3D11Texture2D *sharedTexture = cache->getSharedTexture(args->sourceImage);
@@ -790,8 +800,8 @@ XrResult Remote_xrReleaseSwapchainImage(IPCXrReleaseSwapchainImage* args)
     int which = cache->acquired[0];
     cache->acquired.erase(cache->acquired.begin());
 
-	ID3D11Device* d3dDevice;
-	sharedTexture->GetDevice(&d3dDevice);
+    ID3D11Device* d3dDevice;
+    sharedTexture->GetDevice(&d3dDevice);
     ID3D11DeviceContext* d3dContext;
     d3dDevice->GetImmediateContext(&d3dContext);
     d3dContext->CopyResource(cache->swapchainImages[which], sharedTexture);
@@ -805,9 +815,13 @@ XrResult Remote_xrDestroySession(IPCXrDestroySession* args)
 {
     XrResult result;
 
+    SHARED_SESSION_FUNCTION_PREAMBLE();
+
     result = Overlay_xrDestroySession(args->session);
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
-    gMainSession->overlaySession->swapchainMap.clear();
+    {
+        ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
+        gMainSession->overlaySession->swapchainMap.clear();
+    }
 
     return result;
 }
@@ -816,26 +830,30 @@ XrResult Remote_xrPollEvent(IPCBuffer& ipcbuf, IPCXrHeader *hdr, IPCXrPollEvent 
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
-    OptionalSessionStateChange pendingStateChange;
-    pendingStateChange = gMainSession->overlaySession->GetAndDoPendingStateChange(gMainSession);
+    if(gMainSession && gMainSession->overlaySession) {
+        OptionalSessionStateChange pendingStateChange;
 
-    if(pendingStateChange.first) {
+        pendingStateChange = gMainSession->overlaySession->GetAndDoPendingStateChange(gMainSession);
 
-        EventDataBufferPtr event(new XrEventDataBuffer);
-        auto* ssc = reinterpret_cast<XrEventDataSessionStateChanged*>(event.get());
-        ssc->type = XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;
-        ssc->next = nullptr;
-        ssc->session = kOverlayFakeSession;
-        ssc->state = pendingStateChange.second;
-        XrTime calculatedTime = 1; // XXX Legal but not what we want - should calculate from system time but cannot guarantee conversion routines will be available
-        ssc->time = calculatedTime;
-        outputDebugF("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state);
-        CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader *>(event.get()), args->event);
-        result = XR_SUCCESS;
+        if(pendingStateChange.first) {
 
-    } else if(gMainInstanceContext.eventsSaved.size() == 0) {
+            EventDataBufferPtr event(new XrEventDataBuffer);
+            auto* ssc = reinterpret_cast<XrEventDataSessionStateChanged*>(event.get());
+            ssc->type = XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;
+            ssc->next = nullptr;
+            ssc->session = kOverlayFakeSession;
+            ssc->state = pendingStateChange.second;
+            XrTime calculatedTime = 1; // XXX Legal but not what we want - should calculate from system time but cannot guarantee conversion routines will be available
+            ssc->time = calculatedTime;
+            outputDebugF("**OVERLAY** synthesizing a session changed Event to %d\n", ssc->state);
+            CopyEventChainIntoBuffer(reinterpret_cast<XrEventDataBaseHeader *>(event.get()), args->event);
+            return XR_SUCCESS;
+        }
+    }
+
+    if(gMainInstanceContext.eventsSaved.size() == 0) {
 
         result = XR_EVENT_UNAVAILABLE;
 
@@ -877,7 +895,7 @@ XrResult Remote_xrPollEvent(IPCBuffer& ipcbuf, IPCXrHeader *hdr, IPCXrPollEvent 
         // event goes out of scope and is deleted
     }
 
-	return result;
+    return result;
 }
 
 bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader *hdr)
@@ -1015,7 +1033,9 @@ bool ProcessRemoteRequestAndReturnConnectionLost(IPCBuffer &ipcbuf, IPCXrHeader 
         case IPC_XR_DESTROY_SWAPCHAIN: {
             auto args = ipcbuf.getAndAdvance<IPCXrDestroySwapchain>();
             hdr->result = Overlay_xrDestroySwapchain(args->swapchain);
-            gMainSession->overlaySession->swapchainMap.erase(args->swapchain);
+            if(gMainSession && gMainSession->overlaySession) {
+                gMainSession->overlaySession->swapchainMap.erase(args->swapchain);
+            }
             break;
         }
 
@@ -1088,22 +1108,23 @@ DWORD WINAPI ThreadBody(LPVOID)
 
             if(result == IPC_REMOTE_PROCESS_TERMINATED) {
 
-                {
-                    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+                if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
+                    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
                     gMainSession->overlaySession->swapchainMap.clear();
-                    gMainSession->overlaySession->ClearLayers();
+                    gMainSession->ClearOverlayLayers();
                 }
                 connectionLost = true;
 
             } else if(result == IPC_WAIT_ERROR) {
 
-                {
-                    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+                if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
+                    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
                     gMainSession->overlaySession->swapchainMap.clear();
-                    gMainSession->overlaySession->ClearLayers();
+                    gMainSession->ClearOverlayLayers();
                 }
                 connectionLost = true;
                 OutputDebugStringA("**OVERLAY** IPC Wait Error\n");
+
             } else {
 
                 IPCBuffer ipcbuf = IPCGetBuffer();
@@ -1118,7 +1139,7 @@ DWORD WINAPI ThreadBody(LPVOID)
                 IPCFinishHostResponse();
             }
 
-            if(connectionLost && gMainSession->overlaySession) {
+            if(connectionLost && gMainSession && gMainSession->overlaySession) {
                 gMainSession->DestroyOverlaySession();
             }
 
@@ -1227,10 +1248,10 @@ XrResult Overlay_xrBeginSession(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         if(gMainSession->overlaySession->sessionState != XR_SESSION_STATE_READY) {
             return XR_ERROR_SESSION_NOT_READY;
@@ -1254,11 +1275,11 @@ XrResult Overlay_xrRequestExitSession(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         if(!gMainSession->overlaySession->isRunning) {
             result = XR_ERROR_SESSION_NOT_RUNNING;
@@ -1281,11 +1302,11 @@ XrResult Overlay_xrEndSession(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         if(gMainSession->overlaySession->sessionState != XR_SESSION_STATE_STOPPING) {
             return XR_ERROR_SESSION_NOT_STOPPING;
@@ -1307,14 +1328,17 @@ XrResult Overlay_xrEndSession(
 XrResult Overlay_xrDestroySession(
     XrSession session)
 {
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     XrResult result;
 
     if(session == kOverlayFakeSession) {
         // overlay session
+        if(!gMainSession) {
+            return XR_ERROR_SESSION_LOST;
+        }
 
-        gMainSession->overlaySession->ClearLayers();
+        gMainSession->ClearOverlayLayers();
         gMainSession->DestroyOverlaySession();
         result = XR_SUCCESS;
 
@@ -1332,18 +1356,20 @@ XrResult Overlay_xrDestroySession(
 
 XrResult Overlay_xrDestroySwapchain(XrSwapchain swapchain)
 {
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     XrResult result;
 
-    bool isSubmitted = (gMainSession->overlaySession->FindLayerReferencingSwapchain(swapchain) != nullptr);
+    if(gMainSession) { // Might have LOST SESSION
+        bool isSubmitted = (gMainSession->FindLayerReferencingSwapchain(swapchain) != nullptr);
 
-    if(isSubmitted) {
-        gMainSession->overlaySession->swapchainsDestroyPending.insert(swapchain);
-        result = XR_SUCCESS;
-    } else {
-        result = gDownchainDispatch->DestroySwapchain(swapchain);
+        if(isSubmitted) {
+            gMainSession->swapchainsDestroyPending.insert(swapchain);
+            return XR_SUCCESS;
+        }
     }
+
+    result = gDownchainDispatch->DestroySwapchain(swapchain);
 
     return result;
 }
@@ -1352,22 +1378,20 @@ XrResult Overlay_xrDestroySpace(XrSpace space)
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
-    if(gMainSession->overlaySession->HandleWasLostBySession(space)) {
-        gMainSession->overlaySession->handlesLostBySessions.erase(space);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
+    if(HandleWasLostBySession(space)) {
+        gHandlesLostBySessions.erase(space);
         return XR_SUCCESS;
     }
 
     if(gMainSession && gMainSession->overlaySession && (gMainSession->overlaySession->OwnsSpace(space))) {
 
-        SESSION_FUNCTION_PREAMBLE();
-
         gMainSession->overlaySession->ReleaseSpace(space);
 
-        bool isSubmitted = (gMainSession->overlaySession->FindLayerReferencingSpace(space) != nullptr);
+        bool isSubmitted = (gMainSession->FindLayerReferencingSpace(space) != nullptr);
 
         if(isSubmitted) {
-            gMainSession->overlaySession->spacesDestroyPending.insert(space);
+            gMainSession->spacesDestroyPending.insert(space);
             result = XR_SUCCESS;
         } else {
             result = gDownchainDispatch->DestroySpace(space);
@@ -1376,7 +1400,7 @@ XrResult Overlay_xrDestroySpace(XrSpace space)
     } else {
 
         result = gDownchainDispatch->DestroySpace(space);
-        gMainSession->overlaySession->handlesLostBySessions.erase(space);
+        gHandlesLostBySessions.erase(space);
     }
 
     return result;
@@ -1412,8 +1436,6 @@ XrResult Overlay_xrCreateSession(
         p = reinterpret_cast<const XrBaseInStructure*>(p->next);
     }
 
-    // TODO handle the case where Main session passes the
-    // overlaycreateinfo but overlaySession = FALSE
     if(!cio) {
 
         // Main session
@@ -1451,7 +1473,7 @@ XrResult Overlay_xrEnumerateSwapchainFormats(
     uint32_t*                                   formatCountOutput,
     int64_t*                                    formats)
 { 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
         if(gMainSession->overlaySession->GetLossState() == SessionLossState::LOST) {
@@ -1472,7 +1494,7 @@ XrResult Overlay_xrEnumerateSwapchainFormats(
 
 XrResult Overlay_xrEnumerateSwapchainImages(XrSwapchain swapchain, uint32_t imageCapacityInput, uint32_t* imageCountOutput, XrSwapchainImageBaseHeader* images)
 { 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     XrResult result = gDownchainDispatch->EnumerateSwapchainImages(swapchain, imageCapacityInput, imageCountOutput, images);
 
@@ -1483,27 +1505,27 @@ XrResult Overlay_xrCreateReferenceSpace(XrSession session, const XrReferenceSpac
 { 
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         result = gDownchainDispatch->CreateReferenceSpace(gMainSession->session, createInfo, space);
         gMainSession->overlaySession->AddSpace(*space);
     } else {
         result = gDownchainDispatch->CreateReferenceSpace(session, createInfo, space);
     }
-    gMainSession->overlaySession->handlesLostBySessions.erase(space);
+    gHandlesLostBySessions.erase(space);
 
     return result;
 }
 
 XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateInfo *createInfo, XrSwapchain *swapchain) 
 { 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         session = gMainSession->session;
     }
@@ -1515,9 +1537,9 @@ XrResult Overlay_xrCreateSwapchain(XrSession session, const  XrSwapchainCreateIn
 
 XrResult Overlay_xrLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 { 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
-    if(gMainSession->overlaySession->HandleWasLostBySession(space)) {
+    if(HandleWasLostBySession(space)) {
         // Pretend everything will be okay and soon whoever tried to use this will catch up
         return XR_SUCCESS;
     }
@@ -1544,7 +1566,7 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
 
         bool waitOnHostWaitFrame = false;
         {
-            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
             // XXX Main may even change states between this and the WaitForSingleObject.
             waitOnHostWaitFrame = gMainSession->overlaySession->isRunning && (gMainSession->overlaySession->sessionState != XR_SESSION_STATE_STOPPING);
@@ -1552,6 +1574,7 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
 
         // Wait on main session
         if(waitOnHostWaitFrame) {
+            // This locks overlay Session frame rate to main Session frame rate
             waitresult = WaitForSingleObject(gOverlayWaitFrameSema, OVERLAY_WAITFRAME_NORMAL_MILLIS); // Try to sync up with Main WaitFrame
             if(waitresult == WAIT_TIMEOUT) {
                 // Overlay can't hang - Main may have transitioned to STOPPING or out of "running".
@@ -1577,7 +1600,7 @@ XrResult Overlay_xrWaitFrame(XrSession session, const XrFrameWaitInfo *info, XrF
     } else {
 
         {
-            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+            ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
             result = gDownchainDispatch->WaitFrame(session, info, state);
             if(gMainSession->savedFrameState) {
@@ -1597,12 +1620,12 @@ XrResult Overlay_xrBeginFrame(XrSession session, const XrFrameBeginInfo *info)
 { 
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
         // Do nothing in overlay session
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         result = XR_SUCCESS;
 
@@ -1619,14 +1642,14 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
 {
     XrResult result = XR_SUCCESS;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     if(session == kOverlayFakeSession) {
 
-        SESSION_FUNCTION_PREAMBLE();
+        SHARED_SESSION_FUNCTION_PREAMBLE();
 
         // TODO: validate blend mode matches main session
-        gMainSession->overlaySession->ClearLayers();
+        gMainSession->ClearOverlayLayers();
         if(info->layerCount > MAX_OVERLAY_LAYER_COUNT) {
             result = XR_ERROR_LAYER_LIMIT_EXCEEDED;
         } else {
@@ -1634,9 +1657,9 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
                 const XrBaseInStructure *copy = CopyXrStructChainWithMalloc(info->layers[i]);
                 if(!copy) {
                     result = XR_ERROR_OUT_OF_MEMORY;
-                    gMainSession->overlaySession->ClearLayers();
+                    gMainSession->ClearOverlayLayers();
                 } else {
-                    gMainSession->overlaySession->AddLayer(copy);
+                    gMainSession->AddOverlayLayer(copy);
                 }
             }
         }
@@ -1644,41 +1667,43 @@ XrResult Overlay_xrEndFrame(XrSession session, const XrFrameEndInfo *info)
     } else {
 
         XrFrameEndInfo info2 = *info;
-        std::unique_ptr<const XrCompositionLayerBaseHeader*> layers2(new const XrCompositionLayerBaseHeader*[info->layerCount + gMainSession->overlaySession->layers.size()]);
+        std::unique_ptr<const XrCompositionLayerBaseHeader*> layers2(new const XrCompositionLayerBaseHeader*[info->layerCount + gMainSession->overlayLayers.size()]);
         memcpy(layers2.get(), info->layers, sizeof(const XrCompositionLayerBaseHeader*) * info->layerCount);
-        for(uint32_t i = 0; i < gMainSession->overlaySession->layers.size(); i++) {
-            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(gMainSession->overlaySession->layers[i]);
+        for(uint32_t i = 0; i < gMainSession->overlayLayers.size(); i++) {
+            layers2.get()[info->layerCount + i] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(gMainSession->overlayLayers[i]);
 	}
 
-        info2.layerCount = info->layerCount + static_cast<uint32_t>(gMainSession->overlaySession->layers.size());
+        info2.layerCount = info->layerCount + static_cast<uint32_t>(gMainSession->overlayLayers.size());
         info2.layers = layers2.get();
 
         result = gDownchainDispatch->EndFrame(session, &info2);
 
-        // XXX there's probably an elegant C++ find with lambda that would do this:
-        auto copyOfPendingDestroySwapchains = gMainSession->overlaySession->swapchainsDestroyPending;
-        for(auto swapchain : copyOfPendingDestroySwapchains) {
-            bool isSubmitted = (gMainSession->overlaySession->FindLayerReferencingSwapchain(swapchain) != nullptr);
+        if(gMainSession->overlaySession) {
+            // XXX there's probably an elegant C++ find with lambda that would do this:
+            auto copyOfPendingDestroySwapchains = gMainSession->swapchainsDestroyPending;
+            for(auto swapchain : copyOfPendingDestroySwapchains) {
+                bool isSubmitted = (gMainSession->FindLayerReferencingSwapchain(swapchain) != nullptr);
 
-            if(!isSubmitted) {
-                result = gDownchainDispatch->DestroySwapchain(swapchain);
-                if(result != XR_SUCCESS) {
-                    return result;
+                if(!isSubmitted) {
+                    result = gDownchainDispatch->DestroySwapchain(swapchain);
+                    if(result != XR_SUCCESS) {
+                        return result;
+                    }
+                    gMainSession->swapchainsDestroyPending.erase(swapchain);
                 }
-                gMainSession->overlaySession->swapchainsDestroyPending.erase(swapchain);
             }
-        }
-        auto copyOfPendingDestroySpaces = gMainSession->overlaySession->spacesDestroyPending;
-        for(auto space : copyOfPendingDestroySpaces) {
-            bool isSubmitted = (gMainSession->overlaySession->FindLayerReferencingSpace(space) != nullptr);
+            auto copyOfPendingDestroySpaces = gMainSession->spacesDestroyPending;
+            for(auto space : copyOfPendingDestroySpaces) {
+                bool isSubmitted = (gMainSession->FindLayerReferencingSpace(space) != nullptr);
 
-            if(!isSubmitted) {
-                result = gDownchainDispatch->DestroySpace(space);
-                gMainSession->overlaySession->handlesLostBySessions.erase(space);
-                if(result != XR_SUCCESS) {
-                    return result;
+                if(!isSubmitted) {
+                    result = gDownchainDispatch->DestroySpace(space);
+                    gHandlesLostBySessions.erase(space);
+                    if(result != XR_SUCCESS) {
+                        return result;
+                    }
+                    gMainSession->spacesDestroyPending.erase(space);
                 }
-                gMainSession->overlaySession->spacesDestroyPending.erase(space);
             }
         }
     }
@@ -1693,7 +1718,7 @@ XrResult XRAPI_CALL Overlay_xrAcquireSwapchainImage(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     result = gDownchainDispatch->AcquireSwapchainImage(swapchain, acquireInfo, index);
 
@@ -1706,7 +1731,7 @@ XrResult Overlay_xrWaitSwapchainImage(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     result = gDownchainDispatch->WaitSwapchainImage(swapchain, waitInfo);
 
@@ -1719,7 +1744,7 @@ XrResult Overlay_xrReleaseSwapchainImage(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
 
     result = gDownchainDispatch->ReleaseSwapchainImage(swapchain, releaseInfo);
 
@@ -1732,7 +1757,7 @@ XrResult Overlay_xrPollEvent(
 {
     XrResult result;
 
-    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, __FILE__, __LINE__);
+    ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
     result = gDownchainDispatch->PollEvent(instance, eventData);
 
     if(result == XR_SUCCESS) {
