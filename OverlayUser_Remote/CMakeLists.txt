@@ -41,6 +41,7 @@ find_package(FreeImagePlus)
 add_executable(OverlayUser_Remote
   overlay_remote.cpp
   remote_openxr.cpp
+  unimplemented.cpp
 )
 
 target_include_directories(OverlayUser_Remote SYSTEM PRIVATE ${FREEIMAGE_INCLUDE_DIRS})
