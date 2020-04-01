@@ -8,7 +8,7 @@ Overlay applications can add a rich variety of content into other XR Application
 * Desktop OS windows in-world
 * In-game HUD
 * Virtual keyboard
-* Chat (e.g. Pluto VR)
+* Chat (e.g. [Pluto VR](https://www.plutovr.com/))
 
 The `XR_EXTX_overlay` experimental extension to OpenXR is intended to prove the concept and uncover issues.  Some issues to address include:
 * Establishing Security and access control requirements
