@@ -4,17 +4,7 @@
 /*
 ** Copyright (c) 2017-2020 The Khronos Group Inc.
 **
-** Licensed under the Apache License, Version 2.0 (the "License");
-** you may not use this file except in compliance with the License.
-** You may obtain a copy of the License at
-**
-**     http://www.apache.org/licenses/LICENSE-2.0
-**
-** Unless required by applicable law or agreed to in writing, software
-** distributed under the License is distributed on an "AS IS" BASIS,
-** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-** See the License for the specific language governing permissions and
-** limitations under the License.
+** SPDX-License-Identifier: Apache-2.0 OR MIT
 */
 
 /*
@@ -302,7 +292,7 @@ XRAPI_ATTR XrResult XRAPI_CALL xrGetD3D11GraphicsRequirementsKHR(
 #ifdef XR_USE_GRAPHICS_API_D3D12
 
 #define XR_KHR_D3D12_enable 1
-#define XR_KHR_D3D12_enable_SPEC_VERSION  5
+#define XR_KHR_D3D12_enable_SPEC_VERSION  6
 #define XR_KHR_D3D12_ENABLE_EXTENSION_NAME "XR_KHR_D3D12_enable"
 typedef struct XrGraphicsBindingD3D12KHR {
     XrStructureType             type;
@@ -375,6 +365,22 @@ XRAPI_ATTR XrResult XRAPI_CALL xrConvertTimeToTimespecTimeKHR(
     struct timespec*                            timespecTime);
 #endif
 #endif /* XR_USE_TIMESPEC */
+
+#ifdef XR_USE_PLATFORM_EGL
+
+#define XR_MNDX_egl_enable 1
+#define XR_MNDX_egl_enable_SPEC_VERSION   1
+#define XR_MNDX_EGL_ENABLE_EXTENSION_NAME "XR_MNDX_egl_enable"
+typedef struct XrGraphicsBindingEGLMNDX {
+    XrStructureType             type;
+    const void* XR_MAY_ALIAS    next;
+    PFNEGLGETPROCADDRESSPROC    getProcAddress;
+    EGLDisplay                  display;
+    EGLConfig                   config;
+    EGLContext                  context;
+} XrGraphicsBindingEGLMNDX;
+
+#endif /* XR_USE_PLATFORM_EGL */
 
 #ifdef __cplusplus
 }
