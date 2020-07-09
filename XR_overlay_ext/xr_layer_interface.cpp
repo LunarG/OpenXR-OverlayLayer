@@ -623,7 +623,7 @@ XrResult Remote_xrEnumerateInstanceExtensionProperties(IPCXrEnumerateInstanceExt
     if(!EnumerateInstanceExtensionProperties) {
 
         OutputDebugStringA("**OVERLAY** couldn't get xrEnumerateInstanceExtensionProperties function from loader.  Is loader linked statically?\n");
-        OutputDebugStringA("Will punt by declaring " XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME " and " XR_KHR_D3D11_ENABLE_EXTENSION_NAME ".\n");
+        OutputDebugStringA("Will punt by declaring " XR_EXTX_OVERLAY_EXTENSION_NAME " and " XR_KHR_D3D11_ENABLE_EXTENSION_NAME ".\n");
 
         if(args->propertyCapacityInput == 0) {
 
@@ -632,8 +632,8 @@ XrResult Remote_xrEnumerateInstanceExtensionProperties(IPCXrEnumerateInstanceExt
         } else {
 
             *args->propertyCountOutput = 1;
-            strncpy_s(args->properties[0].extensionName, XR_MAX_EXTENSION_NAME_SIZE, XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME, XR_MAX_EXTENSION_NAME_SIZE - 1);
-            args->properties[0].extensionVersion = XR_EXT_overlay_preview_SPEC_VERSION;
+            strncpy_s(args->properties[0].extensionName, XR_MAX_EXTENSION_NAME_SIZE, XR_EXTX_OVERLAY_EXTENSION_NAME, XR_MAX_EXTENSION_NAME_SIZE - 1);
+            args->properties[0].extensionVersion = XR_EXTX_overlay_SPEC_VERSION;
 
             if(args->propertyCapacityInput > 1) {
                 (*args->propertyCountOutput)++;
@@ -1170,7 +1170,7 @@ XrResult Overlay_xrCreateApiLayerInstance(const XrInstanceCreateInfo *info, cons
     assert(apiLayerInfo->nextInfo);
 
     gMainInstanceContext.savedRequestedExtensions.clear();
-    gMainInstanceContext.savedRequestedExtensions.insert(XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME);
+    gMainInstanceContext.savedRequestedExtensions.insert(XR_EXTX_OVERLAY_EXTENSION_NAME);
     gMainInstanceContext.savedRequestedExtensions.insert(info->enabledExtensionNames, info->enabledExtensionNames + info->enabledExtensionCount);
 
     gMainInstanceContext.savedRequestedApiLayers.clear();
@@ -1414,11 +1414,11 @@ XrResult Overlay_xrCreateSession(
     XrResult result;
 
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
-    const XrSessionCreateInfoOverlayEXT* cio = nullptr;
+    const XrSessionCreateInfoOverlayEXTX* cio = nullptr;
     const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
     while(p) {
-        if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT) {
-            cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(p);
+        if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX) {
+            cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXTX*>(p);
         }
         if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
             (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
