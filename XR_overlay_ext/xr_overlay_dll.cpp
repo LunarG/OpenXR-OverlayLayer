@@ -272,8 +272,8 @@ XR_OVERLAY_EXT_API XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure*
                 break;
             }
 
-            case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT: {
-                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionCreateInfoOverlayEXT*>(srcbase), copyType, alloc);
+            case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrSessionCreateInfoOverlayEXTX*>(srcbase), copyType, alloc);
                 break;
             }
 
@@ -375,7 +375,7 @@ XR_OVERLAY_EXT_API void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc f
         case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO:
         case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO:
         case XR_TYPE_SESSION_CREATE_INFO:
-        case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT:
+        case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX:
         case XR_TYPE_REFERENCE_SPACE_CREATE_INFO:
         case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR:
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:

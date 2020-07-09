@@ -345,7 +345,7 @@ void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersi
     requiredExtensionNames.push_back("XR_KHR_D3D11_enable");
 #if COMPILE_REMOTE_OVERLAY_APP
     if(mRequestOverlaySession) {
-        requiredExtensionNames.push_back(XR_EXT_OVERLAY_PREVIEW_EXTENSION_NAME);
+        requiredExtensionNames.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
     }
 #endif  // COMPILE_REMOTE_OVERLAY_APP
     if(mDebugUtilsAvailable) {
@@ -401,7 +401,7 @@ void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlay
     if(requestOverlaySession) {
 #if COMPILE_REMOTE_OVERLAY_APP
 
-        XrSessionCreateInfoOverlayEXT sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXT};
+        XrSessionCreateInfoOverlayEXTX sessionCreateInfoOverlay{(XrStructureType)XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX};
         sessionCreateInfoOverlay.next = chain;
         sessionCreateInfoOverlay.createFlags = 0;
         sessionCreateInfoOverlay.sessionLayersPlacement = 1; 
