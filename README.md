@@ -18,11 +18,11 @@ We hope OpenXR runtimes will incorporate a future version of the extension after
 
 ## Implementation Specifics
 
-The `XR_EXTX_overlay` test implementation for Windows and Direct3D 11 consists of an OpenXR API layer and a separate remote overlay application.  The layer and application are implemented against the OpenXR 1.0.8 specification.  The layer is named `XR_ext_overlay.dll` and the remote client is named `OverlayUser_Remote.exe`.  The API layer receives OpenXR commands over RPC (using shared memory) from the remote application.
+The `XR_EXTX_overlay` test implementation for Windows and Direct3D 11 consists of an OpenXR API layer and a separate remote overlay test application.  The layer and application are implemented against the OpenXR 1.0.9 specification.  The layer is named `xr_extx_overlay.dll` and the overlay test is named `overlay-sample.exe`.  The API layer runs both in the main OpenXR app and the overlay app, and the instantiation of the API layer in the main app receives OpenXR commands over RPC (using shared memory) from the instantiation of the API layer in the overlay app.
 
 The test implementation demonstrates the remote overlay client application opening an Overlay session within “unaware” host OpenXR applications.  At commit time we have tested only the OpenXR-SDK-Source `hello_xr` as the host application.
 
-The overlay client executable can also be compiled as a standalone OpenXR program by changing the preprocessor symbol `COMPILE_REMOTE_OVERLAY_APP` to 0.  (Note that this may be visually disorienting in VR as there will be only the one layer and no other environmental cues.)
+The overlay test app can also be compiled as a standalone OpenXR program by changing the preprocessor symbol `COMPILE_REMOTE_OVERLAY_APP` to 0.  (Note that this may be visually disorienting in VR as there will be only the one layer and no other environmental cues.)
 
 Development used CMake 3.12.4, although other versions may be compatible.
 
@@ -31,18 +31,20 @@ Building this test implementation used Visual Studio project files generated usi
 ```
 mkdir build
 cd build
-cmake -D FREEIMAGE_ROOT=freeimage-header-lib-dir -D FREEIMAGEPLUS_ROOT=freeimageplus-header-lib-dir -G "Visual Studio 15 2017" -A x64 ..
+cmake -D OPENXR_SDK_SOURCE=openxr-sdk-source-dir -D FREEIMAGE_ROOT=freeimage-header-lib-dir -D FREEIMAGEPLUS_ROOT=freeimageplus-header-lib-dir -G "Visual Studio 15 2017" -A x64 ..
 ```
 
 As an example, if building using `bash` in `mintty` (msysgit "Git Bash") and you have downloaded the FreeImage dist into `$HOME/Downloads` and unpacked it there, your `cmake` command may look like this:
 
 ```
-cmake -D FREEIMAGE_ROOT=$HOME/Downloads/FreeImage/dist/x64 -D FREEIMAGEPLUS_ROOT=$HOME/Downloads/FreeImage/Wrapper/FreeImagePlus/dist/x64 -G "Visual Studio 15 2017" -A x64 ..
+cmake -D OPENXR_SDK_SOURCE=$HOME/trees/OpenXR-SDK-Source -D FREEIMAGE_ROOT=$HOME/Downloads/FreeImage/dist/x64 -D FREEIMAGEPLUS_ROOT=$HOME/Downloads/FreeImage/Wrapper/FreeImagePlus/dist/x64 -G "Visual Studio 15 2017" -A x64 ..
 ```
 
 The layer DLLs and executables were compiled with Visual Studio 2017, version 15.9.12 in “Debug” configuration.  Only the 64-bit target is supported at this time.
 
 ## Operation
+
+_WORK IN PROGRESS, OUT-OF-DATE, NEEDS REWRITING:_
 
 The implementation has been tested on Microsoft Windows Mixed Reality OpenXR Developer runtime version 100.1910.1004 and on Oculus OpenXR developer channel runtime 1.45p0 with `hello_xr` from https://github.com/KhronosGroup/OpenXR-SDK-Source/tree/release-1.0.7 .
 
