@@ -31,10 +31,10 @@ Building this test implementation used Visual Studio project files generated usi
 ```
 mkdir build
 cd build
-cmake -D OPENXR_SDK_SOURCE=openxr-sdk-source-dir -D FREEIMAGE_ROOT=freeimage-header-lib-dir -D FREEIMAGEPLUS_ROOT=freeimageplus-header-lib-dir -G "Visual Studio 15 2017" -A x64 ..
+cmake -D OPENXR_SDK_SOURCE=openxr-sdk-source-dir -D FREEIMAGE_ROOT=freeimage-header-lib-dir -D FREEIMAGEPLUS_ROOT=freeimageplus-header-lib-dir -G visual-studio-generator-name -A x64 ..
 ```
 
-As an example, if building using `bash` in `mintty` (msysgit "Git Bash") and you have downloaded the FreeImage dist into `$HOME/Downloads` and unpacked it there, your `cmake` command may look like this:
+As an example, if building using `bash` in `mintty` (msysgit "Git Bash"), you have downloaded the FreeImage dist into `$HOME/Downloads` and unpacked it there, and you're using Visual Studio 2017, your `cmake` command may look like this:
 
 ```
 cmake -D OPENXR_SDK_SOURCE=$HOME/trees/OpenXR-SDK-Source -D FREEIMAGE_ROOT=$HOME/Downloads/FreeImage/dist/x64 -D FREEIMAGEPLUS_ROOT=$HOME/Downloads/FreeImage/Wrapper/FreeImagePlus/dist/x64 -G "Visual Studio 15 2017" -A x64 ..
