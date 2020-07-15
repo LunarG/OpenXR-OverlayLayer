@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 #
-# Copyright (c) 2013-2017 The Khronos Group Inc.
+# Copyright (c) 2013-2020 The Khronos Group Inc.
+# Copyright (c) 2020 LunarG Inc. and Pluto VR Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 #
