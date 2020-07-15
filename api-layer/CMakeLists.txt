@@ -102,6 +102,7 @@ add_library(xr_extx_overlay SHARED
     ${OPENXR_SDK_SOURCE}/build/src/xr_generated_dispatch_table.h
     ${OPENXR_SDK_SOURCE}/build/src/xr_generated_dispatch_table.c
     ${OPENXR_SDK_SOURCE}/src/common/hex_and_handles.h
+    overlays.cpp
     ${GENERATED_OUTPUT}
 )
 
