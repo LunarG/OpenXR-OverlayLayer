@@ -25,6 +25,8 @@
 
 cmake_minimum_required(VERSION 3.12.2)
 
+find_package(PythonInterp 3)
+
 project(XR_overlay)
 
 add_subdirectory(XR_overlay_ext)
