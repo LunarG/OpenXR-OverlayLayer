@@ -1,0 +1,19 @@
+{
+   "file_format_version" : "1.0.0",
+   "api_layer": {
+       "name": "XR_EXTX_overlay",
+       "library_path": ".\\xr_extx_overlay.dll",
+       "api_version" : "1.0",
+       "implementation_version" : "1",
+       "description" : "OpenXR overlay extension API layer",
+       "functions": {
+           "xrNegotiateLoaderApiLayerInterface" : "Overlays_xrNegotiateLoaderApiLayerInterface"
+       },
+       "instance_extensions": [
+           {
+               "name": "XR_EXTX_overlay",
+               "extension_version": "4"
+           }
+       ]
+    }
+}
