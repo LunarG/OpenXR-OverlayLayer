@@ -50,7 +50,7 @@
 #define LAYER_EXPORT
 #endif
 
-const char *kOverlayLayerName = "XR_EXT_overlay_api_layer";
+const char *kOverlayLayerName = "xr_extx_overlay";
 
 // Utility function to return an instance based on the generated dispatch table
 // pointer.
@@ -102,7 +102,7 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *info,
         XR_LOADER_INTERFACE_STRUCT_API_LAYER_NEXT_INFO != apiLayerInfo->nextInfo->structType ||
         XR_API_LAYER_NEXT_INFO_STRUCT_VERSION > apiLayerInfo->nextInfo->structVersion ||
         sizeof(XrApiLayerNextInfo) > apiLayerInfo->nextInfo->structSize ||
-        0 != strcmp("XR_APILAYER_LUNARG_api_dump", apiLayerInfo->nextInfo->layerName) ||
+        0 != strcmp(kOverlayLayerName, apiLayerInfo->nextInfo->layerName) ||
         nullptr == apiLayerInfo->nextInfo->nextGetInstanceProcAddr ||
         nullptr == apiLayerInfo->nextInfo->nextCreateApiLayerInstance) {
         return XR_ERROR_INITIALIZATION_FAILED;
@@ -156,7 +156,7 @@ extern "C" {
 
 // Function used to negotiate an interface betewen the loader and an API layer.  Each library exposing one or
 // more API layers needs to expose at least this function.
-XrResult LAYER_EXPORT XRAPI_CALL xrNegotiateLoaderApiLayerInterface(const XrNegotiateLoaderInfo *loaderInfo,
+XrResult LAYER_EXPORT XRAPI_CALL Overlays_xrNegotiateLoaderApiLayerInterface(const XrNegotiateLoaderInfo *loaderInfo,
                                                                     const char* apiLayerName,
                                                                     XrNegotiateApiLayerRequest *apiLayerRequest)
 {
