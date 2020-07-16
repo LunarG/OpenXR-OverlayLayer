@@ -27,21 +27,21 @@
 
 cmake_minimum_required(VERSION 3.12.2)
 
-# find openxr - OPENXR_SDK_SOURCE
-if(NOT OPENXR_SDK_SOURCE)
+# find openxr - OPENXR_SDK_SOURCE_ROOT
+if(NOT OPENXR_SDK_SOURCE_ROOT)
     message(
         FATAL_ERROR
-            "Set OPENXR_SDK_SOURCE to root of OpenXR-SDK-Source 1.0.9 tree with built header and global_generaed_files"
+            "Set OPENXR_SDK_SOURCE_ROOT to root of OpenXR-SDK-Source 1.0.9 tree with built header and global_generaed_files"
     )
 endif()
 
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL Windows)
     set(CODEGEN_PYTHON_PATH
-        "${OPENXR_SDK_SOURCE}/specification/scripts;${OPENXR_SDK_SOURCE}/src/scripts;$ENV{PYTHONPATH}"
+        "${OPENXR_SDK_SOURCE_ROOT}/specification/scripts;${OPENXR_SDK_SOURCE_ROOT}/src/scripts;$ENV{PYTHONPATH}"
     )
 else()
     set(CODEGEN_PYTHON_PATH
-        "${OPENXR_SDK_SOURCE}/specification/scripts:${OPENXR_SDK_SOURCE}/src/scripts:$ENV{PYTHONPATH}"
+        "${OPENXR_SDK_SOURCE_ROOT}/specification/scripts:${OPENXR_SDK_SOURCE_ROOT}/src/scripts:$ENV{PYTHONPATH}"
     )
 endif()
 
@@ -58,12 +58,12 @@ macro(run_overlay_layer_generator dependency output)
             ${CMAKE_COMMAND} -E env "PYTHONPATH=${CODEGEN_PYTHON_PATH}"
             ${PYTHON_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/generate_overlays_apilayer.py
-            -registry ${OPENXR_SDK_SOURCE}/specification/registry/xr.xml
+            -registry ${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml
             ${output}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        DEPENDS "${OPENXR_SDK_SOURCE}/specification/registry/xr.xml"
-                "${OPENXR_SDK_SOURCE}/specification/scripts/generator.py"
-                "${OPENXR_SDK_SOURCE}/specification/scripts/reg.py"
+        DEPENDS "${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml"
+                "${OPENXR_SDK_SOURCE_ROOT}/specification/scripts/generator.py"
+                "${OPENXR_SDK_SOURCE_ROOT}/specification/scripts/reg.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/${dependency}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/generate_overlays_apilayer.py"
                 ${ARGN}
@@ -99,25 +99,25 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release"
     CACHE STRING "Configuration types" FORCE)
 
 add_library(xr_extx_overlay SHARED
-    ${OPENXR_SDK_SOURCE}/build/src/xr_generated_dispatch_table.h
-    ${OPENXR_SDK_SOURCE}/build/src/xr_generated_dispatch_table.c
-    ${OPENXR_SDK_SOURCE}/src/common/hex_and_handles.h
+    ${OPENXR_SDK_SOURCE_ROOT}/build/src/xr_generated_dispatch_table.h
+    ${OPENXR_SDK_SOURCE_ROOT}/build/src/xr_generated_dispatch_table.c
+    ${OPENXR_SDK_SOURCE_ROOT}/src/common/hex_and_handles.h
     overlays.cpp
     ${GENERATED_OUTPUT}
 )
 
 target_include_directories(xr_extx_overlay
     PRIVATE
-    ${OPENXR_SDK_SOURCE}/src/common
+    ${OPENXR_SDK_SOURCE_ROOT}/src/common
     ${CMAKE_CURRENT_SOURCE_DIR}
 
     # for OpenXR headers
-    # ${OPENXR_SDK_SOURCE}/build/include/openxr
-    ${OPENXR_SDK_SOURCE}/build/include
-    ${OPENXR_SDK_SOURCE}/include/openxr
+    # ${OPENXR_SDK_SOURCE_ROOT}/build/include/openxr
+    ${OPENXR_SDK_SOURCE_ROOT}/build/include
+    ${OPENXR_SDK_SOURCE_ROOT}/include/openxr
 
     # for generated dispatch table
-    ${OPENXR_SDK_SOURCE}/build/src
+    ${OPENXR_SDK_SOURCE_ROOT}/build/src
 
     # for target-specific generated files
     ${CMAKE_CURRENT_SOURCE_DIR}
