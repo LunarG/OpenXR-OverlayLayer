@@ -73,13 +73,12 @@ def dump(indent, depth, element):
             out.write("%stail = \"%s\"\n" % (" " * (indent + 4), element.tail.strip()))
 
 LayerName = "OverlaysLayer"
-MutexHandles = False
+MutexHandles = True
 
-registry = sys.argv[1]
-output_name = sys.argv[2]
+registryFilename = sys.argv[1]
+outputFilename = sys.argv[2]
 
-
-tree = etree.parse('xr.xml')
+tree = etree.parse(registryFilename)
 root = tree.getroot()
 
 out = open("output.dump", "w")
@@ -197,85 +196,82 @@ if True:
         else:
             print("handle %s has parent type %s" % (handles[handle][0], handles[handle][1]))
 
-"""
-std::unordered_map<XrInstance, XrGeneratedDispatchTable*> g_instance_dispatch_map;
-std::mutex g_instance_dispatch_mutex;
-std::unordered_map<XrSession, XrGeneratedDispatchTable*> g_session_dispatch_map;
-std::mutex g_session_dispatch_mutex;
-std::unordered_map<XrSpace, XrGeneratedDispatchTable*> g_space_dispatch_map;
-std::mutex g_space_dispatch_mutex;
-std::unordered_map<XrAction, XrGeneratedDispatchTable*> g_action_dispatch_map;
-std::mutex g_action_dispatch_mutex;
-std::unordered_map<XrSwapchain, XrGeneratedDispatchTable*> g_swapchain_dispatch_map;
-std::mutex g_swapchain_dispatch_mutex;
-std::unordered_map<XrActionSet, XrGeneratedDispatchTable*> g_actionset_dispatch_map;
-std::mutex g_actionset_dispatch_mutex;
-std::unordered_map<XrDebugUtilsMessengerEXT, XrGeneratedDispatchTable*> g_debugutilsmessengerext_dispatch_map;
-std::mutex g_debugutilsmessengerext_dispatch_mutex;
-"""
-
 only_child_handles = [h for h in supported_handles if h != "XrInstance"]
 
-source_text = ""
+source_text = """
+#include "xr_generated_overlays.hpp"
+#include "xr_generated_dispatch_table.h"
+#include "hex_and_handles.h"
+
+#include <cstring>
+#include <mutex>
+#include <sstream>
+#include <iomanip>
+#include <unordered_map>
+
+"""
+
 header_text = ""
 
-for handle_name in handles.keys():
-    header_text += f"struct {LayerName}%sHandleInfo\n" % (handle_name)
+for handle_type in handles.keys():
+    header_text += f"struct {LayerName}{handle_type}HandleInfo\n"
     header_text += "{\n"
     header_text += "        std::set<uint64_t> childHandles;\n"
-    parent_name = str(handles[handle_name][1] or "")
-    if parent_name:
-        header_text += "        %s parentHandle;\n" % (parent_name)
+    parent_type = str(handles[handle_type][1] or "")
+    if parent_type:
+        header_text += f"        {parent_type} parentHandle;\n"
     header_text += "        XrGeneratedDispatchTable *downchain;\n"
-    if parent_name:
-        header_text += f"       {LayerName}%sHandleInfo(%s parent, XrGeneratedDispatchTable *downchain_) : \n" % (handle_name, parent_name)
+    if parent_type:
+        header_text += f"       {LayerName}{handle_type}HandleInfo({parent_type} parent, XrGeneratedDispatchTable *downchain_) : \n"
         header_text += "           parentHandle(parent),\n"
         header_text += "           downchain(downchain_)\n"
         header_text += "         {}\n"
     else:
-        header_text += f"       {LayerName}%sHandleInfo(XrGeneratedDispatchTable *downchain) : \n" % (handle_name)
+        header_text += f"       {LayerName}{handle_type}HandleInfo(XrGeneratedDispatchTable *downchain) : \n"
         header_text += "           downchain(downchain_)\n"
         header_text += "         {}\n"
     header_text += "};\n"
 
-    source_text = "" 
-    source_text += f"std::unordered_map<%s, {LayerName}%sHandleInfo> g{LayerName}%sToHandleInfo;\n" % (handle_name, handle_name, handle_name)
+    source_text += f"std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo> g{LayerName}{handle_type}ToHandleInfo;\n"
     if MutexHandles:
-        source_text += f"std::mutex g{LayerName}%sToHandleInfoMutex;\n" % (handle_name)
-    source_text += ";\n"
+        source_text += f"std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
+    source_text += "\n"
 
 
 for command_name in supported_commands:
     command = commands[command_name]
 
     parameters = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
-    source_text += "%s %s(%s)\n" % (command["return_type"], api_layer_name_for_command(command_name), parameters)
+    command_type = command["return_type"]
+    layer_name = api_layer_name_for_command(command_name)
+    source_text += f"{command_type} {layer_name}({parameters})\n"
     source_text += "{\n"
 
-    handle_parameter_type = command["parameters"][0].find("type").text
-    handle_parameter_name = command["parameters"][0].find("name").text
+    handle_type = command["parameters"][0].find("type").text
+    handle_name = command["parameters"][0].find("name").text
 
     # handles are guaranteed not to be destroyed while in another command according to the spec...
     if MutexHandles:
-        source_text += f"    std::unique_lock<std::mutex> mlock(g{LayerName}%sToHandleInfoMutex);\n" % (handle_parameter_type)
-    source_text += f"    {LayerName}%sHandleInfo& %sInfo = g{LayerName}%sToHandleInfo[%s];\n\n" % (handle_parameter_type, handle_parameter_name, handle_parameter_type, handle_parameter_name)
+        source_text += f"    std::unique_lock<std::mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
+    source_text += f"    {LayerName}{handle_type}HandleInfo& {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo[{handle_name}];\n\n"
 
     parameter_names = ", ".join([parameter_to_name(command_name, parameter) for parameter in command["parameters"]])
-    source_text += "    XrResult result = %sInfo.dispatch->%s(%s);\n\n" % (handle_parameter_name, dispatch_name_for_command(command_name), parameter_names)
+    dispatch_name = dispatch_name_for_command(command_name)
+    source_text += f"    XrResult result = {handle_name}Info.dispatch->{dispatch_name}({parameter_names});\n\n"
 
     if command_name.find("Create") >= 0:
-        created_parameter_type = command["parameters"][-1].find("type").text
-        created_parameter_name = command["parameters"][-1].find("name").text
+        created_type = command["parameters"][-1].find("type").text
+        created_name = command["parameters"][-1].find("name").text
         # just assume we hand-coded Instance creation so these are all child handle types
-        source_text += f"    g{LayerName}%sToHandleInfo.emplace_back(*%s, %s, %sInfo.dispatch);\n" % (created_parameter_type, created_parameter_name, handle_parameter_name, handle_parameter_name)
-        source_text += f"    %sInfo.childHandles.insert(*%s);\n" % (handle_parameter_name, created_parameter_name)
+        source_text += f"    g{LayerName}{created_type}ToHandleInfo.emplace_back(*{created_name}, {handle_name}, {handle_name}Info.dispatch);\n"
+        source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
 
     source_text += "    return result;\n"
 
     source_text += "}\n"
     source_text += "\n";
 
-if output_name == "xr_generated_overlays.cpp":
-    open(output_name, "w").write(source_text)
+if outputFilename == "xr_generated_overlays.cpp":
+    open(outputFilename, "w").write(source_text)
 else:
-    open(output_name, "w").write(header_text)
+    open(outputFilename, "w").write(header_text)
