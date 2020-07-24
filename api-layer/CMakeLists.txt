@@ -58,7 +58,7 @@ macro(run_overlay_layer_generator dependency output)
             ${CMAKE_COMMAND} -E env "PYTHONPATH=${CODEGEN_PYTHON_PATH}"
             ${PYTHON_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/generate_overlays_apilayer.py
-            -registry ${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml
+            ${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml
             ${output}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         DEPENDS "${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml"
@@ -92,8 +92,8 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/api_layer_platform_defines.h ${CMAKE_
 
 set(GENERATED_OUTPUT)
 set(GENERATED_DEPENDS)
-run_overlay_layer_generator(overlays_generator.py xr_generated_overlays.cpp)
-run_overlay_layer_generator(overlays_generator.py xr_generated_overlays.hpp)
+run_overlay_layer_generator(generate.py xr_generated_overlays.cpp)
+run_overlay_layer_generator(generate.py xr_generated_overlays.hpp)
 
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release"
     CACHE STRING "Configuration types" FORCE)
