@@ -45,7 +45,7 @@ else()
     )
 endif()
 
-macro(run_overlay_layer_generator dependency output)
+macro(run_overlay_layer_generator generator output)
     if(NOT PYTHON_EXECUTABLE)
         message(
             FATAL_ERROR
@@ -57,17 +57,14 @@ macro(run_overlay_layer_generator dependency output)
         COMMAND
             ${CMAKE_COMMAND} -E env "PYTHONPATH=${CODEGEN_PYTHON_PATH}"
             ${PYTHON_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/generate_overlays_apilayer.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/${generator}
             ${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml
             ${output}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         DEPENDS "${OPENXR_SDK_SOURCE_ROOT}/specification/registry/xr.xml"
-                "${OPENXR_SDK_SOURCE_ROOT}/specification/scripts/generator.py"
-                "${OPENXR_SDK_SOURCE_ROOT}/specification/scripts/reg.py"
-                "${CMAKE_CURRENT_SOURCE_DIR}/${dependency}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/generate_overlays_apilayer.py"
+                "${CMAKE_CURRENT_SOURCE_DIR}/${generator}"
                 ${ARGN}
-        COMMENT "Generating ${output} using ${PYTHON_EXECUTABLE} on ${dependency}"
+        COMMENT "Generating ${output} using ${PYTHON_EXECUTABLE} on ${generator}"
     )
     set_source_files_properties(${output} PROPERTIES GENERATED TRUE)
     list(APPEND GENERATED_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${output}")

@@ -1,6 +1,5 @@
 import sys
 import xml.etree.ElementTree as etree
-print("hello")
 
 def parse_parameter(reg_parameter):
     # XXX placeholder
@@ -57,20 +56,20 @@ def dispatch_name_for_command(command):
     return command[2:]
 
 
-def dump(indent, depth, element):
+def dump(file, indent, depth, element):
     # if element.tag == "type" and element.attrib.get("name", "") == "XrEventDataBuffer":
-        # out.write("%s\n" % dir(element[2]))
+        # file.write("%s\n" % dir(element[2]))
     if depth == 0:
         return
-    out.write("%s%s : %s\n" % (" " * indent, element.tag, element.attrib))
+    file.write("%s%s : %s\n" % (" " * indent, element.tag, element.attrib))
     if element.text:
         if len(element.text.strip()) > 0:
-            out.write("%stext = \"%s\"\n" % (" " * (indent + 4), element.text.strip()))
+            file.write("%stext = \"%s\"\n" % (" " * (indent + 4), element.text.strip()))
     for child in element:
         dump(indent + 4, depth - 1, child)
     if element.tail:
         if len(element.tail.strip()) > 0:
-            out.write("%stail = \"%s\"\n" % (" " * (indent + 4), element.tail.strip()))
+            file.write("%stail = \"%s\"\n" % (" " * (indent + 4), element.tail.strip()))
 
 LayerName = "OverlaysLayer"
 MutexHandles = True
@@ -81,17 +80,17 @@ outputFilename = sys.argv[2]
 tree = etree.parse(registryFilename)
 root = tree.getroot()
 
-out = open("output.dump", "w")
-
-dump(0, 100, root)
-
+if False:
+    out = open("output.dump", "w")
+    dump(out, 0, 100, root)
+    out.close()
 
 commands = {}
 
 reg_commands = root.find("commands")
 
 for reg_command in reg_commands:
-    print("%s" % (reg_command.find("proto").find("name").text))
+    # print("%s" % (reg_command.find("proto").find("name").text))
     command = {}
     command["return_type"] = reg_command.find("proto").find("type").text
     command_name = reg_command.find("proto").find("name").text
@@ -189,7 +188,7 @@ if False:
         parameters = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
         print("%s %s(%s)" % (command["return_type"], command["name"], parameters))
 
-if True:
+if False:
     for handle in supported_handles:
         if not handles[handle][1]:
             print("handle %s" % (handles[handle][0]))
@@ -200,7 +199,6 @@ only_child_handles = [h for h in supported_handles if h != "XrInstance"]
 
 source_text = """
 #include "xr_generated_overlays.hpp"
-#include "xr_generated_dispatch_table.h"
 #include "hex_and_handles.h"
 
 #include <cstring>
@@ -211,30 +209,56 @@ source_text = """
 
 """
 
-header_text = ""
+header_text = """
+#include "api_layer_platform_defines.h"
+#include "xr_generated_dispatch_table.h"
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+
+#include <mutex>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
+#include <set>
+
+"""
 
 for handle_type in handles.keys():
     header_text += f"struct {LayerName}{handle_type}HandleInfo\n"
     header_text += "{\n"
-    header_text += "        std::set<uint64_t> childHandles;\n"
+    # XXX header_text += "        std::set<uint64_t> childHandles;\n"
     parent_type = str(handles[handle_type][1] or "")
     if parent_type:
         header_text += f"        {parent_type} parentHandle;\n"
     header_text += "        XrGeneratedDispatchTable *downchain;\n"
+    header_text += "        bool invalid = false;\n"
     if parent_type:
-        header_text += f"       {LayerName}{handle_type}HandleInfo({parent_type} parent, XrGeneratedDispatchTable *downchain_) : \n"
-        header_text += "           parentHandle(parent),\n"
-        header_text += "           downchain(downchain_)\n"
-        header_text += "         {}\n"
+        header_text += f"        {LayerName}{handle_type}HandleInfo({parent_type} parent, XrGeneratedDispatchTable *downchain_) : \n"
+        header_text += "            parentHandle(parent),\n"
+        header_text += "            downchain(downchain_)\n"
+        header_text += "        {}\n"
     else:
-        header_text += f"       {LayerName}{handle_type}HandleInfo(XrGeneratedDispatchTable *downchain) : \n"
-        header_text += "           downchain(downchain_)\n"
-        header_text += "         {}\n"
+        # we know this is XrInstance...
+        header_text += f"        {LayerName}{handle_type}HandleInfo(XrGeneratedDispatchTable *downchain_): \n"
+        header_text += "            downchain(downchain_)\n"
+        header_text += "        {}\n"
+        header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
+        header_text += "        {\n"
+        header_text += "            delete downchain;\n"
+        header_text += "        }\n"
+    header_text += f"        void Destroy() /* For OpenXR's intents, not a dtor */\n"
+    header_text += "        {\n"
+    header_text += "            invalid = true;\n"
+    # XXX header_text += "            ;\n" delete all child handles, and how will we do that?
+    header_text += "        }\n"
     header_text += "};\n"
 
     source_text += f"std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo> g{LayerName}{handle_type}ToHandleInfo;\n"
+    header_text += f"extern std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo> g{LayerName}{handle_type}ToHandleInfo;\n"
     if MutexHandles:
         source_text += f"std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
+        header_text += f"extern std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
     source_text += "\n"
 
 
@@ -243,8 +267,8 @@ for command_name in supported_commands:
 
     parameters = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
     command_type = command["return_type"]
-    layer_name = api_layer_name_for_command(command_name)
-    source_text += f"{command_type} {layer_name}({parameters})\n"
+    layer_command = api_layer_name_for_command(command_name)
+    source_text += f"{command_type} {layer_command}({parameters})\n"
     source_text += "{\n"
 
     handle_type = command["parameters"][0].find("type").text
@@ -253,23 +277,76 @@ for command_name in supported_commands:
     # handles are guaranteed not to be destroyed while in another command according to the spec...
     if MutexHandles:
         source_text += f"    std::unique_lock<std::mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
-    source_text += f"    {LayerName}{handle_type}HandleInfo& {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo[{handle_name}];\n\n"
+    source_text += f"    {LayerName}{handle_type}HandleInfo& {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo.at({handle_name});\n\n"
 
     parameter_names = ", ".join([parameter_to_name(command_name, parameter) for parameter in command["parameters"]])
-    dispatch_name = dispatch_name_for_command(command_name)
-    source_text += f"    XrResult result = {handle_name}Info.dispatch->{dispatch_name}({parameter_names});\n\n"
+    dispatch_command = dispatch_name_for_command(command_name)
+    source_text += f"    XrResult result = {handle_name}Info.downchain->{dispatch_command}({parameter_names});\n\n"
 
     if command_name.find("Create") >= 0:
         created_type = command["parameters"][-1].find("type").text
         created_name = command["parameters"][-1].find("name").text
         # just assume we hand-coded Instance creation so these are all child handle types
-        source_text += f"    g{LayerName}{created_type}ToHandleInfo.emplace_back(*{created_name}, {handle_name}, {handle_name}Info.dispatch);\n"
-        source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
+        source_text += f"    g{LayerName}{created_type}ToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*{created_name}), std::forward_as_tuple({handle_name}, {handle_name}Info.downchain));\n"
+        # XXX source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
 
     source_text += "    return result;\n"
 
     source_text += "}\n"
     source_text += "\n";
+
+# make GetInstanceProcAddr ---------------------------------------------------
+
+header_text += f"XrResult {LayerName}XrGetInstanceProcAddr("
+header_text += """
+    XrInstance                                  instance,
+    const char*                                 name,
+    PFN_xrVoidFunction*                         function);
+"""
+
+source_text += f"XrResult {LayerName}XrGetInstanceProcAddr("
+source_text += """
+    XrInstance                                  instance,
+    const char*                                 name,
+    PFN_xrVoidFunction*                         function)
+{
+    // Set the function pointer to NULL so that the fall-through below actually works:
+    *function = nullptr;
+
+"""
+first = True
+for command_name in supported_commands:
+    command = commands[command_name]
+    layer_command = api_layer_name_for_command(command_name)
+    if not first:
+        source_text += "    } else "
+    source_text += f"    if (strcmp(name, \"{command_name}\") == 0) " + "{\n"
+    source_text += f"        *function = reinterpret_cast<PFN_xrVoidFunction>({layer_command});\n"
+    first = False
+
+unsupported_command_names = [c for c in commands.keys() if not c in supported_commands]
+
+for command_name in unsupported_command_names:
+    command = commands[command_name]
+    layer_command = api_layer_name_for_command(command_name)
+    source_text += "    } else " + f"if (strcmp(name, \"{command_name}\") == 0) " + "{\n"
+    source_text += f"        *function = nullptr;\n"
+
+source_text += """
+    }
+
+    // If we set up the function, just return
+    if (*function != nullptr) {
+        return XR_SUCCESS;
+    }
+
+    // Since Overlays proxies Session and Session children over IPC
+    // and has special handling for some objects,
+    // if we didn't set up the function, we must not offer it.
+    return XR_ERROR_FUNCTION_UNSUPPORTED;
+}
+"""
+
 
 if outputFilename == "xr_generated_overlays.cpp":
     open(outputFilename, "w").write(source_text)
