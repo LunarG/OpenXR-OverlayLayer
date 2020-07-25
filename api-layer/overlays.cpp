@@ -52,6 +52,7 @@
 
 const char *kOverlayLayerName = "xr_extx_overlay";
 
+#if 0
 // Utility function to return an instance based on the generated dispatch table
 // pointer.
 XrInstance FindInstanceFromDispatchTable(XrGeneratedDispatchTable *dispatch_table)
@@ -66,6 +67,7 @@ XrInstance FindInstanceFromDispatchTable(XrGeneratedDispatchTable *dispatch_tabl
     }
     return instance;
 }
+#endif
 
 XrResult OverlaysLayerXrCreateInstance(const XrInstanceCreateInfo * /*info*/, XrInstance * /*instance*/)
 {
@@ -126,8 +128,8 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *info,
     auto *next_dispatch = new XrGeneratedDispatchTable();
     GeneratedXrPopulateDispatchTable(next_dispatch, returned_instance, next_get_instance_proc_addr);
 
-    std::unique_lock<std::mutex> mlock(g_instance_dispatch_mutex);
-    g_instance_dispatch_map[returned_instance] = next_dispatch;
+    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+	gOverlaysLayerXrInstanceToHandleInfo.emplace(*instance, next_dispatch);
 
     // CreateOverlaySessionThread();
 
@@ -135,17 +137,11 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *info,
 }
 
 XrResult OverlaysLayerXrDestroyInstance(XrInstance instance) {
-    std::unique_lock<std::mutex> mlock(g_instance_dispatch_mutex);
-    XrGeneratedDispatchTable *next_dispatch = nullptr;
-    auto map_iter = g_instance_dispatch_map.find(instance);
-    if (map_iter != g_instance_dispatch_map.end()) {
-        next_dispatch = map_iter->second;
-    }
-    mlock.unlock();
-
-    if (nullptr == next_dispatch) {
-        return XR_ERROR_HANDLE_INVALID;
-    }
+	std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+	OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+	XrGeneratedDispatchTable *next_dispatch = instanceInfo.downchain;
+	instanceInfo.Destroy();
+	mlock.unlock();
 
     next_dispatch->DestroyInstance(instance);
 
