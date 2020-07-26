@@ -210,7 +210,7 @@ source_text = """
 """
 
 header_text = """
-#include "api_layer_platform_defines.h"
+// #include "api_layer_platform_defines.h"
 #include "xr_generated_dispatch_table.h"
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
