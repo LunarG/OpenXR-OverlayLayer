@@ -72,7 +72,6 @@ def dump(file, indent, depth, element):
             file.write("%stail = \"%s\"\n" % (" " * (indent + 4), element.tail.strip()))
 
 LayerName = "OverlaysLayer"
-MutexHandles = True
 
 registryFilename = sys.argv[1]
 outputFilename = sys.argv[2]
@@ -195,7 +194,42 @@ if False:
         else:
             print("handle %s has parent type %s" % (handles[handle][0], handles[handle][1]))
 
-only_child_handles = [h for h in supported_handles if h != "XrInstance"]
+
+# store preambles of generated header and source -----------------------------
+
+
+before_downchain = {}
+
+after_downchain = {}
+
+add_to_handle_struct = {}
+
+# after_downchain[
+
+add_to_handle_struct["XrInstance"] = {
+    "members" : """
+        std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
+    """,
+    }
+
+add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
+    "members" : """
+        XrDebugUtilsMessengerCreateInfoEXT createInfo;
+    """,
+    }
+
+after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
+    gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(*messenger).createInfo = *createInfo;
+    // Already have lock on gOverlaysLayerXrInstanceToHandleInfo.at
+    gOverlaysLayerXrInstanceToHandleInfo.at(instance).debugUtilsMessengers.insert(*messenger);
+"""
+
+after_downchain["xrCreateSession"] = """
+    OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, "Hi, a session was created.\\n");
+"""
+
+# store preambles of generated header and source -----------------------------
+
 
 source_text = """
 #include "xr_generated_overlays.hpp"
@@ -222,9 +256,19 @@ header_text = """
 #include <vector>
 #include <set>
 
+#include "overlays.h"
+
 """
 
-for handle_type in handles.keys():
+
+# make types, structs, variables ---------------------------------------------
+
+
+only_child_handles = [h for h in supported_handles if h != "XrInstance"]
+
+only_child_handles = [h for h in supported_handles if h != "XrInstance"]
+
+for handle_type in supported_handles:
     header_text += f"struct {LayerName}{handle_type}HandleInfo\n"
     header_text += "{\n"
     # XXX header_text += "        std::set<uint64_t> childHandles;\n"
@@ -233,6 +277,7 @@ for handle_type in handles.keys():
         header_text += f"        {parent_type} parentHandle;\n"
     header_text += "        XrGeneratedDispatchTable *downchain;\n"
     header_text += "        bool invalid = false;\n"
+    header_text += add_to_handle_struct.get(handle_type, {}).get("members", "")
     if parent_type:
         header_text += f"        {LayerName}{handle_type}HandleInfo({parent_type} parent, XrGeneratedDispatchTable *downchain_) : \n"
         header_text += "            parentHandle(parent),\n"
@@ -256,10 +301,14 @@ for handle_type in handles.keys():
 
     source_text += f"std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo> g{LayerName}{handle_type}ToHandleInfo;\n"
     header_text += f"extern std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo> g{LayerName}{handle_type}ToHandleInfo;\n"
-    if MutexHandles:
-        source_text += f"std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
-        header_text += f"extern std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
+
+    source_text += f"std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
+    header_text += f"extern std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
+
     source_text += "\n"
+
+
+# make functions returned by xrGetInstanceProcAddr ---------------------------
 
 
 for command_name in supported_commands:
@@ -275,9 +324,10 @@ for command_name in supported_commands:
     handle_name = command["parameters"][0].find("name").text
 
     # handles are guaranteed not to be destroyed while in another command according to the spec...
-    if MutexHandles:
-        source_text += f"    std::unique_lock<std::mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
+    source_text += f"    std::unique_lock<std::mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
     source_text += f"    {LayerName}{handle_type}HandleInfo& {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo.at({handle_name});\n\n"
+
+    source_text += before_downchain.get(command_name, "")
 
     parameter_names = ", ".join([parameter_to_name(command_name, parameter) for parameter in command["parameters"]])
     dispatch_command = dispatch_name_for_command(command_name)
@@ -287,13 +337,18 @@ for command_name in supported_commands:
         created_type = command["parameters"][-1].find("type").text
         created_name = command["parameters"][-1].find("name").text
         # just assume we hand-coded Instance creation so these are all child handle types
+        # in C++17 this would be an initializer list but before that we have to use the forwarding syntax.
         source_text += f"    g{LayerName}{created_type}ToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*{created_name}), std::forward_as_tuple({handle_name}, {handle_name}Info.downchain));\n"
         # XXX source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
+
+    source_text += f"    mlock.unlock();\n"
+
+    source_text += after_downchain.get(command_name, "")
 
     source_text += "    return result;\n"
 
     source_text += "}\n"
-    source_text += "\n";
+    source_text += "\n"
 
 # make GetInstanceProcAddr ---------------------------------------------------
 
