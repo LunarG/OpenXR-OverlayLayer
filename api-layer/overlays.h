@@ -27,4 +27,24 @@ void OverlaysLayerLogMessage(XrInstance instance,
                          XrDebugUtilsMessageSeverityFlagsEXT message_severity, const char* command_name,
                          const std::set<HandleTypePair>& objects_info, const char* message);
 
+inline std::string fmt(const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    int size = vsnprintf(nullptr, 0, fmt, args);
+    va_end(args);
+
+    if(size >= 0) {
+        int provided = size + 1;
+        std::unique_ptr<char[]> buf(new char[provided]);
+
+        va_start(args, fmt);
+        vsnprintf(buf.get(), provided, fmt, args);
+        va_end(args);
+
+        return std::string(buf.get());
+    }
+    return "(fmt() failed, vsnprintf returned -1)";
+}
+
 #endif /* _OVERLAYS_H_ */

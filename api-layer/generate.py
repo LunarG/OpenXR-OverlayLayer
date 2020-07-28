@@ -66,7 +66,7 @@ def dump(file, indent, depth, element):
         if len(element.text.strip()) > 0:
             file.write("%stext = \"%s\"\n" % (" " * (indent + 4), element.text.strip()))
     for child in element:
-        dump(indent + 4, depth - 1, child)
+        dump(file, indent + 4, depth - 1, child)
     if element.tail:
         if len(element.tail.strip()) > 0:
             file.write("%stail = \"%s\"\n" % (" " * (indent + 4), element.tail.strip()))
@@ -105,7 +105,19 @@ handles = {} # value is a tuple of handle name and parent handle name
 
 atoms = set()
 
+structs = {} # value is a tuple of struct name, type enum, extends struct name, and list of members
+    # members are dict of "name", "type", other goop depending on type
+
+have_protection = {
+    "XR_USE_PLATFORM_WIN32",
+    "XR_USE_GRAPHICS_API_D3D11",
+}
+
 for reg_type in reg_types:
+
+    protect = reg_type.attrib.get("protect", "")
+    if protect and not protect in have_protection:
+        continue
 
     if reg_type.attrib.get("category", "") == "handle":
         handle_name = reg_type.find("name").text
@@ -114,6 +126,216 @@ for reg_type in reg_types:
     if reg_type.attrib.get("category", "") == "basetype" and reg_type.find("type").text == "XR_DEFINE_ATOM":
         atom_name = reg_type.find("name").text
         atoms.add(atom_name)
+
+for reg_type in reg_types:
+
+    protect = reg_type.attrib.get("protect", "")
+    if protect and not protect in have_protection:
+        continue
+
+    if reg_type.attrib.get("category", "") == "struct":
+        struct_name = reg_type.attrib["name"]
+        extends = reg_type.attrib.get("structextends", "")
+        typeenum = reg_type.findall("member")[0].attrib.get("values", "")
+        members = []
+        # print(struct_name)
+        for reg_member in reg_type.findall("member"):
+            member = {}
+
+            reg_member_text = (reg_member.text or "").strip()
+            reg_member_tail = (reg_member.tail or "").strip()
+
+            member["is_const"] = reg_member_text and (reg_member.text[0:5] == "const")
+
+            type_text = (reg_member.find("type").text or "").strip()
+            type_tail = (reg_member.find("type").tail or "").strip()
+            name_text = (reg_member.find("name").text or "").strip()
+            name_tail = (reg_member.find("name").tail or "").strip()
+            if not reg_member.find("enum") is None:
+                enum_text = (reg_member.find("enum").text or "").strip()
+                enum_tail = (reg_member.find("enum").tail or "").strip()
+            else:
+                enum_text = ""
+                enum_tail = ""
+
+            member["name"] = name_text
+
+            member_type = type_text
+            if type_tail:
+                member_type += " " + type_tail
+
+            if type_text == "char" and name_tail == "[" and enum_tail == "]":
+                # member["type"] = "char_array"
+                # member["size"] = enum_text
+                member["type"] = "fixed_array"
+                member["base_type"] = "char"
+                member["size"] = enum_text
+
+            elif member_type == "char * const*":
+                member["type"] = "string_list"
+                size_and_len = reg_member.attrib["len"].strip()
+                member["size"] = size_and_len.split(",")[0].strip()
+
+            elif type_tail == "* const*":
+                member["type"] = "list_of_struct_pointers"
+                member["struct_type"] = type_text
+                size_and_len = reg_member.attrib["len"].strip()
+                member["size"] = size_and_len.split(",")[0].strip()
+
+            elif member_type == "void *":
+                if reg_member_text == "const struct" or reg_member_text == "struct":
+                    member["type"] = "xr_struct_pointer"
+                else:
+                    member["type"] = "void_pointer"
+
+            elif name_tail and name_tail[0] == "[" and name_tail[-1] == "]":
+                member["type"] = "fixed_array"
+                member["base_type"] = type_text
+                member["size"] = name_tail[1:-1]
+
+            elif not type_tail and not name_tail:
+                member["type"] = "POD"
+                member["pod_type"] = type_text
+
+            elif type_tail == "*" and not name_tail : # and reg_member_text == "const struct" or reg_member_text == "struct":
+                size_and_len = reg_member.attrib.get("len", "").strip()
+                if size_and_len:
+                    if size_and_len == "null-terminated":
+                        member["type"] = "c_string"
+                    else:
+                        if type_text in atoms or member_type in handles.keys():
+                            member["type"] = "pointer_to_atom_or_handle"
+                            member["size"] = size_and_len.split(",")[0].strip()
+                        elif type_text in structs and structs[type_text][1]:
+                            member["type"] = "pointer_to_xr_struct_array"
+                            member["size"] = size_and_len.split(",")[0].strip()
+                        else:
+                            member["type"] = "pointer_to_struct_array"
+                            member["size"] = size_and_len.split(",")[0].strip()
+                else:
+                    member["type"] = "pointer_to_struct"
+                member["struct_type"] = type_text
+                member["member_text"] = reg_member_text
+
+            # elif type_tail == "*" and not name_tail and not reg_member_text:
+                # member["type"] = "pointer_to_opaque"
+                # member["opaque_type"] = type_text
+
+            else:
+                print("didn't parse %s" % (", ".join((reg_member_text, type_text, type_tail, name_text, name_tail, enum_text, enum_tail, reg_member_tail))))
+                dump(sys.stdout, 4, 100, reg_member)
+                sys.exit(-1)
+
+            foo = """
+            member : {}
+                type : {}
+                    text = "XrStructureType"
+                name : {}
+                    text = "type"
+            member : {}
+                text = "const"
+                type : {}
+                    text = "void"
+                    tail = "*"
+                name : {}
+                    text = "next"
+            member : {}
+                type : {}
+                    text = "char"
+                name : {}
+                    text = "layerName"
+                    tail = "["
+                enum : {}
+                    text = "XR_MAX_API_LAYER_NAME_SIZE"
+                    tail = "]"
+"""
+            members.append(member)
+        structs[struct_name] = (struct_name, typeenum, extends, members)
+
+
+supported_structs = [
+    "XrVector2f",
+    "XrVector3f",
+    "XrVector4f",
+    "XrColor4f",
+    "XrQuaternionf",
+    "XrPosef",
+    "XrOffset2Df",
+    "XrExtent2Df",
+    "XrRect2Df",
+    "XrOffset2Di",
+    "XrExtent2Di",
+    "XrRect2Di",
+    "XrBaseInStructure",
+    "XrBaseOutStructure",
+    "XrApiLayerProperties",
+    "XrExtensionProperties",
+    "XrApplicationInfo",
+    "XrInstanceCreateInfo",
+    "XrInstanceProperties",
+    "XrSystemGetInfo",
+    "XrSystemProperties",
+    "XrSystemGraphicsProperties",
+    "XrSystemTrackingProperties",
+    "XrGraphicsBindingD3D11KHR",
+    "XrSessionCreateInfo",
+    "XrSessionBeginInfo",
+    "XrSwapchainCreateInfo",
+    "XrSwapchainImageBaseHeader",
+    "XrSwapchainImageD3D11KHR",
+    "XrSwapchainImageAcquireInfo",
+    "XrSwapchainImageWaitInfo",
+    "XrSwapchainImageReleaseInfo",
+    "XrReferenceSpaceCreateInfo",
+    "XrActionSpaceCreateInfo",
+    "XrSpaceLocation",
+    "XrSpaceVelocity",
+    "XrFovf",
+    "XrView",
+    "XrViewLocateInfo",
+    "XrViewState",
+    "XrViewConfigurationView",
+    "XrSwapchainSubImage",
+    "XrCompositionLayerBaseHeader",
+    "XrCompositionLayerProjectionView",
+    "XrCompositionLayerProjection",
+    "XrCompositionLayerQuad",
+    "XrFrameBeginInfo",
+    "XrFrameEndInfo",
+    "XrFrameWaitInfo",
+    "XrFrameState",
+    "XrHapticBaseHeader",
+    "XrHapticVibration",
+    "XrEventDataBaseHeader",
+    "XrEventDataBuffer",
+    "XrEventDataEventsLost",
+    "XrEventDataInstanceLossPending",
+    "XrEventDataSessionStateChanged",
+    "XrEventDataReferenceSpaceChangePending",
+    "XrViewConfigurationProperties",
+    "XrActionStateBoolean",
+    "XrActionStateFloat",
+    "XrActionStateVector2f",
+    "XrActionStatePose",
+    "XrActionStateGetInfo",
+    "XrHapticActionInfo",
+    "XrActionSetCreateInfo",
+    "XrActionSuggestedBinding",
+    "XrInteractionProfileSuggestedBinding",
+    "XrActiveActionSet",
+    "XrSessionActionSetsAttachInfo",
+    "XrActionsSyncInfo",
+    "XrBoundSourcesForActionEnumerateInfo",
+    "XrInputSourceLocalizedNameGetInfo",
+    "XrEventDataInteractionProfileChanged",
+    "XrInteractionProfileState",
+    "XrActionCreateInfo",
+    "XrDebugUtilsObjectNameInfoEXT",
+    "XrDebugUtilsLabelEXT",
+    "XrDebugUtilsMessengerCallbackDataEXT",
+    "XrDebugUtilsMessengerCreateInfoEXT",
+    "XrGraphicsRequirementsD3D11KHR",
+]
 
 supported_commands = [
     "xrDestroyInstance",
@@ -186,6 +408,64 @@ supported_handles = [
     "XrSpace",
     "XrDebugUtilsMessengerEXT",
 ]
+
+# We know the opaque objects of these types are returned by the system as pointers that do not need to be deep copied
+special_functions = {
+    "ID3D11Device": {"ref" : "%(name)s->AddRef()", "unref": "%(name)s->Release()"},
+    "ID3D11Texture2D": {"ref" : "%(name)s->AddRef()", "unref": "%(name)s->Release()"},
+}
+
+# dump out debugging information on structs
+if True:
+    out = open("output.txt", "w")
+
+    for name in supported_structs: # structs.keys():
+        struct = structs[name]
+        s = name + " "
+        if struct[1]:
+            s += "has type %s " % struct[1]
+        if struct[2]:
+            s += "extends struct %s " % struct[2]
+        out.write(s + "\n")
+
+        for member in struct[3]:
+            s = "    (%s) " % (member["type"])
+
+            if member["type"] == "char_array":
+                s += "char %s[%s]" % (member["name"], member["size"])
+            elif member["type"] == "c_string":
+                s += "char *%s" % (member["name"])
+            elif member["type"] == "string_list":
+                s += "char** %s (size in %s)" % (member["name"], member["size"])
+            elif member["type"] == "list_of_struct_pointers":
+                s += "%s* const * %s (size in %s)" % (member["struct_type"], member["name"], member["size"])
+            elif member["type"] == "pointer_to_struct":
+                s += "%s* %s (reg_member.text \"%s\")" % (member["struct_type"], member["name"], member["member_text"])
+            elif member["type"] == "pointer_to_atom_or_handle":
+                s += "%s* %s (size in %s)" % (member["struct_type"], member["name"], member["size"])
+            elif member["type"] == "pointer_to_xr_struct_array":
+                s += "%s* %s (size in %s) (reg_member.text \"%s\")" % (member["struct_type"], member["name"], member["size"], member["member_text"])
+            elif member["type"] == "pointer_to_struct_array":
+                s += "%s* %s (size in %s) (reg_member.text \"%s\")" % (member["struct_type"], member["name"], member["size"], member["member_text"])
+            elif member["type"] == "pointer_to_opaque":
+                s += "%s* %s" % (member["opaque_type"], member["name"])
+            elif member["type"] == "xrstruct_pointer":
+                s += "void* %s (XR struct)" % (member["name"])
+            elif member["type"] == "void_pointer":
+                s += "void* %s" % (member["name"])
+            elif member["type"] == "fixed_array":
+                s += "%s %s[%s]" % (member["base_type"], member["name"], member["size"])
+            elif member["type"] == "POD":
+                s += "%s %s" % (member["pod_type"], member["name"])
+            else:
+                s += "XXX \"%s\" %s" % (member["type"], member["name"])
+
+            if member["is_const"]:
+                s += " is const"
+
+            out.write(s + "\n")
+
+    out.close()
 
 # XXX development placeholder
 if False:
@@ -407,6 +687,292 @@ for handle_type in supported_handles:
     header_text += f"extern std::mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
 
     source_text += "\n"
+
+
+# deep copy and free functions -----------------------------------------------
+
+xr_typed_structs = [name for name in supported_structs if structs[name][1]]
+
+copy_function_case_bodies = ""
+
+for name in xr_typed_structs:
+    struct = structs[name]
+
+    copy_function = """
+bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
+{
+""" % {"name" : struct[0]}
+
+    for member in struct[3]:
+
+        if member["type"] == "char_array":
+            copy_function += "    memcpy(dst->%(name)s, src->%(name)s, %(size)s);\n" % member
+        elif member["type"] == "c_string":
+            copy_function += "    char *%(name)s = (char *)alloc(strlen(src->%(name)s) + 1);\n" % member
+            copy_function += "    memcpy(%(name)s, src->%(name)s, strlen(src->%(name)s + 1));\n" % member
+            copy_function += "    dst->%(name)s = %(name)s;\n" % member
+        elif member["type"] == "string_list":
+            copy_function += """    
+                // array of pointers to C strings for %(name)s
+                auto %(name)s = (char **)alloc(sizeof(char *) * src->%(size)s);
+                dst->%(name)s = %(name)s;
+                addOffsetToPointer(&dst->%(name)s);
+                for(uint32_t i = 0; i < dst->%(size)s; i++) {
+                    %(name)s[i] = (char *)alloc(strlen(src->%(name)s[i]) + 1);
+                    strncpy_s(%(name)s[i], strlen(src->%(name)s[i]) + 1, src->%(name)s[i], strlen(src->%(name)s[i]) + 1);
+                    addOffsetToPointer(&%(name)s[i]);
+                }
+
+""" % member
+        elif member["type"] == "list_of_struct_pointers":
+            copy_function += """    
+    // array of pointers to XR structs for %(name)s
+    auto %(name)s = (%(struct_type)s **)alloc(sizeof(%(struct_type)s) * src->%(size)s);
+    dst->%(name)s = %(name)s;
+    addOffsetToPointer(&dst->%(name)s);
+    for(uint32_t i = 0; i < dst->%(size)s; i++) {
+        %(name)s[i] = reinterpret_cast<%(struct_type)s *>(CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s[i]), copyType, alloc, addOffsetToPointer));
+        addOffsetToPointer(&%(name)s[i]);
+    }
+
+""" % member
+        elif member["type"] == "pointer_to_struct":
+            if member["struct_type"] in special_functions:
+                copy_function += "    dst->%(name)s = src->%(name)s;\n" % member
+                copy = special_functions[member["struct_type"]]["ref"]
+                copy_function += "    %s;\n" % (copy % {"name" : ("src->%(name)s" % member)})
+            else:
+                copy_function += "    // XXX struct %(struct_type)s* %(name)s (reg_member.text \"%(member_text)s\")\n" % member
+        elif member["type"] == "pointer_to_atom_or_handle":
+            copy_function += "    %(struct_type)s *%(name)s = reinterpret_cast<%(struct_type)s*>(alloc(sizeof(%(struct_type)s) * src->%(size)s));\n" % member
+            copy_function += "    memcpy(%(name)s, src->%(name)s, sizeof(%(struct_type)s) * src->%(size)s);\n" % member
+            copy_function += "    dst->%(name)s = %(name)s;\n" % member
+            copy_function += "    addOffsetToPointer(&dst->%(name)s);\n" % member
+        elif member["type"] == "pointer_to_xr_struct_array":
+            copy_function += """
+    // Lay down %(name)s...
+    auto %(name)s = (%(struct_type)s*)alloc(sizeof(%(struct_type)s) * src->%(size)s);
+    dst->%(name)s = %(name)s;
+    addOffsetToPointer(&dst->%(name)s);
+    for(uint32_t i = 0; i < dst->%(size)s; i++) {
+        bool result = CopyXrStructChain(instance, &src->%(name)s[i], &%(name)s[i], copyType, alloc, addOffsetToPointer);
+        if(!result) {
+            return result;
+        }
+    }
+""" % member
+        elif member["type"] == "pointer_to_struct_array":
+            copy_function += "    %(struct_type)s *%(name)s = reinterpret_cast<%(struct_type)s*>(alloc(sizeof(%(struct_type)s) * src->%(size)s));\n" % member
+            copy_function += "    memcpy(%(name)s, src->%(name)s, sizeof(%(struct_type)s) * src->%(size)s);\n" % member
+            copy_function += "    dst->%(name)s = %(name)s;\n" % member
+        elif member["type"] == "pointer_to_opaque":
+            copy_function += "    // XXX opaque %s* %s\n" % (member["opaque_type"], member["name"])
+        elif member["type"] == "void_pointer":
+            if member["name"] == "next":
+                pass
+            else:
+                copy_function += "    dst->%(name)s = src->%(name)s; // We only know this is void*, so we can only copy.\n" % member
+        elif member["type"] == "fixed_array":
+            copy_function += "    memcpy(dst->%(name)s, src->%(name)s, sizeof(%(base_type)s) * %(size)s);\n" % member
+        elif member["type"] == "POD":
+            copy_function += "    dst->%(name)s = src->%(name)s;\n" % member
+        else:
+            copy_function += "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
+
+#     if member["is_const"]:
+#         copy_function += " is const"
+
+
+    copy_function += "    dst->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(src->next), copyType, alloc, addOffsetToPointer));\n"
+    copy_function += "    addOffsetToPointer(&dst->next);\n"
+    copy_function += "    return true;\n"
+    copy_function += "}\n\n"
+
+    source_text += copy_function
+
+    copy_function_case_bodies += """
+            case %(enum)s: {
+                auto src = reinterpret_cast<const %(name)s*>(srcbase);
+                auto dst = reinterpret_cast<%(name)s*>(alloc(sizeof(%(name)s)));
+                dstbase = reinterpret_cast<XrBaseInStructure*>(dst);
+                bool result = CopyXrStructChain(instance, src, dst, copyType, alloc, addOffsetToPointer);
+                if(!result) {
+                    return nullptr;
+                }
+                break;
+            }
+""" % {"name" : name, "enum" : struct[1]}
+
+
+free_function_case_bodies = """
+        case XR_TYPE_INSTANCE_CREATE_INFO: {
+            auto* actual = reinterpret_cast<const XrInstanceCreateInfo*>(p);
+
+            // Delete API Layer names
+            for(uint32_t i = 0; i < actual->enabledApiLayerCount; i++) {
+                free(actual->enabledApiLayerNames[i]);
+            }
+            free(actual->enabledApiLayerNames);
+
+            // Delete extension names
+            for(uint32_t i = 0; i < actual->enabledExtensionCount; i++) {
+                free(actual->enabledExtensionNames[i]);
+            }
+            free(actual->enabledApiLayerNames);
+            break;
+        }
+
+        case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR:
+        case XR_TYPE_FRAME_STATE:
+        case XR_TYPE_SYSTEM_PROPERTIES:
+        case XR_TYPE_INSTANCE_PROPERTIES:
+        case XR_TYPE_VIEW_CONFIGURATION_VIEW:
+        case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES:
+        case XR_TYPE_SESSION_BEGIN_INFO:
+        case XR_TYPE_SYSTEM_GET_INFO:
+        case XR_TYPE_SWAPCHAIN_CREATE_INFO:
+        case XR_TYPE_FRAME_WAIT_INFO:
+        case XR_TYPE_FRAME_BEGIN_INFO:
+        case XR_TYPE_COMPOSITION_LAYER_QUAD:
+        case XR_TYPE_EVENT_DATA_BUFFER:
+        case XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO:
+        case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO:
+        case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO:
+        case XR_TYPE_SESSION_CREATE_INFO:
+        case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX:
+        case XR_TYPE_REFERENCE_SPACE_CREATE_INFO:
+        case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR:
+        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
+        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
+        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+        case XR_TYPE_EVENT_DATA_EVENTS_LOST:
+        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
+        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: 
+        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR:
+        case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR:
+            break;
+
+        case XR_TYPE_FRAME_END_INFO: {
+            auto* actual = reinterpret_cast<const XrFrameEndInfo*>(p);
+            // Delete layers...
+            for(uint32_t i = 0; i < actual->layerCount; i++) {
+                FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(actual->layers[i]), free);
+            }
+            free(actual->layers);
+            break;
+        }
+
+        case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+            auto* actual = reinterpret_cast<const XrCompositionLayerProjection*>(p);
+            // Delete views...
+            for(uint32_t i = 0; i < actual->viewCount; i++) {
+                free(actual->views[i].next);
+            }
+            free(actual->views);
+            break;
+        }
+"""
+
+source_text += """
+XrBaseInStructure *CopyXrStructChain(XrInstance instance, const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
+{
+    XrBaseInStructure *dstbase = nullptr;
+    bool skipped;
+
+    do {
+        skipped = false;
+
+        if(!srcbase) {
+            return nullptr;
+        }
+
+        // next pointer of struct is copied after switch statement
+
+        switch(srcbase->type) {
+"""
+source_text += copy_function_case_bodies
+
+source_text += """
+
+            default: {
+                // I don't know what this is, skip it and try the next one
+                std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                structTypeName[0] = '\\0';
+                if(gOverlaysLayerXrInstanceToHandleInfo.at(instance).downchain->StructureTypeToString(instance, srcbase->type, structTypeName) != XR_SUCCESS) {
+                    sprintf(structTypeName, "<type %08X>", srcbase->type);
+                }
+                mlock.unlock();
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                         nullptr, OverlaysLayerNoObjectInfo, fmt("CopyXrStructChain called on %p of unhandled type %s - dropped from \\"next\\" chain.", srcbase, structTypeName).c_str());
+                srcbase = srcbase->next;
+                skipped = true;
+                break;
+            }
+        }
+    } while(skipped);
+
+    return dstbase;
+}
+"""
+
+source_text += """
+void FreeXrStructChain(XrInstance instance, const XrBaseInStructure* p, FreeFunc free)
+{
+    if(!p) {
+        return;
+    }
+
+    switch(p->type) {
+
+"""
+
+source_text += free_function_case_bodies
+
+source_text += """
+
+        default: {
+            // I don't know what this is, skip it and try the next one
+            // I don't know what this is, skip it and try the next one
+            std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+            char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+            structTypeName[0] = '\\0';
+            if(gOverlaysLayerXrInstanceToHandleInfo.at(instance).downchain->StructureTypeToString(instance, p->type, structTypeName) != XR_SUCCESS) {
+                sprintf(structTypeName, "<type %08X>", p->type);
+            }
+            mlock.unlock();
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                 nullptr, OverlaysLayerNoObjectInfo, fmt("Warning: Free called on %p of unknown type %d - will descend \\"next\\" but don't know any other pointers.\\n", p, structTypeName).c_str());
+            break;
+        }
+    }
+
+    FreeXrStructChain(instance, p->next, free);
+    free(p);
+}
+
+XrBaseInStructure* CopyEventChainIntoBuffer(XrInstance instance, const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
+{
+    size_t remaining = sizeof(XrEventDataBuffer);
+    unsigned char* next = reinterpret_cast<unsigned char *>(buffer);
+    return CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(eventData), COPY_EVERYTHING,
+            [&buffer,&remaining,&next](size_t s){unsigned char* cur = next; next += s; return cur; },
+            [](void *){ });
+}
+
+XrBaseInStructure* CopyXrStructChainWithMalloc(XrInstance instance, const void* xrstruct)
+{
+    return CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(xrstruct), COPY_EVERYTHING,
+            [](size_t s){return malloc(s); },
+            [](void *){ });
+}
+
+void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct)
+{
+    FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(xrstruct),
+            [](const void *p){free(const_cast<void*>(p));});
+}
+"""
 
 
 # make functions returned by xrGetInstanceProcAddr ---------------------------
