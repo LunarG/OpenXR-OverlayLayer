@@ -103,10 +103,17 @@ reg_types = root.find("types")
 
 handles = {} # value is a tuple of handle name and parent handle name
 
+atoms = set()
+
 for reg_type in reg_types:
+
     if reg_type.attrib.get("category", "") == "handle":
         handle_name = reg_type.find("name").text
         handles[handle_name] = (handle_name, reg_type.attrib.get("parent", ""))
+
+    if reg_type.attrib.get("category", "") == "basetype" and reg_type.find("type").text == "XR_DEFINE_ATOM":
+        atom_name = reg_type.find("name").text
+        atoms.add(atom_name)
 
 supported_commands = [
     "xrDestroyInstance",
@@ -228,6 +235,16 @@ after_downchain["xrCreateSession"] = """
     OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, "Hi, a session was created.\\n");
 """
 
+after_downchain["xrStringToPath"] = """
+        gOverlaysLayerPathtoAtomInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*path), std::forward_as_tuple(pathString));
+
+"""
+
+after_downchain["xrGetSystem"] = """
+        gOverlaysLayerSystemIdtoAtomInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*systemId), std::forward_as_tuple(getInfo));
+
+"""
+
 # store preambles of generated header and source -----------------------------
 
 
@@ -264,14 +281,56 @@ header_text = """
 # make types, structs, variables ---------------------------------------------
 
 
-only_child_handles = [h for h in supported_handles if h != "XrInstance"]
+# XrPath
+
+header_text += f"struct {LayerName}PathAtomInfo\n"
+header_text += """
+{
+    std::string pathString;
+"""
+header_text += f"    {LayerName}PathAtomInfo(const char *pathString_) :\n"
+header_text += """
+        pathString(pathString_)
+    {
+    }
+    // map of remote XrPath by XrSession
+    std::unordered_map<uint64_t, uint64_t> remotePathByLocalSession;
+};
+
+"""
+
+header_text += f"extern std::unordered_map<XrPath, {LayerName}PathAtomInfo> g{LayerName}PathtoAtomInfo;\n\n"
+source_text += f"std::unordered_map<XrPath, {LayerName}PathAtomInfo> g{LayerName}PathtoAtomInfo;\n\n"
+
+
+# XrSystemId
+
+header_text += f"struct {LayerName}SystemIdAtomInfo\n"
+header_text += """
+{
+    XrSystemGetInfo *getInfo;
+"""
+header_text += f"    {LayerName}SystemIdAtomInfo(const XrSystemGetInfo *getInfo_)\n"
+header_text += """
+    {
+        getInfo = reinterpret_cast<XrSystemGetInfo*>(CopyXrStructChainWithMalloc(getInfo_));
+    }
+    // map of remote XrSystemId by XrSession
+    std::unordered_map<uint64_t, uint64_t> remoteSystemIdByLocalSession;
+};
+
+"""
+
+header_text += f"extern std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo> g{LayerName}SystemIdtoAtomInfo;\n\n"
+source_text += f"std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo> g{LayerName}SystemIdtoAtomInfo;\n\n"
+
 
 only_child_handles = [h for h in supported_handles if h != "XrInstance"]
 
 for handle_type in supported_handles:
     header_text += f"struct {LayerName}{handle_type}HandleInfo\n"
     header_text += "{\n"
-    # XXX header_text += "        std::set<uint64_t> childHandles;\n"
+    # XXX header_text += "        std::set<HandleTypePair> childHandles;\n"
     parent_type = str(handles[handle_type][1] or "")
     if parent_type:
         header_text += f"        {parent_type} parentHandle;\n"
