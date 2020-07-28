@@ -90,7 +90,16 @@ void OverlaysLayerLogMessage(XrInstance instance,
         // messageSeverities and messageTypes to make sure we will call at
         // least one
 
-        if ( /* !instanceInfo.debug_data.Empty() && */ !instanceInfo.debugUtilsMessengers.empty()) {
+        /* XXX TBD !instanceInfo.debug_data.Empty() */
+
+        if (!instanceInfo.debugUtilsMessengers.empty()) {
+
+            // Setup our callback data once
+            XrDebugUtilsMessengerCallbackDataEXT callback_data = {};
+            callback_data.type = XR_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT;
+            callback_data.messageId = "Overlays API Layer";
+            callback_data.functionName = command_name;
+            callback_data.message = message;
 
 #if 0
             // TBD
@@ -102,15 +111,6 @@ void OverlaysLayerLogMessage(XrInstance instance,
                                return XrSdkLogObjectInfo{info.handle, info.type};
                            });
             names_and_labels = instance_info->debug_data.PopulateNamesAndLabels(std::move(objects));
-
-#endif
-            // Setup our callback data once
-            XrDebugUtilsMessengerCallbackDataEXT callback_data = {};
-            callback_data.type = XR_TYPE_DEBUG_UTILS_MESSENGER_CALLBACK_DATA_EXT;
-            callback_data.messageId = "Overlays API Layer";
-            callback_data.functionName = command_name;
-            callback_data.message = message;
-#if 0
             names_and_labels.PopulateCallbackData(callback_data);
 #endif
 
@@ -118,18 +118,24 @@ void OverlaysLayerLogMessage(XrInstance instance,
             for (const auto &messenger : instanceInfo.debugUtilsMessengers) {
 
                 std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-                XrDebugUtilsMessengerCreateInfoEXT messenger_create_info = gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(messenger).createInfo;
+                XrDebugUtilsMessengerCreateInfoEXT *messenger_create_info = gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(messenger).createInfo;
                 mlock.unlock();
 
                 // If a callback exists, and the message is of a type this callback cares about, call it.
-                if (nullptr != messenger_create_info.userCallback &&
-                    0 != (messenger_create_info.messageSeverities & message_severity) &&
-                    0 != (messenger_create_info.messageTypes & XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT)) {
+                if (nullptr != messenger_create_info->userCallback &&
+                    0 != (messenger_create_info->messageSeverities & message_severity) &&
+                    0 != (messenger_create_info->messageTypes & XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT)) {
 
-                    XrBool32 ret_val = messenger_create_info.userCallback(message_severity,
+                    XrBool32 ret_val = messenger_create_info->userCallback(message_severity,
                                                                            XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT,
-                                                                           &callback_data, messenger_create_info.userData);
+                                                                           &callback_data, messenger_create_info->userData);
                 }
+            }
+        } else {
+            if(command_name) {
+                OutputDebugStringA(fmt("Overlays API Layer: %s, %s\n", command_name, message).c_str());
+            } else {
+                OutputDebugStringA(fmt("Overlays API Layer: %s\n", message).c_str());
             }
         }
     } else {
@@ -162,7 +168,7 @@ XrBaseInStructure* AllocateAndCopy(const XR_STRUCT* srcbase, CopyType copyType, 
     return reinterpret_cast<XrBaseInStructure*>(dst);
 }
 
-XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
+XrBaseInStructure *CopyXrStructChain(XrInstance instance, const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
 {
     XrBaseInStructure *dstbase = nullptr;
     bool skipped;
@@ -207,6 +213,11 @@ XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType 
                     strncpy_s(enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1, src->enabledExtensionNames[i], strlen(src->enabledExtensionNames[i]) + 1);
                     addOffsetToPointer(&enabledExtensionNames[i]);
                 }
+                break;
+            }
+
+            case XR_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT: {
+                dstbase = AllocateAndCopy(reinterpret_cast<const XrDebugUtilsMessengerCreateInfoEXT*>(srcbase), copyType, alloc);
                 break;
             }
 
@@ -301,7 +312,7 @@ XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType 
                 addOffsetToPointer(&dst->views);
                 for(uint32_t i = 0; i < dst->viewCount; i++) {
                     views[i] = src->views[i]; // XXX sloppy
-                    views[i].next =(CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(src->views[i].next), copyType, alloc, addOffsetToPointer));
+                    views[i].next =(CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(src->views[i].next), copyType, alloc, addOffsetToPointer));
                     addOffsetToPointer(&(views[i].next));
                 }
                 break;
@@ -321,7 +332,7 @@ XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType 
                 dst->layers = layers;
                 addOffsetToPointer(&dst->layers);
                 for(uint32_t i = 0; i < dst->layerCount; i++) {
-                    layers[i] = reinterpret_cast<XrCompositionLayerBaseHeader*>(CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(src->layers[i]), copyType, alloc, addOffsetToPointer));
+                    layers[i] = reinterpret_cast<XrCompositionLayerBaseHeader*>(CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(src->layers[i]), copyType, alloc, addOffsetToPointer));
                     addOffsetToPointer(&layers[i]);
                 }
                 break;
@@ -394,8 +405,15 @@ XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType 
 
             default: {
                 // I don't know what this is, skip it and try the next one
-                OverlaysLayerLogMessage(XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-                         nullptr, OverlaysLayerNoObjectInfo, fmt("CopyXrStructChain called on %p of unknown type %d - dropped from \"next\" chain.\n", srcbase, srcbase->type).c_str());
+                std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                structTypeName[0] = '\0';
+                if(gOverlaysLayerXrInstanceToHandleInfo.at(instance).downchain->StructureTypeToString(instance, srcbase->type, structTypeName) != XR_SUCCESS) {
+                    sprintf(structTypeName, "<type %08X>", srcbase->type);
+                }
+                mlock.unlock();
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                         nullptr, OverlaysLayerNoObjectInfo, fmt("CopyXrStructChain called on %p of unhandled type %s - dropped from \"next\" chain.\n", srcbase, structTypeName).c_str());
                 srcbase = srcbase->next;
                 skipped = true;
                 break;
@@ -403,13 +421,13 @@ XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType 
         }
     } while(skipped);
 
-    dstbase->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(srcbase->next, copyType, alloc, addOffsetToPointer));
+    dstbase->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(instance, srcbase->next, copyType, alloc, addOffsetToPointer));
     addOffsetToPointer(&dstbase->next);
 
     return dstbase;
 }
 
-void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free)
+void FreeXrStructChain(XrInstance instance, const XrBaseInStructure* p, FreeFunc free)
 {
     if(!p) {
         return;
@@ -468,7 +486,7 @@ void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free)
             auto* actual = reinterpret_cast<const XrFrameEndInfo*>(p);
             // Delete layers...
             for(uint32_t i = 0; i < actual->layerCount; i++) {
-                FreeXrStructChain(reinterpret_cast<const XrBaseInStructure*>(actual->layers[i]), free);
+                FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(actual->layers[i]), free);
             }
             free(actual->layers);
             break;
@@ -486,35 +504,35 @@ void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free)
 
         default: {
             // I don't know what this is, skip it and try the next one
-                OverlaysLayerLogMessage(XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-                         nullptr, OverlaysLayerNoObjectInfo, fmt("Warning: Free called on %p of unknown type %d - will descend \"next\" but don't know any other pointers.\n", p, p->type).c_str());
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                 nullptr, OverlaysLayerNoObjectInfo, fmt("Warning: Free called on %p of unknown type %d - will descend \"next\" but don't know any other pointers.\n", p, p->type).c_str());
             break;
         }
     }
 
-    FreeXrStructChain(p->next, free);
+    FreeXrStructChain(instance, p->next, free);
     free(p);
 }
 
-XrBaseInStructure* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
+XrBaseInStructure* CopyEventChainIntoBuffer(XrInstance instance, const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
 {
     size_t remaining = sizeof(XrEventDataBuffer);
     unsigned char* next = reinterpret_cast<unsigned char *>(buffer);
-    return CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(eventData), COPY_EVERYTHING,
+    return CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(eventData), COPY_EVERYTHING,
             [&buffer,&remaining,&next](size_t s){unsigned char* cur = next; next += s; return cur; },
             [](void *){ });
 }
 
-XrBaseInStructure* CopyXrStructChainWithMalloc(const void* xrstruct)
+XrBaseInStructure* CopyXrStructChainWithMalloc(XrInstance instance, const void* xrstruct)
 {
-    return CopyXrStructChain(reinterpret_cast<const XrBaseInStructure*>(xrstruct), COPY_EVERYTHING,
+    return CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(xrstruct), COPY_EVERYTHING,
             [](size_t s){return malloc(s); },
             [](void *){ });
 }
 
-void FreeXrStructChainWithFree(const void* xrstruct)
+void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct)
 {
-    FreeXrStructChain(reinterpret_cast<const XrBaseInStructure*>(xrstruct),
+    FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(xrstruct),
             [](const void *p){free(const_cast<void*>(p));});
 }
 
@@ -524,25 +542,12 @@ XrResult OverlaysLayerXrCreateInstance(const XrInstanceCreateInfo * /*info*/, Xr
 }
 
 
-XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *info,
+XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *instanceCreateInfo,
         const struct XrApiLayerCreateInfo *apiLayerInfo, XrInstance *instance)
 {
     PFN_xrGetInstanceProcAddr next_get_instance_proc_addr = nullptr;
     PFN_xrCreateApiLayerInstance next_create_api_layer_instance = nullptr;
     XrApiLayerCreateInfo new_api_layer_info = {};
-
-#if 0
-    gMainInstanceContext.savedRequestedExtensions.clear();
-    gMainInstanceContext.savedRequestedExtensions.insert(XR_EXTX_OVERLAY_EXTENSION_NAME);
-    gMainInstanceContext.savedRequestedExtensions.insert(info->enabledExtensionNames, info->enabledExtensionNames + info->enabledExtensionCount);
-
-    gMainInstanceContext.savedRequestedApiLayers.clear();
-    // Is there a way to query which layers are only downstream?
-    // We can't get to the functionality of layers upstream (closer to
-    // the app), so we can't claim all these layers are enabled (the remote
-    // app can't use these layers)
-    // gMainInstanceContext.savedRequestedApiLayers.insert(info->enabledApiLayerNames, info->enabledApiLayerNames + info->enabledApiLayerCount);
-#endif
 
     // Validate the API layer info and next API layer info structures before we try to use them
     if (!apiLayerInfo ||
@@ -570,7 +575,7 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *info,
 
     // Create the instance
     XrInstance returned_instance = *instance;
-    XrResult result = next_create_api_layer_instance(info, &new_api_layer_info, &returned_instance);
+    XrResult result = next_create_api_layer_instance(instanceCreateInfo, &new_api_layer_info, &returned_instance);
     *instance = returned_instance;
 
     // Create the dispatch table to the next levels
@@ -579,6 +584,7 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *info,
 
     std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
 	gOverlaysLayerXrInstanceToHandleInfo.emplace(*instance, next_dispatch);
+    gOverlaysLayerXrInstanceToHandleInfo.at(*instance).createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
 
     // CreateOverlaySessionThread();
 

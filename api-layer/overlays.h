@@ -13,11 +13,11 @@ enum CopyType {
 
 typedef std::function<void* (size_t size)> AllocateFunc;
 typedef std::function<void (const void* p)> FreeFunc;
-XrBaseInStructure *CopyXrStructChain(const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer);
-void FreeXrStructChain(const XrBaseInStructure* p, FreeFunc free);
-XrBaseInStructure* CopyEventChainIntoBuffer(const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer);
-XrBaseInStructure* CopyXrStructChainWithMalloc(const void* xrstruct);
-void FreeXrStructChainWithFree(const void* xrstruct);
+XrBaseInStructure *CopyXrStructChain(XrInstance instance, const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer);
+void FreeXrStructChain(XrInstance instance, const XrBaseInStructure* p, FreeFunc free);
+XrBaseInStructure* CopyEventChainIntoBuffer(XrInstance instance, const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer);
+XrBaseInStructure* CopyXrStructChainWithMalloc(XrInstance instance, const void* xrstruct);
+void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct);
 
 typedef std::pair<uint64_t, XrObjectType> HandleTypePair;
 
