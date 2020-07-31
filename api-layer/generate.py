@@ -489,44 +489,55 @@ before_downchain = {}
 
 after_downchain = {}
 
+in_destructor = {}
+
 add_to_handle_struct = {}
 
 # after_downchain[
 
 add_to_handle_struct["XrInstance"] = {
     "members" : """
-        XrInstanceCreateInfo *createInfo;
+        XrInstanceCreateInfo *createInfo = nullptr;
         std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
 """,
 }
 
 add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
     "members" : """
-        XrDebugUtilsMessengerCreateInfoEXT *createInfo;
+        XrDebugUtilsMessengerCreateInfoEXT *createInfo = nullptr;
 """,
 }
 
+in_destructor["XrDebugUtilsMessengerEXT"] = "    if(createInfo) { FreeXrStructChainWithFree(instance, createInfo); }\n";
+
 add_to_handle_struct["XrActionSet"] = {
     "members" : """
-        XrActionSetCreateInfo *createInfo;
+        XrActionSetCreateInfo *createInfo = nullptr;
         std::unordered_map<uint64_t, uint64_t> remoteActionSetByLocalSession;
 """,
 }
 
+in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(instance, createInfo); }\n";
+
 add_to_handle_struct["XrAction"] = {
     "members" : """
-        XrActionCreateInfo *createInfo;
+        XrActionCreateInfo *createInfo = nullptr;
         std::unordered_map<uint64_t, uint64_t> remoteActionByLocalSession;
 """,
 }
 
+in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(instance, createInfo); }\n";
+
 add_to_handle_struct["XrSpace"] = {
     "members" : """
         bool isReferenceSpace;
-        XrReferenceSpaceCreateInfo *referenceSpaceCreateInfo;
-        XrActionSpaceCreateInfo *actionSpaceCreateInfo;
+        XrReferenceSpaceCreateInfo *referenceSpaceCreateInfo = nullptr;
+        XrActionSpaceCreateInfo *actionSpaceCreateInfo = nullptr;
 """,
 }
+
+in_destructor["XrSpace"] = "    if(referenceSpaceCreateInfo) { FreeXrStructChainWithFree(instance, referenceSpaceCreateInfo); }\n";
+in_destructor["XrSpace"] += "    if(actionSpaceCreateInfo) { FreeXrStructChainWithFree(instance, actionSpaceCreateInfo); }\n";
 
 after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
     gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(*messenger).createInfo = reinterpret_cast<XrDebugUtilsMessengerCreateInfoEXT*>(CopyXrStructChainWithMalloc(instance, createInfo));
@@ -562,6 +573,13 @@ after_downchain["xrSuggestInteractionProfileBindings"] = """
 
 """
 
+after_downchain["xrCreateReferenceSpace"] = """
+    gOverlaysLayerXrSpaceToHandleInfo.at(*space).referenceSpaceCreateInfo = reinterpret_cast<XrReferenceSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo.parentInstance, createInfo));
+"""
+
+after_downchain["xrCreateActionSpace"] = """
+    gOverlaysLayerXrSpaceToHandleInfo.at(*space).actionSpaceCreateInfo = reinterpret_cast<XrActionSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo.parentInstance, createInfo));
+"""
 
 # store preambles of generated header and source -----------------------------
 
@@ -664,6 +682,10 @@ for handle_type in supported_handles:
         header_text += "            parentInstance(parentInstance_),\n"
         header_text += "            downchain(downchain_)\n"
         header_text += "        {}\n"
+        header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
+        header_text += "        {\n"
+        header_text += in_destructor.get(command_name, "")
+        header_text += "        }\n"
     else:
         # we know this is XrInstance...
         header_text += f"        {LayerName}{handle_type}HandleInfo(XrGeneratedDispatchTable *downchain_): \n"
@@ -671,6 +693,7 @@ for handle_type in supported_handles:
         header_text += "        {}\n"
         header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
         header_text += "        {\n"
+        header_text += in_destructor.get(command_name, "")
         header_text += "            delete downchain;\n"
         header_text += "        }\n"
     header_text += f"        void Destroy() /* For OpenXR's intents, not a dtor */\n"
@@ -695,6 +718,8 @@ xr_typed_structs = [name for name in supported_structs if structs[name][1]]
 
 copy_function_case_bodies = ""
 
+free_function_case_bodies = ""
+
 for name in xr_typed_structs:
     struct = structs[name]
 
@@ -703,28 +728,50 @@ bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, 
 {
 """ % {"name" : struct[0]}
 
+    free_function = """
+void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc)
+{
+""" % {"name" : struct[0]}
+
     for member in struct[3]:
 
         if member["type"] == "char_array":
+
             copy_function += "    memcpy(dst->%(name)s, src->%(name)s, %(size)s);\n" % member
+
         elif member["type"] == "c_string":
+
             copy_function += "    char *%(name)s = (char *)alloc(strlen(src->%(name)s) + 1);\n" % member
             copy_function += "    memcpy(%(name)s, src->%(name)s, strlen(src->%(name)s + 1));\n" % member
             copy_function += "    dst->%(name)s = %(name)s;\n" % member
+            free_function += "    freefunc(p->%(name)s);\n" % member
+
         elif member["type"] == "string_list":
+
             copy_function += """    
-                // array of pointers to C strings for %(name)s
-                auto %(name)s = (char **)alloc(sizeof(char *) * src->%(size)s);
-                dst->%(name)s = %(name)s;
-                addOffsetToPointer(&dst->%(name)s);
-                for(uint32_t i = 0; i < dst->%(size)s; i++) {
-                    %(name)s[i] = (char *)alloc(strlen(src->%(name)s[i]) + 1);
-                    strncpy_s(%(name)s[i], strlen(src->%(name)s[i]) + 1, src->%(name)s[i], strlen(src->%(name)s[i]) + 1);
-                    addOffsetToPointer(&%(name)s[i]);
-                }
+    // array of pointers to C strings for %(name)s
+    auto %(name)s = (char **)alloc(sizeof(char *) * src->%(size)s);
+    dst->%(name)s = %(name)s;
+    addOffsetToPointer(&dst->%(name)s);
+    for(uint32_t i = 0; i < dst->%(size)s; i++) {
+        %(name)s[i] = (char *)alloc(strlen(src->%(name)s[i]) + 1);
+        strncpy_s(%(name)s[i], strlen(src->%(name)s[i]) + 1, src->%(name)s[i], strlen(src->%(name)s[i]) + 1);
+        addOffsetToPointer(&%(name)s[i]);
+    }
 
 """ % member
+
+            free_function += """    
+    // array of pointers to C strings for %(name)s
+    for(uint32_t i = 0; i < p->%(size)s; i++) {
+        freefunc(p->%(name)s[i]);
+    }
+    freefunc(p->%(name)s);
+
+""" % member
+
         elif member["type"] == "list_of_struct_pointers":
+
             copy_function += """    
     // array of pointers to XR structs for %(name)s
     auto %(name)s = (%(struct_type)s **)alloc(sizeof(%(struct_type)s) * src->%(size)s);
@@ -736,19 +783,38 @@ bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, 
     }
 
 """ % member
+
+            free_function += """    
+    // array of pointers to XR structs for %(name)s
+    for(uint32_t i = 0; i < p->%(size)s; i++) {
+        freefunc(p->%(name)s);
+    }
+    freefunc(p->%(name)s);
+
+""" % member
+
         elif member["type"] == "pointer_to_struct":
+
             if member["struct_type"] in special_functions:
                 copy_function += "    dst->%(name)s = src->%(name)s;\n" % member
                 copy = special_functions[member["struct_type"]]["ref"]
                 copy_function += "    %s;\n" % (copy % {"name" : ("src->%(name)s" % member)})
+                free = special_functions[member["struct_type"]]["unref"]
+                free_function += "    %s;\n" % (free % {"name" : ("p->%(name)s" % member)})
             else:
                 copy_function += "    // XXX struct %(struct_type)s* %(name)s (reg_member.text \"%(member_text)s\")\n" % member
+                free_function += "    // XXX struct %(struct_type)s* %(name)s (reg_member.text \"%(member_text)s\")\n" % member
+
         elif member["type"] == "pointer_to_atom_or_handle":
+
             copy_function += "    %(struct_type)s *%(name)s = reinterpret_cast<%(struct_type)s*>(alloc(sizeof(%(struct_type)s) * src->%(size)s));\n" % member
             copy_function += "    memcpy(%(name)s, src->%(name)s, sizeof(%(struct_type)s) * src->%(size)s);\n" % member
             copy_function += "    dst->%(name)s = %(name)s;\n" % member
             copy_function += "    addOffsetToPointer(&dst->%(name)s);\n" % member
+            free_function += "    freefunc(&p->%(name)s);\n" % member
+
         elif member["type"] == "pointer_to_xr_struct_array":
+
             copy_function += """
     // Lay down %(name)s...
     auto %(name)s = (%(struct_type)s*)alloc(sizeof(%(struct_type)s) * src->%(size)s);
@@ -761,12 +827,18 @@ bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, 
         }
     }
 """ % member
+
+            free_function += """
+    freefunc(p->%(name)s);
+""" % member
         elif member["type"] == "pointer_to_struct_array":
             copy_function += "    %(struct_type)s *%(name)s = reinterpret_cast<%(struct_type)s*>(alloc(sizeof(%(struct_type)s) * src->%(size)s));\n" % member
             copy_function += "    memcpy(%(name)s, src->%(name)s, sizeof(%(struct_type)s) * src->%(size)s);\n" % member
             copy_function += "    dst->%(name)s = %(name)s;\n" % member
+            free_function += "    freefunc(p->%(name)s);\n" % member
         elif member["type"] == "pointer_to_opaque":
             copy_function += "    // XXX opaque %s* %s\n" % (member["opaque_type"], member["name"])
+            free_function += "    // XXX opaque %s* %s\n" % (member["opaque_type"], member["name"])
         elif member["type"] == "void_pointer":
             if member["name"] == "next":
                 pass
@@ -778,6 +850,7 @@ bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, 
             copy_function += "    dst->%(name)s = src->%(name)s;\n" % member
         else:
             copy_function += "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
+            free_function += "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
 
 #     if member["is_const"]:
 #         copy_function += " is const"
@@ -788,7 +861,11 @@ bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, 
     copy_function += "    return true;\n"
     copy_function += "}\n\n"
 
+    free_function += "    FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(p->next), freefunc);\n"
+    free_function += "}\n\n"
+
     source_text += copy_function
+    source_text += free_function
 
     copy_function_case_bodies += """
             case %(enum)s: {
@@ -803,75 +880,13 @@ bool CopyXrStructChain(XrInstance instance, const %(name)s* src, %(name)s *dst, 
             }
 """ % {"name" : name, "enum" : struct[1]}
 
-
-free_function_case_bodies = """
-        case XR_TYPE_INSTANCE_CREATE_INFO: {
-            auto* actual = reinterpret_cast<const XrInstanceCreateInfo*>(p);
-
-            // Delete API Layer names
-            for(uint32_t i = 0; i < actual->enabledApiLayerCount; i++) {
-                free(actual->enabledApiLayerNames[i]);
+    free_function_case_bodies += """
+            case %(enum)s: {
+                FreeXrStructChain(instance, reinterpret_cast<const %(name)s*>(p), freefunc);
+                break;
             }
-            free(actual->enabledApiLayerNames);
+""" % {"name" : name, "enum" : struct[1]}
 
-            // Delete extension names
-            for(uint32_t i = 0; i < actual->enabledExtensionCount; i++) {
-                free(actual->enabledExtensionNames[i]);
-            }
-            free(actual->enabledApiLayerNames);
-            break;
-        }
-
-        case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR:
-        case XR_TYPE_FRAME_STATE:
-        case XR_TYPE_SYSTEM_PROPERTIES:
-        case XR_TYPE_INSTANCE_PROPERTIES:
-        case XR_TYPE_VIEW_CONFIGURATION_VIEW:
-        case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES:
-        case XR_TYPE_SESSION_BEGIN_INFO:
-        case XR_TYPE_SYSTEM_GET_INFO:
-        case XR_TYPE_SWAPCHAIN_CREATE_INFO:
-        case XR_TYPE_FRAME_WAIT_INFO:
-        case XR_TYPE_FRAME_BEGIN_INFO:
-        case XR_TYPE_COMPOSITION_LAYER_QUAD:
-        case XR_TYPE_EVENT_DATA_BUFFER:
-        case XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO:
-        case XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO:
-        case XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO:
-        case XR_TYPE_SESSION_CREATE_INFO:
-        case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX:
-        case XR_TYPE_REFERENCE_SPACE_CREATE_INFO:
-        case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR:
-        case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
-        case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
-        case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
-        case XR_TYPE_EVENT_DATA_EVENTS_LOST:
-        case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
-        case XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT: 
-        case XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR:
-        case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR:
-            break;
-
-        case XR_TYPE_FRAME_END_INFO: {
-            auto* actual = reinterpret_cast<const XrFrameEndInfo*>(p);
-            // Delete layers...
-            for(uint32_t i = 0; i < actual->layerCount; i++) {
-                FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(actual->layers[i]), free);
-            }
-            free(actual->layers);
-            break;
-        }
-
-        case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
-            auto* actual = reinterpret_cast<const XrCompositionLayerProjection*>(p);
-            // Delete views...
-            for(uint32_t i = 0; i < actual->viewCount; i++) {
-                free(actual->views[i].next);
-            }
-            free(actual->views);
-            break;
-        }
-"""
 
 source_text += """
 XrBaseInStructure *CopyXrStructChain(XrInstance instance, const XrBaseInStructure* srcbase, CopyType copyType, AllocateFunc alloc, std::function<void (void* pointerToPointer)> addOffsetToPointer)
@@ -917,7 +932,7 @@ source_text += """
 """
 
 source_text += """
-void FreeXrStructChain(XrInstance instance, const XrBaseInStructure* p, FreeFunc free)
+void FreeXrStructChain(XrInstance instance, const XrBaseInStructure* p, FreeFunc freefunc)
 {
     if(!p) {
         return;
@@ -947,8 +962,7 @@ source_text += """
         }
     }
 
-    FreeXrStructChain(instance, p->next, free);
-    free(p);
+    freefunc(p);
 }
 
 XrBaseInStructure* CopyEventChainIntoBuffer(XrInstance instance, const XrEventDataBaseHeader* eventData, XrEventDataBuffer* buffer)
