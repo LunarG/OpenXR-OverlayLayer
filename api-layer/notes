@@ -1,0 +1,647 @@
+struct NegotiationParams
+{
+    DWORD mainProcessId;
+    DWORD overlayProcessId;
+    uint32_t gMainLayerBinaryVersion;
+    uint32_t gOverlayLayerBinaryVersion;
+};
+
+struct NegotiationChannels
+{
+    HANDLE shmemHandle;
+    HANDLE mainMutexHandle;
+    NegotiationParams* params;
+    HANDLE overlayWaitSema;
+    HANDLE mainWaitSema;
+    HANDLE mainThread;
+    DWORD mainThreadId;
+    HANDLE mainNegotiateThreadStop;
+    enum {SUCCESS, DIFFERENT_BINARY_VERSION} status;
+    static const char *shmemName;
+    static const char *mutexName;
+    static const uint32_t mutexSize;
+
+} gNegotiationChannels;
+
+const char *gNegotiationChannels::shmemName = "XR_EXT_overlay_negotiation_shmem";
+const char *gNegotiationChannels::overlayWaitSemaName = "XR_EXT_overlay_negotiation_overlay_wait_sema";
+const char *gNegotiationChannels::mainWaitSemaName = "XR_EXT_overlay_negotiation_main_wait_sema";
+const char *gNegotiationChannels::mutexName = "XR_EXT_overlay_negotiation_mutex";
+const uint32_t gNegotiationChannels::mutexSize = sizeof(NegotiationParams);
+const DWORD gNegotiationChannels::mutexWaitMillis = 500;
+
+bool gHaveMainSessionActive = false;
+
+// Both main and overlay processes call this function, which creates/opens
+// the negotiation mutex, shmem, and semaphores.
+bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
+{
+    ch.mainMutexHandle = CreateMutex(NULL, TRUE, gNegotiationChannels::mutexName);
+    if (ch.mainMutexHandle == NULL) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the negotiation mutex: CreateMutex error was %d (%s)\n", lastErorr, messageBuf).c_str());
+        LocalFree(messageBuf);
+        return false;
+    }
+
+    ch.shmemHandle = CreateFileMappingA( 
+        INVALID_HANDLE_VALUE,   // use sys paging file instead of an existing file
+        NULL,                   // default security attributes
+        PAGE_READWRITE,         // read/write access
+        0,                      // size: high 32-bits
+        gNegotiationChannels::shmemSize,         // size: low 32-bits
+        gNegotiationChannels::shmemName);        // name of map object
+
+    if (ch.shmemHandle == NULL) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the negotiation shmem: CreateFileMappingA error was %08X (%s)\n", lastError, messageBuf).c_str());
+        LocalFree(messageBuf);
+        return false; 
+    }
+
+    // Get a pointer to the file-mapped shared memory, read/write
+    gNegotiationChannels::params = reinterpret_cast<NegotiationParams*>(MapViewOfFile(shared_mem_handle, FILE_MAP_WRITE, 0, 0, 0));
+    if (gNegotiationChannels::shmem == NULL) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not get the negotiation shmem: MapViewOfFile error was %08X (%s)\n", lastError, MessageBuf).c_str());
+        LocalFree(messageBuf);
+        return false; 
+    }
+
+    gNegotiationChannels::overlayWaitSema = CreateSemaphore(nullptr, 0, 1, gNegotiationChannels::overlayWaitSemaName);
+    if(gNegotiationChannels::overlayWaitSema == NULL) {
+        DWORD lastError = GetLastError();
+        LPVOID messageBuf;
+        FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create overlay wait sema: CreateSemaphore error was %08X (%s)\n", lastError, MessageBuf).c_str());
+        LocalFree(messageBuf);
+        return false;
+    }
+}
+
+DWORD WINAPI MainRPCThreadBody(XrInstance instance);
+
+DWORD WINAPI MainNegotiateThreadBody(XrInstance instance)
+{
+    ReleaseSemaphore(gNegotiationChannels.overlayWaitSema, 1, nullptr);
+
+    DWORD result;
+    HANDLE handles[2];
+    handles[0] = gNegotiationChannels.mainNegotiateThreadStop;
+    handles[1] = gNegotiationChannels.mainWaitSema;
+
+    while(1) {
+        do {
+            result = WaitForMultipleObjects(2, handles, FALSE, NegotiationChannels::negotiationWaitMillis);
+        } while(result == WAIT_TIMEOUT);
+
+        if(result == WAIT_OBJECT_0 + 0) {
+            // Main process has signaled us to stop, probably Session was destroyed.
+            return 0;
+        } else if(result != WAIT_OBJECT_0 + 1) {
+            // WAIT_FAILED
+            DWORD lastError = GetLastError();
+            LPVOID messageBuf;
+            FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "no function", 
+                OverlaysLayerNoObjectInfo, fmt("FATAL: Could not wait on negotiation sema sema: WaitForMultipleObjects error was %08X (%s)\n", lastError, MessageBuf).c_str());
+            // XXX need way to signal that thread errored unexpectedly
+            LocalFree(messageBuf);
+            return 0;
+        }
+
+        if(gNegotiationChannels.params->status != SUCCESS) {
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+                OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u).\n").c_str());
+        } else {
+            DWORD overlayProcessId = gNegotiationChannels.params->overlayProcessId;
+            RPCChannels channels;
+            OpenRPCChannels(overlayProcessId, &channels) -> check errors
+            gConnectionsToOverlaysByProcessId[overlayProcessId] = std::make_unique<ConnectionToMain>(shmem, mutex);
+            /* save off negotiation parameters because they are systemwide */
+            HANDLE receiver = CreateThread(nullptr, 0, MainNegotiateThreadBody, nullptr, 0, &gNegotiationChannels.mainThreadId));
+
+        }
+    }
+}
+
+bool CreateMainSessionReceiverThread(XrInstance instance)
+{
+    DWORD waitresult = WaitForSingleObject(gNegotiationChannels.mainMutexHandle, NegotiationChannels::mutexWaitMillis);
+    if (waitresult == WAIT_TIMEOUT) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not take main mutex sema; is there another main app running?\n").c_str());
+        return false;
+    }
+    gNegotiationChannels.params->mainProcessId = GetCurrentProcessId();
+    gNegotiationChannels.params->mainProcessApiLayerBinaryVersion = gLayerBinaryVersion;
+    gNegotiationChannels.mainNegotiateThreadStop = CreateEventA(nullptr, false, false, nullptr);
+    gNegotiationChannels.mainThread = CreateThread(nullptr, 0, MainNegotiateThreadBody, nullptr, 0, &gNegotiationChannels.mainThreadId));
+}
+
+destroying main session
+    poison all overlay IPC using ConnectionToOverlay
+    SetEvent(gNegotiationChannels.mainNegotiateThreadStop);
+    wait on gNegotiationChannels.mainThread to exit
+    release main-single-connection mutex
+    ReleaseMutex(gNegotiationChannels.mainMutexHandle);
+
+struct RPCChannels
+{
+    HANDLE shmemHandle;
+    HANDLE mainMutexHandle;
+    void* shmem;
+    HANDLE overlayRequestSema;
+    HANDLE mainResponseSema;
+};
+
+struct ConnectionToOverlay
+{
+    OverlayMainRPCChannels conn;
+    HANDLE thread;
+    ConnectionToOverlay(const OverlayMainRPCChannels& conn) :
+        ch(ch)
+    { }
+    overlay-specific shmem and mutex in here?
+};
+
+std::map<DWORD, unique_ptr<ConnectionToOverlay>> gConnectionsToOverlayByProcessId;
+
+struct ConnectionToMain
+{
+    OverlayMainRPCChannels conn;
+    ConnectionToMain(const OverlayMainRPCChannels& conn) :
+        ch(ch)
+    { }
+};
+
+unique_ptr<ConnectionToMain> gConnectionToMain;
+
+
+OpenRPCChannels(DWORD processId, OverlayMainConnectionChannels& ch)
+{
+    LUNARG_OpenXR_IPC_shmem_$(processId)
+    get pointer to shmem 
+    LUNARG_OpenXR_IPC_mutex_$(processId)
+    OverlayRequestSema
+    MainResponseSema
+    careful to return reasonable errors on timeouts or failure
+}
+
+DWORD WINAPI MainRPCThreadBody(XrInstance instance)
+{
+}
+
+layer init
+    OpenNegotiationChannels()
+
+
+connect-to-main from overlay session
+    check to make sure not already main session
+        fail with XR_SESSION_INITIALIZATION_FAILED
+    waits on gNegotiationChannels.overlayWaitSema (wait A) -> graceful recovery from timeout
+    if(gNegotiationChannels.params->mainProcessApiLayerBinaryVersion != gLayerBinaryVersion) {
+        gNegotiationParams.status = DIFFERENT_BINARY_VERSION;
+        post to gNegotiationChannels.mainWaitSema (release B)
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u).\n").c_str());
+        return XR_ERROR_INITIALIZATION_FAILED;
+    } else {
+        /* save off negotiation parameters because they are systemwide */
+        gNegotiationChannels.params->overlayProcessId = GetCurrentProcessId();
+        post to gNegotiationChannels.mainWaitSema (release B) 
+        RPCChannels channels;
+        OpenRPCChannels(my process Id, &channels) -> check errors
+        gConnectionToMain = std::make_unique<ConnectionToMain>(channels);
+    }
+
+XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
+{
+    bool result = CreateMainSessionReceiverThread();
+    if(!result) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the Main App listener thread.\n").c_str());
+        return XR_SESSION_INITIALIZATION_FAILED;
+    }
+    
+    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+
+    XrResult result = instanceInfo.downchain->CreateSession(instance, createInfo, session);
+
+    // XXX create unique local id, place as that instead of created handle
+    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*session), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
+
+    mlock.unlock();
+    gHaveMainSessionActive = true;
+
+    return result;
+}
+
+XrResult OverlaysLayerCreateSessionMainAsOverlay(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
+{
+}
+
+XrResult OverlaysLayerCreateSessionOverlay(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
+{
+    bool result = CreateMainSessionReceiverThread();
+    if(!result) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the Main App listener thread.\n").c_str());
+        return XR_SESSION_INITIALIZATION_FAILED;
+    }
+
+    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+
+        connect-to-main
+        create session
+        store proxy
+
+    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*session), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
+    // XXX create unique local id, return that
+
+    mlock.unlock();
+
+    return result;
+}
+
+XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
+{
+    const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
+    const XrSessionCreateInfoOverlayEXTX* cio = nullptr;
+    const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
+    while(p) {
+        if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX) {
+            cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXTX*>(p);
+        }
+        if(false) {
+            // XXX save off requested API in Overlay, match against Main API
+            // XXX save off requested API in Main, match against Overlay API
+            if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XCB_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WAYLAND_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR)) {
+                return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+            }
+            if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+                d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
+            }
+        }
+        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
+    }
+
+    if(!cio) {
+        return OverlaysLayerCreateSessionMain(instance, createInfo, session);
+    } else {
+        return OverlaysLayerCreateSessionOverlay(instance, createInfo, session);
+    }
+
+    return result;
+}
+
+
+ActionSet: name, localized name, priority
+    xrCreateActionSet
+        Main - create
+        Overlay - make local container for actions
+    xrDestroyActionSet
+Action: type, name, localized name, subaction paths
+    xrCreateAction
+        Main - create
+        Overlay - save local state
+    xrDestroyAction
+    local action saved state
+xrSuggestInteractionProfileBindings
+    Main
+        execute, save bindings for comparison
+    Overlay
+        save bindings locally
+xrAttachSessionActionSets
+    Overlay
+        must pretend to be runtime...
+        return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if already saved
+        save sets for the session
+xrGetCurrentInteractionProfile
+    Overlay
+        IPC to main, get profile
+        Have to pretend to be Runtime a little bit
+            XR_ERROR_ACTIONSET_NOT_ATTACHED
+        return profile to overlay if it matches any provided to SuggestInteractionProfile on overlay
+    MainAsOverlay
+        return some kind of error if Main has not attached yet and returns XR_ERROR_ACTIONSET_NOT_ATTACHED
+    Main
+        track whether action is attached to this session
+xrSyncActions
+    Overlay
+        IPC Action names and suggestedprofile to MainAsOverlay
+    MainAsOverlay
+        call xrSyncActions on bound actionsets?
+        xrEnumerateBoundSourcesForAction for all actions on Overlay side
+        get all bound actions from Overlay and pass back
+    Main
+xrEnumerateBoundSourcesForAction
+xrGetInputSourceLocalizedName
+GetActionState
+    xrGetActionStateBoolean
+    xrGetActionStateFloat
+    xrGetActionStateVector2f
+    xrGetActionStatePose
+    Overlay
+        return values previously stored by xrSyncActions
+    MainAsOverlay
+        nothing?
+    Main
+        call normally
+HapticFeedback
+    xrStopHapticFeedback
+    xrApplyHapticFeedback
+        Overlay
+            has to map local actions to remote actions
+        MainAsOverlay
+            call on Action matching the paths provided
+        Main
+            normal
+xrCreateActionSpace
+    meed to map overlay action to remote action somehow
+
+SuggestInteractionProfileBindings provides a tuple {interaction_profile path, binding path, action}
+    EnumerateBoundSourcesForAction provides 0 or more source binding paths for an action
+        source binding paths can be changed into strings
+        each can be compared against other interaction profile binding path strings
+
+
+
+need to emit for XrPath, XrAction, XrActionSet, XrSystemId
+    Overlay side function to pack up a request to main to create one
+        XrPath -> string used on creation in Overlay
+        XrActionSet -> XrCreateActionSetInfo used on creation in Overlay
+        XrAction -> XrCreateActionInfo used on creation in Overlay
+    MainAsOverlay function to create those bits
+    need to carefully manage errors
+
+possibly_IPC_commands = { Session and all child handle commands }
+in Python, if command_name in IPC_commands,
+    emit in CommandName:
+        check local handle to see if remote proxy
+        if(remote proxy)
+            CommandNameOverlay(params)
+        else
+            CommandNameMain(params)
+    emit CommandNameOverlay(params)
+        for each handle in parameters in XrSpace, XrSwapchain
+            substitute proxy handle
+        for each handle in parameters in XrAction, XrActionSet
+            if there is no proxy handle, create the proxy handle through main
+        for each atom in parameters in XrPath, XrSystemId
+            if there is no proxy atom, create the proxy atom through main
+        substitute proxy Handles and Paths in parameters to send
+        pack up commands, add pointers to list, make pointers relative, send over IPC
+        unpack results
+        deproxy Handles and Paths in returned parameters
+        if created XrSpace or XrSwapchain,
+            create unique id, return that
+    emit CommandNameMain(params)
+        call downchain normally with possible caching of create params
+    emit CommandNameMainAsOverlay(params)
+        take mutex
+        call downchain
+        return result
+    emit body of thread loop looking in shared mem for command name ID
+        make pointers absolute
+        call CommandNameMainAsOverlay
+        make pointers relative
+        return result
+
+
+void* IPCGetSharedMemory()
+{
+    return shared_mem;
+}
+
+// Call from Overlay to connect to the Main or timeout
+ IPCConnectResult IPCXrConnectToMain()
+{
+    // store our process ID for handshake
+    ((DWORD*)shared_mem)[REMOTE_PROCESS_ID_WORD] = GetCurrentProcessId();
+
+    // Wait on the Main to set up connection
+    DWORD result = WaitForSingleObject(gOverlayWaitingOnConnectionSema, CONNECT_WAIT_MILLIS);
+
+    if(result == WAIT_TIMEOUT) {
+        return IPC_CONNECT_TIMEOUT;
+    }
+
+    if(result == WAIT_OBJECT_0 + 0) {
+        // Get the Main's process ID
+        DWORD hostProcessId = ((DWORD*)shared_mem)[HOST_PROCESS_ID_WORD];
+        gMainProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, hostProcessId);
+
+        // Release the Main to get our process Id and continue
+        ReleaseSemaphore(gMainWaitingOnConnectionSema, 1, nullptr);
+
+        // Then wait one more time until we know the Main has our process
+        // ID so we don't overwrite it with something else
+        DWORD result = WaitForSingleObject(gOverlayWaitingOnConnectionSema, CONNECT_HANDSHAKE_WAIT_MILLIS);
+
+        if(result == WAIT_TIMEOUT) {
+            return IPC_CONNECT_TIMEOUT;
+        }
+
+        return IPC_CONNECT_SUCCESS;
+    }
+
+    return IPC_CONNECT_ERROR;
+}
+
+// Call from Main to set up connection from the Overlay
+void IPCSetupForOverlayConnection()
+{
+    DWORD result;
+
+    // clear request and response semaphores
+    result = WaitForSingleObject(gMainResponseSema, 0);
+    if(result == WAIT_OBJECT_0) {
+        OutputDebugStringA("**OVERLAY** Ah, indeed there was a MainResponse sema posted\n");
+    } else {
+        OutputDebugStringA("**OVERLAY** No MainResponse sema posted\n");
+    }
+    result = WaitForSingleObject(gOverlayRequestSema, 0);
+    if(result == WAIT_OBJECT_0) {
+        OutputDebugStringA("**OVERLAY** Ah, indeed there was a OverlayRequest sema posted\n");
+    } else {
+        OutputDebugStringA("**OVERLAY** No OverlayRequest sema posted\n");
+    }
+
+    // store our process ID for handshake
+    ((DWORD*)shared_mem)[HOST_PROCESS_ID_WORD] = GetCurrentProcessId();
+
+    // Signal the remote that the host is waiting on a connection
+    ReleaseSemaphore(gOverlayWaitingOnConnectionSema, 1, nullptr);
+}
+
+// Call from Main to get Overlay Connection or timeout
+IPCConnectResult IPCWaitForOverlayConnection()
+{
+    // Wait on the remote connection
+    DWORD result;
+    result = WaitForSingleObject(gMainWaitingOnConnectionSema, CONNECT_WAIT_MILLIS);
+
+    if(result == WAIT_TIMEOUT) {
+        return IPC_CONNECT_TIMEOUT;
+    }
+
+    if(result == WAIT_OBJECT_0) {
+
+        // Get the Overlay's process ID
+        DWORD remoteProcessId = ((DWORD*)shared_mem)[REMOTE_PROCESS_ID_WORD];
+        gOverlayProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, remoteProcessId);
+
+        // Finally, let the Overlay know we have its ID
+        ReleaseSemaphore(gOverlayWaitingOnConnectionSema, 1, nullptr);
+
+        return IPC_CONNECT_SUCCESS;
+    }
+
+    return IPC_CONNECT_ERROR;
+}
+
+// Call from Overlay when request in shmem is complete
+void IPCFinishOverlayRequest()
+{
+    ReleaseSemaphore(gOverlayRequestSema, 1, nullptr);
+}
+
+// Call from Main to get complete request in shmem
+IPCWaitResult IPCWaitForOverlayRequestOrTermination()
+{
+    HANDLE handles[2];
+
+    handles[0] = gOverlayRequestSema;
+    handles[1] = gOverlayProcessHandle;
+
+    DWORD result;
+
+    do {
+        result = WaitForMultipleObjects(2, handles, FALSE, REMOTE_REQUEST_WAIT_MILLIS);
+    } while(result == WAIT_TIMEOUT);
+
+    if(result == WAIT_OBJECT_0 + 0) {
+        return IPC_REMOTE_REQUEST_READY;
+    }
+
+    if(result == WAIT_OBJECT_0 + 1) {
+        return IPC_REMOTE_PROCESS_TERMINATED;
+    }
+
+    return IPC_WAIT_ERROR;
+}
+
+// Call from Main when response in shmem is complete
+void IPCFinishMainResponse()
+{
+    ReleaseSemaphore(gMainResponseSema, 1, nullptr);
+}
+
+// Call from Overlay to get complete request in shmem
+IPCWaitResult IPCWaitForMainResponse()
+{
+    DWORD result;
+
+    HANDLE handles[2];
+
+    handles[0] = gMainResponseSema;
+    handles[1] = gMainProcessHandle;
+
+    do {
+        result = WaitForMultipleObjects(2, handles, FALSE, HOST_RESPONSE_WAIT_MILLIS);
+    } while(result == WAIT_TIMEOUT);
+
+    if(result == WAIT_OBJECT_0 + 0) {
+        return IPC_HOST_RESPONSE_READY;
+    }
+
+    if(result == WAIT_OBJECT_0 + 1) {
+        return IPC_HOST_PROCESS_TERMINATED;
+    }
+
+    return IPC_WAIT_ERROR;
+}
+
+// Set up shared memory using a named file-mapping object. 
+bool MapSharedMemory(UINT32 req_memsize)
+{ 
+    mutex_handle = CreateMutex(NULL, TRUE, kSharedMutexName);
+    if (NULL == mutex_handle) return false;
+    bool first = (GetLastError() != ERROR_ALREADY_EXISTS); 
+
+    shared_mem_handle = CreateFileMapping( 
+        INVALID_HANDLE_VALUE,   // use sys paging file instead of an existing file
+        NULL,                   // default security attributes
+        PAGE_READWRITE,         // read/write access
+        0,                      // size: high 32-bits
+        req_memsize,            // size: low 32-bits
+        kSharedMemName);        // name of map object
+
+    if (NULL == shared_mem_handle)
+    {
+        OutputDebugStringA("**OVERLAY** failed to CreateFileMapping\n");
+        if (first) ReleaseMutex(mutex_handle); 
+        CloseHandle(mutex_handle);
+        return false; 
+    }
+
+    // Get a pointer to the file-mapped shared memory, read/write
+    shared_mem = MapViewOfFile(shared_mem_handle, FILE_MAP_WRITE, 0, 0, 0);
+    if (NULL == shared_mem) 
+    {
+        OutputDebugStringA("**OVERLAY** failed to MapViewOfFile\n");
+        if (first) ReleaseMutex(mutex_handle); 
+        CloseHandle(mutex_handle);
+        return false; 
+    }
+
+    MEMORY_BASIC_INFORMATION mbi = { 0 };
+    VirtualQueryEx(GetCurrentProcess(), shared_mem, &mbi, sizeof(mbi));
+    mem_size = mbi.RegionSize;
+
+    // First will initialize memory
+    if (first)
+    {
+        memset(shared_mem, '\0', mem_size); 
+        ReleaseMutex(mutex_handle);
+    }
+    
+    return true;
+}
+
+// Unmap the shared memory and release handle
+//
+bool UnmapSharedMemory()
+{
+    // Close handle to mutex
+    CloseHandle(mutex_handle);
+
+    // Unmap shared memory from the process's address space
+    bool err = UnmapViewOfFile(shared_mem); 
+ 
+    // Close the process's handle to the file-mapping object
+    if (!err) err = CloseHandle(shared_mem_handle);
+
+    return err;
+} 
+
