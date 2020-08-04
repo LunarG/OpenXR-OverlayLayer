@@ -12,7 +12,8 @@
        "instance_extensions": [
            {
                "name": "XR_EXTX_overlay",
-               "extension_version": "4"
+               "extension_version": 4,
+               "entrypoints": [ ]
            }
        ]
     }
