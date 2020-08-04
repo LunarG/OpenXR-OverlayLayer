@@ -288,9 +288,9 @@ public:
     bool IsRunning();
 
 private:
-    bool        mRequestOverlaySession;
-    bool        mDebugUtilsAvailable;
-    bool        mPermissionsSupportAvailable;
+    bool        mRequestOverlaySession = false;
+    bool        mDebugUtilsAvailable = false;
+    bool        mPermissionsSupportAvailable = false;
     XrInstance  mInstance;
     XrSystemId  mSystemId;
     XrSession   mSession;
@@ -299,7 +299,7 @@ private:
     std::array<int32_t, 2>      mRecommendedDimensions;
     XrSpace     mContentSpace;
     uint32_t    mMaxLayerCount;
-    XrSessionState      mSessionState;
+    XrSessionState      mSessionState = XR_SESSION_STATE_IDLE;
     XrFrameState        mWaitFrameState;
     std::vector<XrCompositionLayerQuad>      mLayers;
 
@@ -634,6 +634,7 @@ void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doF
         }
         case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
             ProcessSessionStateChangedEvent(event, quit, doFrame);
+			break;
         }
         case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
             // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
@@ -661,14 +662,18 @@ void OpenXRProgram::ProcessEvents(bool& quit, bool &doFrame)
 {
     bool getAnotherEvent = true;
     while (getAnotherEvent && !quit) {
-        static XrEventDataBuffer event {XR_TYPE_EVENT_DATA_BUFFER, nullptr};
+        XrEventDataBuffer event {XR_TYPE_EVENT_DATA_BUFFER, nullptr};
         XrResult result = xrPollEvent(mInstance, &event);
         if(result == XR_SUCCESS) {
             ProcessEvent(&event, quit, doFrame);
         } else {
+            if (result != XR_EVENT_UNAVAILABLE) {
+                CHECK_XR(result);
+        } else {
             getAnotherEvent = false;
         }
     }
+}
 }
 
 bool OpenXRProgram::WaitFrame()
@@ -840,7 +845,7 @@ int main( void )
 
     program.GetSystem();
 
-    bool useSeparateLeftRightEyes;
+    bool useSeparateLeftRightEyes = false;
     if(program.GetMaxLayerCount() >= 2) {
         useSeparateLeftRightEyes = true;
     } else if(program.GetMaxLayerCount() >= 1) {
