@@ -337,6 +337,10 @@ supported_structs = [
     "XrGraphicsRequirementsD3D11KHR",
 ]
 
+manually_implemented_commands = [
+    "xrCreateSession",
+]
+
 supported_commands = [
     "xrDestroyInstance",
     "xrGetInstanceProperties",
@@ -992,7 +996,7 @@ void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct)
 # make functions returned by xrGetInstanceProcAddr ---------------------------
 
 
-for command_name in supported_commands:
+for command_name in [c for c in supported_commands if c not in manually_implemented_commands]:
     command = commands[command_name]
 
     parameters = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
