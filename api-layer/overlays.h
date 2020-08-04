@@ -77,10 +77,12 @@ struct NegotiationChannels
     constexpr static uint32_t shmemSize = sizeof(NegotiationParams);
     constexpr static DWORD mutexWaitMillis = 500;
     constexpr static DWORD negotiationWaitMillis = 500;
+    static int maxAttempts;
 };
 
 extern bool gHaveMainSessionActive;
 extern XrInstance gMainSessionInstance;
+extern DWORD gMainProcessId;   // Set by Overlay to check for main process unexpected exit
 extern HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
 extern HANDLE gMainOverlayMutexHandle; // Held when Main and MainAsOverlay functions need to run exclusively
 

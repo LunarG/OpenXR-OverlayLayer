@@ -1,27 +1,8 @@
-connect-to-main from overlay session
-    check to make sure not already main session
-        fail with XR_SESSION_INITIALIZATION_FAILED
-    waits on gNegotiationChannels.overlayWaitSema (wait A) -> graceful recovery from timeout
-    if(gNegotiationChannels.params->mainProcessApiLayerBinaryVersion != gLayerBinaryVersion) {
-        gNegotiationParams.status = DIFFERENT_BINARY_VERSION;
-        post to gNegotiationChannels.mainWaitSema (release B)
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u).\n").c_str());
-        return XR_ERROR_INITIALIZATION_FAILED;
-    } else {
-        /* save off negotiation parameters because they are systemwide */
-        gNegotiationChannels.params->overlayProcessId = GetCurrentProcessId();
-        post to gNegotiationChannels.mainWaitSema (release B) 
-        RPCChannels channels;
-        OpenRPCChannels(my process Id, &channels) -> check errors
-        gConnectionToMain = std::make_unique<ConnectionToMain>(channels);
-    }
-
 destroying main session
     poison all overlay IPC using ConnectionToOverlay
     SetEvent(gNegotiationChannels.mainNegotiateThreadStop);
     WaitForSingleObject(gNegotiationChannels.mainThread, INFINITE);
-    gMainSessionInstance = XR_NULL_HANDLE
+    gMainSessionInstance = XR_NULL_HANDLE;
     ReleaseMutex(gNegotiationChannels.mainMutexHandle);
 
 destroying instance that was used to create main session
