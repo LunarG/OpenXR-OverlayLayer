@@ -168,21 +168,36 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     memcpy(&new_api_layer_info, apiLayerInfo, sizeof(XrApiLayerCreateInfo));
     new_api_layer_info.nextInfo = apiLayerInfo->nextInfo->next;
 
+    // Remove XR_EXTX_overlay from the extension list if requested
+    const char** extensionNamesMinusOverlay = new const char*[instanceCreateInfo->enabledExtensionCount];
+    uint32_t extensionCountMinusOverlay = 0;
+    for(uint32_t i = 0; i < instanceCreateInfo->enabledExtensionCount; i++) {
+        if(strncmp(instanceCreateInfo->enabledExtensionNames[i], XR_EXTX_OVERLAY_EXTENSION_NAME, strlen(XR_EXTX_OVERLAY_EXTENSION_NAME)) != 0) {
+            extensionNamesMinusOverlay[extensionCountMinusOverlay++] = instanceCreateInfo->enabledExtensionNames[i];
+        }
+    }
+
+    XrInstanceCreateInfo createInfoMinusOverlays = *instanceCreateInfo;
+    createInfoMinusOverlays.enabledExtensionNames = extensionNamesMinusOverlay;
+    createInfoMinusOverlays.enabledExtensionCount = extensionCountMinusOverlay;
+
     // Get the function pointers we need
     next_get_instance_proc_addr = apiLayerInfo->nextInfo->nextGetInstanceProcAddr;
     next_create_api_layer_instance = apiLayerInfo->nextInfo->nextCreateApiLayerInstance;
 
     // Create the instance
     XrInstance returned_instance = *instance;
-    XrResult result = next_create_api_layer_instance(instanceCreateInfo, &new_api_layer_info, &returned_instance);
+    XrResult result = next_create_api_layer_instance(&createInfoMinusOverlays, &new_api_layer_info, &returned_instance);
     *instance = returned_instance;
+
+    delete[] extensionNamesMinusOverlay;
 
     // Create the dispatch table to the next levels
     auto *next_dispatch = new XrGeneratedDispatchTable();
     GeneratedXrPopulateDispatchTable(next_dispatch, returned_instance, next_get_instance_proc_addr);
 
     std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-	gOverlaysLayerXrInstanceToHandleInfo.emplace(*instance, next_dispatch);
+    gOverlaysLayerXrInstanceToHandleInfo.emplace(*instance, next_dispatch);
     gOverlaysLayerXrInstanceToHandleInfo.at(*instance).createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
 
     return result;
@@ -202,8 +217,11 @@ XrResult OverlaysLayerXrDestroyInstance(XrInstance instance) {
 
 NegotiationChannels gNegotiationChannels;
 
+int NegotiationChannels::maxAttempts = 10;
+
 bool gHaveMainSessionActive = false;
 XrInstance gMainSessionInstance;
+DWORD gMainProcessId;   // Set by Overlay to check for main process unexpected exit
 HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
 HANDLE gMainOverlayMutexHandle; // Held when Main and MainAsOverlay functions need to run exclusively
 
@@ -466,6 +484,7 @@ DWORD WINAPI MainNegotiateThreadBody(void*)
 
 bool CreateMainSessionNegotiateThread(XrInstance instance)
 {
+    gMainSessionInstance = instance;
     if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
             OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create overlays negotiation channels\n").c_str());
@@ -517,14 +536,77 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(XrInstance instance, const XrSe
 	return XR_SUCCESS;
 }
 
+bool ConnectToMain(XrInstance instance)
+{
+    // check to make sure not already main session process
+    if(gMainSessionInstance != XR_NULL_HANDLE) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, "FATAL: attempt to make an overlay session while also having a main session\n");
+        return false;
+    }
+
+    if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, "FATAL: could not open negotiation channels\n");
+        return false;
+    }
+
+    DWORD result;
+    int attempts = 0;
+    do {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("Attempt #%d (of %d) to connect to the main app\n", attempts, NegotiationChannels::maxAttempts).c_str());
+        result = WaitForSingleObject(gNegotiationChannels.overlayWaitSema, NegotiationChannels::negotiationWaitMillis);
+        attempts++;
+    } while(attempts < NegotiationChannels::maxAttempts && result == WAIT_TIMEOUT);
+
+    if(result == WAIT_TIMEOUT) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app could not connect to the main app after %d tries.\n", attempts).c_str());
+        return false;
+    }
+
+    OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, "xrCreateSession", 
+        OverlaysLayerNoObjectInfo, fmt("connected to the main app after %d %s.\n", attempts, (attempts < 2) ? "try" : "tries").c_str());
+
+    if(gNegotiationChannels.params->mainLayerBinaryVersion != gLayerBinaryVersion) {
+        gNegotiationChannels.params->status = NegotiationParams::DIFFERENT_BINARY_VERSION;
+        ReleaseSemaphore(gNegotiationChannels.mainWaitSema, 1, nullptr);
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u).\n").c_str());
+        return false;
+    }
+
+    /* save off negotiation parameters because they may be overwritten at any time after we Release mainWait */
+    gMainProcessId = gNegotiationChannels.params->mainProcessId;
+    gNegotiationChannels.params->overlayProcessId = GetCurrentProcessId();
+    gNegotiationChannels.params->status = NegotiationParams::SUCCESS;
+    ReleaseSemaphore(gNegotiationChannels.mainWaitSema, 1, nullptr);
+    RPCChannels channels;
+    if(!OpenRPCChannels(gNegotiationChannels.instance, GetCurrentProcessId(), channels)) {
+        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
+            OverlaysLayerNoObjectInfo, "WARNING: couldn't open RPC channels to main app, connection failed.\n");
+        return false;
+    }
+    gConnectionToMain = std::make_unique<ConnectionToMain>(channels);
+
+    return true;
+}
+
+
 XrResult OverlaysLayerCreateSessionOverlay(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
-	XrResult result;
+    XrResult result = XR_SUCCESS;
+
+    if(!ConnectToMain(instance)) {
+        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "XrCreateSession",
+            OverlaysLayerNoObjectInfo, "WARNING: couldn't connect to main app.\n");
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
 
     std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
     OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
 
-        // connect-to-main
         // create session
         // store proxy
 	result = XR_SUCCESS; // XXX
