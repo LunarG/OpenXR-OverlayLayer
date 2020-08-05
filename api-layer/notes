@@ -12,58 +12,189 @@ destroying instance that was used to create main session
 
 
 
-ActionSet: name, localized name, priority
+LocalActionSet
+    std::vector<LocalAction::Handle> actions;
+    std::string name;
+    std::string localizedName;
+    bool mutable = true; // false after attach
+    typedef uint64_t Handle;
+
+LocalAction
+    std::string name[XR_MAX_ACTION_NAME_SIZE];
+    LocalActionSet::Handle actionSet;
+    XrActionType type;
+    std::vector<std::string> subactionPaths;
+    std::string localizedName
+    typedef uint64_t Handle;
+
+Session::
+    interaction profile bindings
+
+hello_xr output:
+    profile null_path
+    bound "grab" to 0 sources...
+    bound "pose" to 0 sources...
+    bound "quit" to 0 sources...
+    bound "vibrate" to 0 sources...
+    [15:29:53.457][Info   ] XrEventDataSessionStateChanged: state XR_SESSION_STATE_SYNCHRONIZED->XR_SESSION_STATE_VISIBLE session=72165140019019777 time=1060087400739200
+    [15:29:53.458][Info   ] XrEventDataSessionStateChanged: state XR_SESSION_STATE_VISIBLE->XR_SESSION_STATE_FOCUSED session=72165140019019777 time=1060087400774200
+    profile oculus/touch_controller
+    bound "grab" to 2 sources...
+        "/user/hand/left/input/squeeze/value"("Left Hand Oculus Touch Squeeze")
+        "/user/hand/right/input/squeeze/value"("Right Hand Oculus Touch Squeeze")
+    bound "pose" to 2 sources...
+        "/user/hand/left/input/grip/pose"("Left Hand Oculus Touch Grip Pose")
+        "/user/hand/right/input/grip/pose"("Right Hand Oculus Touch Grip Pose")
+    bound "quit" to 1 sources...
+        "/user/hand/left/input/menu/click"("Left Hand Oculus Touch Menu Button")
+    bound "vibrate" to 2 sources...
+        "/user/hand/left/output/haptic"("Left Hand Oculus Touch Vibration")
+        "/user/hand/right/output/haptic"("Right Hand Oculus Touch Vibration")
+
+Actions have arbitrary names and arbitrary localizedNames
+    a runtime may not know how to figure out how to map a controller input to an Action
+
+Applications "may" suggest interaction profile bindings
+    SuggestInteractionProfileBindings provides a tuple {interaction_profile path, binding path, action}
+        EnumerateBoundSourcesForAction provides 0 or more source binding paths for an action
+            source binding paths can be changed into strings
+            each can be compared against other interaction profile binding path strings
+    if bindings aren't suggested, input can't be routed because runtime has no idea what actions mean what
+    So, for a given action, IF AN INTERACTION PROFILE BINDING HAS BEEN SUGGESTED, one may reverse-lookup 0 or more interaction profile binding paths for the action.
+        e.g. in hello_xr, grabAction for interaction profiles is the following bindings:
+            "/interaction_profiles/khr/simple_controller"
+                "/user/hand/left/input/select/click"
+                "/user/hand/right/input/select/click"
+            "/interaction_profiles/oculus/touch_controller"
+                "/user/hand/left/input/squeeze/value"
+                "/user/hand/right/input/squeeze/value"
+            "/interaction_profiles/htc/vive_controller"
+                "/user/hand/left/input/squeeze/click"
+                "/user/hand/right/input/squeeze/click"
+            "/interaction_profiles/microsoft/motion_controller" (bindings same as htc/vive_controller)
+                "/user/hand/left/input/squeeze/click"
+                "/user/hand/right/input/squeeze/click"
+        The list of Paths for a given action can be refined further by using the current interaction profile name
+            e.g. if one knows the interaction profile is oculus/touch_controller, then one can know that grabAction is {left,right}/input/squeeze/value
+            if one does not know the interaction profile, then what?
+                Just check all of them?
+        further a subactionpath might disambiguate fully mapping an action to a binding
+        if overlay suggests "select/click" for XrAction bar and main suggests "select/click" for XrAction foo, xrGetActionStateBoolean on bar could return the same as for foo.
+    However, an app may suggest only khr/simple_controller and not the others.
+        what if overlay suggests "khr/simple_controller" "select/click" for XrAction bar, and main suggests "oculus/touch_controller" "squeeze/value" for XrAction foo.
+            Should OverlaysLayer be responsible for converting input profiles?
+                xrGetCurrentInteractionProfile would need to translate from oculus/touch_controller to khr/simplecontroller
+                xrGetActionStateBoolean would need to know {"oculus/touch_controller","squeeze/value"} can be reasonably approximated by {"khr/simple_controller","select/click"}
+                Overlay Layer would need a mapping with entries from {main profile, main binding} to {overlay profile, overlay binding}
+                if main suggests bindings in a profile that Overlay Layer doesn't know, probably have to punt for now.
+                Maybe punt in general if main's selected interaction profile is not suggested at all by overlay.
+    overlay XrActions may not have the same types as main XrActions for the same bindings.
+        May be able to do conversions one direction but not the other..
+        punt here too if they don't match?
+    An overlay app may suggest bindings for a profile that don't 100% overlap with 100% of main app's bindings
+        also punt, I guess.  Some overlay app Actions won't then receive input.
+    Finally, an XrAction may be bound to multiple input paths.  See 11.5.1 - "Resolving a single action bound to multiple inputs or outputs" for how that's resolved
+    XrAction -> look up in suggested interaction bindings, refine by current interaction profile, results in >= 0 profile paths
+        need to catch profile changed event 
+
+If the Overlay knows what main XrActions are bound to which paths at the moment of xrGetActionState*, it can call xrGetActionState on the main XrAction.
+    this won't work until main calls xrSyncActions, or if main calls xrSyncActions... at all?
+        Overlay could have main call xrSyncActions if main hasn't called it already, and skip the next main xrSyncActions.
+        Is it safe to call twice?
+    Overlay will need to read state of all XrActions at xrSyncActions and keep locally, otherwise a call by main to xrSyncActions would make subsequent xrGetActionState calls return inconsistent results.
+
+Main : GetSourcesFromAction(XrPath, 
+
+xrPollEvent
+    Main
+        if profile changed event, save the current profile
+    Overlay
+        translate profile changed event if possible
+ActionSet:
     xrCreateActionSet
-        Main - create
-        Overlay - make local container for actions
+        Main - create normally
+        Overlay
+            make local container for action
+            save off name, localized name, priority
+        NO MainAsOverlay
     xrDestroyActionSet
-Action: type, name, localized name, subaction paths
+        Main - destroy normally
+        Overlay - delete local container
+
+Action:
     xrCreateAction
-        Main - create
+        Main - create normally
         Overlay - save local state
+            make local container for action
+            type, name, localized name, subaction paths
+            pretend to be runtime: If parent actionSet has been included in a call to xrAttachSessionActionSets, the implementation must return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
+        NO MainAsOverlay
     xrDestroyAction
-    local action saved state
+        Main - destroy normally
+        Overlay - delete local container, delete handle from parent ActionSet
+
 xrSuggestInteractionProfileBindings
     Main
-        execute, save bindings for comparison
+        execute normally
+        save bindings for comparison
+            only one set of bindings per interaction profile so replace old ones on profile with new ones on profile
     Overlay
         save bindings locally
+            only one set of bindings per interaction profile so replace old ones on profile with new ones on profile
+        pretend to be runtime
+            if any action is in attached action set, XR_ERROR_ACTIONSETS_ALREADY_ATTACHED
+            If interaction profile path does not follow structure defined in Interaction Profiles or suggested bindings contain paths that do not follow format defined in Device input subpaths, XR_ERROR_PATH_UNSUPPORTED
+
 xrAttachSessionActionSets
     Overlay
-        must pretend to be runtime...
-        return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if already saved
-        save sets for the session
+        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if already saved
+        per-session copy of sets and actions
+    Main
+        execute normally
+        keep track of attached actionsets -> actions -> paths
+
 xrGetCurrentInteractionProfile
+    Main
+        execute normally - anything else?
     Overlay
         IPC to main, get profile
-        Have to pretend to be Runtime a little bit
-            XR_ERROR_ACTIONSET_NOT_ATTACHED
+            Possible XR_ERROR_ACTIONSET_NOT_ATTACHED if main has not yet Attached
+                should overlay app block on AttachActionSets?
         return profile to overlay if it matches any provided to SuggestInteractionProfile on overlay
+            otherwise NULL_PATH
     MainAsOverlay
         return some kind of error if Main has not attached yet and returns XR_ERROR_ACTIONSET_NOT_ATTACHED
-    Main
-        track whether action is attached to this session
+
 xrSyncActions
+    Main
+        execute normally
     Overlay
         IPC Action names and suggestedprofile to MainAsOverlay
     MainAsOverlay
-        call xrSyncActions on bound actionsets?
+        for all actions on overlay side
+            name = suggestedbindings
         xrEnumerateBoundSourcesForAction for all actions on Overlay side
+        call xrSyncActions on bound actionsets?
         get all bound actions from Overlay and pass back
-    Main
+
 xrEnumerateBoundSourcesForAction
-xrGetInputSourceLocalizedName
+    (and xrGetInputSourceLocalizedName, less important)
+
 GetActionState
     xrGetActionStateBoolean
     xrGetActionStateFloat
     xrGetActionStateVector2f
     xrGetActionStatePose
     Overlay
+        pretend to be runtime
+            if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
+            XR_ERROR_ACTIONSET_NOT_ATTACHED
         return values previously stored by xrSyncActions
     MainAsOverlay
         nothing?
     Main
         call normally
+
 HapticFeedback
     xrStopHapticFeedback
     xrApplyHapticFeedback
@@ -73,13 +204,11 @@ HapticFeedback
             call on Action matching the paths provided
         Main
             normal
-xrCreateActionSpace
-    meed to map overlay action to remote action somehow
 
-SuggestInteractionProfileBindings provides a tuple {interaction_profile path, binding path, action}
-    EnumerateBoundSourcesForAction provides 0 or more source binding paths for an action
-        source binding paths can be changed into strings
-        each can be compared against other interaction profile binding path strings
+xrCreateActionSpace
+    For xrCreateActionSpace, the action and a subpath are used to disambiguate which path may be used
+        but still an action must be bound to a path through an interaction profile
+    need to map overlay action to remote action somehow
 
 
 
