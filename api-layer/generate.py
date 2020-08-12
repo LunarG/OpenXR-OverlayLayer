@@ -506,6 +506,20 @@ add_to_handle_struct["XrInstance"] = {
 """,
 }
 
+add_to_handle_struct["XrSession"] = {
+    "members" : """
+        XrSession actualHandle;
+        bool isOverlaySession = false; // The XrSession is only valid in the Main XrInstance (i.e. in the Main Process)
+""",
+}
+
+after_downchain["xrCreateSession"] = """
+    XrSession actualHandle = *session;
+    XrSession localHandle = GetNextLocalHandle();
+    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(localHandle), std::forward_as_tuple(instance, instance, createInfo));
+    gOverlaysLayerXrSessionToHandleInfo.at(localHandle).actualHandle = actualHandle;
+"""
+
 add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
     "members" : """
         XrDebugUtilsMessengerCreateInfoEXT *createInfo = nullptr;
@@ -544,44 +558,63 @@ in_destructor["XrSpace"] = "    if(referenceSpaceCreateInfo) { FreeXrStructChain
 in_destructor["XrSpace"] += "    if(actionSpaceCreateInfo) { FreeXrStructChainWithFree(instance, actionSpaceCreateInfo); }\n";
 
 after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
+    gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*messenger), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
+    mlock.unlock();
     gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(*messenger).createInfo = reinterpret_cast<XrDebugUtilsMessengerCreateInfoEXT*>(CopyXrStructChainWithMalloc(instance, createInfo));
-    // Already have lock on gOverlaysLayerXrInstanceToHandleInfo
+    mlock.lock();
     gOverlaysLayerXrInstanceToHandleInfo.at(instance).debugUtilsMessengers.insert(*messenger);
+    mlock.unlock();
 """
 
 after_downchain["xrCreateActionSet"] = """
+    gOverlaysLayerXrActionSetToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*actionSet), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
+    mlock.unlock();
     gOverlaysLayerXrActionSetToHandleInfo.at(*actionSet).createInfo = reinterpret_cast<XrActionSetCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
 
 """
 after_downchain["xrCreateAction"] = """
+    gOverlaysLayerXrActionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*action), std::forward_as_tuple(actionSet, actionSetInfo.parentInstance, actionSetInfo.downchain));
+    mlock.unlock();
     gOverlaysLayerXrActionToHandleInfo.at(*action).createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo.parentInstance, createInfo));
 
 """
 
 after_downchain["xrStringToPath"] = """
-        gOverlaysLayerPathtoAtomInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*path), std::forward_as_tuple(pathString));
+    std::unique_lock<std::mutex> mlock2(g{LayerName}PathToAtomInfoMutex);
+    gOverlaysLayerPathToAtomInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*path), std::forward_as_tuple(pathString));
+    mlock2.unlock();
 
 """
 
 after_downchain["xrGetSystem"] = """
-        gOverlaysLayerSystemIdtoAtomInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*systemId), std::forward_as_tuple(instance, getInfo));
-
+    mlock.unlock();
+    XrSystemGetInfo* getInfoCopy = reinterpret_cast<XrSystemGetInfo*>(CopyXrStructChainWithMalloc(instance, getInfo));
+    mlock.lock();
+    std::unique_lock<std::mutex> mlock2(g{LayerName}SystemIdToAtomInfoMutex);
+    gOverlaysLayerSystemIdToAtomInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*systemId), std::forward_as_tuple(instance, getInfoCopy));
+    mlock2.unlock();
+    mlock.unlock();
 """
 
 after_downchain["xrSuggestInteractionProfileBindings"] = """
-        auto search = gPathToSuggestedInteractionProfileBinding.find(suggestedBindings->interactionProfile);
-        if(search != gPathToSuggestedInteractionProfileBinding.end()) {
-            FreeXrStructChainWithFree(instance, search->second);
-        }
-        gPathToSuggestedInteractionProfileBinding[suggestedBindings->interactionProfile] = reinterpret_cast<XrInteractionProfileSuggestedBinding*>(CopyXrStructChainWithMalloc(instance, suggestedBindings));
+    mlock.unlock();
+    auto search = gPathToSuggestedInteractionProfileBinding.find(suggestedBindings->interactionProfile);
+    if(search != gPathToSuggestedInteractionProfileBinding.end()) {
+        FreeXrStructChainWithFree(instance, search->second);
+    }
+    gPathToSuggestedInteractionProfileBinding[suggestedBindings->interactionProfile] = reinterpret_cast<XrInteractionProfileSuggestedBinding*>(CopyXrStructChainWithMalloc(instance, suggestedBindings));
 
 """
 
 after_downchain["xrCreateReferenceSpace"] = """
+    gOverlaysLayerXrSpaceToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*space), std::forward_as_tuple(session, sessionInfo.parentInstance, sessionInfo.downchain));
+    mlock.unlock();
     gOverlaysLayerXrSpaceToHandleInfo.at(*space).referenceSpaceCreateInfo = reinterpret_cast<XrReferenceSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo.parentInstance, createInfo));
 """
 
 after_downchain["xrCreateActionSpace"] = """
+    gOverlaysLayerXrSpaceToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*space), std::forward_as_tuple(session, sessionInfo.parentInstance, sessionInfo.downchain));
+    mlock.unlock();
     gOverlaysLayerXrSpaceToHandleInfo.at(*space).actionSpaceCreateInfo = reinterpret_cast<XrActionSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo.parentInstance, createInfo));
 """
 
@@ -641,8 +674,10 @@ header_text += """
 
 """
 
-header_text += f"extern std::unordered_map<XrPath, {LayerName}PathAtomInfo> g{LayerName}PathtoAtomInfo;\n\n"
-source_text += f"std::unordered_map<XrPath, {LayerName}PathAtomInfo> g{LayerName}PathtoAtomInfo;\n\n"
+header_text += f"extern std::unordered_map<XrPath, {LayerName}PathAtomInfo> g{LayerName}PathToAtomInfo;\n\n"
+source_text += f"std::unordered_map<XrPath, {LayerName}PathAtomInfo> g{LayerName}PathToAtomInfo;\n\n"
+header_text += f"extern std::mutex g{LayerName}PathToAtomInfoMutex;\n"
+source_text += f"std::mutex g{LayerName}PathToAtomInfoMutex;\n"
 
 
 # XrSystemId
@@ -652,19 +687,19 @@ header_text += """
 {
     XrSystemGetInfo *getInfo;
 """
-header_text += f"    {LayerName}SystemIdAtomInfo(XrInstance instance, const XrSystemGetInfo *getInfo_)\n"
+header_text += f"    {LayerName}SystemIdAtomInfo(const XrSystemGetInfo *copyOfGetInfo)\n"
 header_text += """
-    {
-        getInfo = reinterpret_cast<XrSystemGetInfo*>(CopyXrStructChainWithMalloc(instance, getInfo_));
-    }
+    : getInfo(copyOfGetInfo)
+    {}
     // map of remote XrSystemId by XrSession
-    std::unordered_map<uint64_t, uint64_t> remoteSystemIdByLocalSession;
 };
 
 """
 
-header_text += f"extern std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo> g{LayerName}SystemIdtoAtomInfo;\n\n"
-source_text += f"std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo> g{LayerName}SystemIdtoAtomInfo;\n\n"
+header_text += f"extern std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo> g{LayerName}SystemIdToAtomInfo;\n\n"
+source_text += f"std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo> g{LayerName}SystemIdToAtomInfo;\n\n"
+header_text += f"extern std::mutex g{LayerName}SystemIdToAtomInfoMutex;\n"
+source_text += f"std::mutex g{LayerName}SystemIdToAtomInfoMutex;\n"
 
 
 only_child_handles = [h for h in supported_handles if h != "XrInstance"]
@@ -1018,21 +1053,28 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     dispatch_command = dispatch_name_for_command(command_name)
     source_text += f"    XrResult result = {handle_name}Info.downchain->{dispatch_command}({parameter_names});\n\n"
 
-    if command_name.find("Create") >= 0:
-        created_type = command["parameters"][-1].find("type").text
-        created_name = command["parameters"][-1].find("name").text
-        # just assume we hand-coded Instance creation so these are all child handle types
-        # in C++17 this would be an initializer list but before that we have to use the forwarding syntax.
-        parent_type = str(handles[created_type][1] or "")
-        if parent_type == "XrInstance":
-            source_text += f"    g{LayerName}{created_type}ToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*{created_name}), std::forward_as_tuple({handle_name}, instance, {handle_name}Info.downchain));\n"
-        else:
-            source_text += f"    /* {parent_type} */ g{LayerName}{created_type}ToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*{created_name}), std::forward_as_tuple({handle_name}, {handle_name}Info.parentInstance, {handle_name}Info.downchain));\n"
-        # XXX source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
+    if command_name in after_downchain:
 
-    source_text += f"    mlock.unlock();\n"
+        source_text += after_downchain.get(command_name, "")
 
-    source_text += after_downchain.get(command_name, "")
+    else:
+
+        # Attempt generation of special cases
+
+        # Special Case Create functions
+        if command_name.find("Create") >= 0:
+            created_type = command["parameters"][-1].find("type").text
+            created_name = command["parameters"][-1].find("name").text
+            # just assume we hand-coded Instance creation so these are all child handle types
+            # in C++17 this would be an initializer list but before that we have to use the forwarding syntax.
+            parent_type = str(handles[created_type][1] or "")
+            if parent_type == "XrInstance":
+                source_text += f"    g{LayerName}{created_type}ToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*{created_name}), std::forward_as_tuple({handle_name}, instance, {handle_name}Info.downchain));\n"
+            else:
+                source_text += f"    /* {parent_type} */ g{LayerName}{created_type}ToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*{created_name}), std::forward_as_tuple({handle_name}, {handle_name}Info.parentInstance, {handle_name}Info.downchain));\n"
+            # XXX source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
+
+        source_text += f"    mlock.unlock();\n"
 
     source_text += "    return result;\n"
 
