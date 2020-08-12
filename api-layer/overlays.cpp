@@ -219,8 +219,9 @@ NegotiationChannels gNegotiationChannels;
 
 int NegotiationChannels::maxAttempts = 10;
 
-bool gHaveMainSessionActive = false;
+bool gAppHasAMainSession = false;
 XrInstance gMainSessionInstance;
+XrSession gMainSession;
 DWORD gMainProcessId;   // Set by Overlay to check for main process unexpected exit
 HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
 HANDLE gMainOverlayMutexHandle; // Held when Main and MainAsOverlay functions need to run exclusively
@@ -296,9 +297,13 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
     return true;
 }
 
-bool OpenRPCChannels(XrInstance instance, DWORD overlayProcessId, RPCChannels& ch)
+bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, RPCChannels& ch)
 {
     ch.instance = instance;
+
+    ch.otherProcessId = otherProcessId;
+    ch.otherProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, ch.otherProcessId);
+
     ch.mutexHandle = CreateMutexA(NULL, TRUE, fmt(RPCChannels::mutexNameTemplate, overlayProcessId).c_str());
     if (ch.mutexHandle == NULL) {
         DWORD lastError = GetLastError();
@@ -366,6 +371,8 @@ bool OpenRPCChannels(XrInstance instance, DWORD overlayProcessId, RPCChannels& c
 }
 
 
+std::unordered_map<DWORD, ConnectionToOverlay> gConnectionsToOverlayByProcessId;
+
 DWORD WINAPI MainRPCThreadBody(void *param)
 {
     RPCChannels *channels = reinterpret_cast<RPCChannels*>(param);
@@ -403,7 +410,7 @@ DWORD WINAPI MainRPCThreadBody(void *param)
 
             hdr->makePointersAbsolute(ipcbuf.base);
 
-            connectionLost = ProcessRemoteRequestAndReturnConnectionLost(ipcbuf, hdr);
+            connectionLost = ProcessRemoteRequestOrReturnConnectionLost(*channels, ipcbuf, hdr);
 
             hdr->makePointersRelative(ipcbuf.base);
 
@@ -418,8 +425,6 @@ DWORD WINAPI MainRPCThreadBody(void *param)
 #endif
 	return 0;
 }
-
-std::unordered_map<DWORD, ConnectionToOverlay> gConnectionsToOverlayByProcessId;
 
 DWORD WINAPI MainNegotiateThreadBody(void*)
 {
@@ -460,15 +465,16 @@ DWORD WINAPI MainNegotiateThreadBody(void*)
                 OverlaysLayerNoObjectInfo, fmt("WARNING: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u), connection rejected.\n", gNegotiationChannels.params->overlayLayerBinaryVersion, gNegotiationChannels.params->mainLayerBinaryVersion).c_str());
 
         } else {
+
             DWORD overlayProcessId = gNegotiationChannels.params->overlayProcessId;
             RPCChannels channels;
 
             if(!OpenRPCChannels(gNegotiationChannels.instance, overlayProcessId, channels)) {
+
                 OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
                     OverlaysLayerNoObjectInfo, fmt("WARNING: couldn't open RPC channels to overlay app, connection rejected.\n").c_str());
-            } else {
 
-                /* XXX save off negotiation parameters because they are systemwide ?? */
+            } else {
 
                 RPCChannels *threadChannels = new RPCChannels;
                 *threadChannels = channels; // thread frees
@@ -482,9 +488,10 @@ DWORD WINAPI MainNegotiateThreadBody(void*)
     }
 }
 
-bool CreateMainSessionNegotiateThread(XrInstance instance)
+bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSession)
 {
     gMainSessionInstance = instance;
+    gMainSession = hostingSession;
     if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
             OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create overlays negotiation channels\n").c_str());
@@ -506,27 +513,32 @@ bool CreateMainSessionNegotiateThread(XrInstance instance)
     return true;
 }
 
-std::unique_ptr<ConnectionToMain> gConnectionToMain;
+ConnectionToMain gConnectionToMain;
 
 XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
-    bool result = CreateMainSessionNegotiateThread(instance);
+    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+
+    XrResult xrresult = instanceInfo.downchain->CreateSession(instance, createInfo, session);
+
+    // XXX create unique local id, place as that instead of created handle
+    XrSession actualHandle = *session;
+    XrSession localHandle = GetNextLocalHandle();
+
+    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(localHandle), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
+    mlock.unlock();
+    gOverlaysLayerXrSessionToHandleInfo.at(localHandle).actualHandle = actualHandle;
+    gOverlaysLayerXrSessionToHandleInfo.at(localHandle).isOverlaySession = false;
+    gAppHasAMainSession = true;
+
+    bool result = CreateMainSessionNegotiateThread(instance, actualHandle);
+
     if(!result) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
             OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the Main App listener thread.\n").c_str());
         return XR_ERROR_INITIALIZATION_FAILED;
     }
-    
-    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-    OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
-
-	XrResult xrresult = instanceInfo.downchain->CreateSession(instance, createInfo, session);
-
-    // XXX create unique local id, place as that instead of created handle
-    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*session), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
-
-    mlock.unlock();
-    gHaveMainSessionActive = true;
 
     return xrresult;
 }
@@ -581,14 +593,14 @@ bool ConnectToMain(XrInstance instance)
     gMainProcessId = gNegotiationChannels.params->mainProcessId;
     gNegotiationChannels.params->overlayProcessId = GetCurrentProcessId();
     gNegotiationChannels.params->status = NegotiationParams::SUCCESS;
+
     ReleaseSemaphore(gNegotiationChannels.mainWaitSema, 1, nullptr);
-    RPCChannels channels;
-    if(!OpenRPCChannels(gNegotiationChannels.instance, GetCurrentProcessId(), channels)) {
+
+    if(!OpenRPCChannels(gNegotiationChannels.instance, gMainProcessId, gConnectionToMain.conn)) {
         OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
             OverlaysLayerNoObjectInfo, "WARNING: couldn't open RPC channels to main app, connection failed.\n");
         return false;
     }
-    gConnectionToMain = std::make_unique<ConnectionToMain>(channels);
 
     return true;
 }
@@ -621,7 +633,7 @@ XrResult OverlaysLayerCreateSessionOverlay(XrInstance instance, const XrSessionC
 
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
-	XrResult result;
+    XrResult result;
 
     const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
     const XrSessionCreateInfoOverlayEXTX* cio = nullptr;
