@@ -243,7 +243,8 @@ struct NegotiationChannels
     constexpr static uint32_t shmemSize = sizeof(NegotiationParams);
     constexpr static DWORD mutexWaitMillis = 500;
     constexpr static DWORD negotiationWaitMillis = 500;
-    static int maxAttempts;
+    constexpr static int NegotiationChannels::maxAttempts = 10;
+
 };
 
 extern bool gHaveMainSessionActive;
@@ -360,7 +361,7 @@ struct ConnectionToOverlay
 {
     std::recursive_mutex mutex;
     RPCChannels conn;
-    OverlaySessionContext::Ptr *ctx = nullptr;
+    OverlaySessionContext::Ptr ctx = nullptr;
     std::thread thread;
 
     ConnectionToOverlay(const RPCChannels& conn) :
@@ -374,9 +375,7 @@ struct ConnectionToOverlay
 
     ~ConnectionToOverlay()
     {
-        if(ctx) {
-            delete ctx;
-        }
+        ctx.reset();
         // ...
     }
 
@@ -396,14 +395,12 @@ extern std::unordered_map<DWORD, ConnectionToOverlay::Ptr> gConnectionsToOverlay
 
 constexpr uint32_t gLayerBinaryVersion = 0x00000001;
 
+extern std::recursive_mutex gActualSessionToLocalHandleMutex;
+extern std::unordered_map<XrSession, XrSession> gActualSessionToLocalHandle;
+
 // Not generated
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session);
 
-uint64_t GetNextLocalHandle()
-{
-    static std::atomic_uint64_t nextHandle;
-    return nextHandle++;
-}
-
+uint64_t GetNextLocalHandle();
 
 #endif /* _OVERLAYS_H_ */
