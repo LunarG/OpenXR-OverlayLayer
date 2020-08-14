@@ -1,3 +1,28 @@
+8/13
+Should all receiver threads take a ConnectionToOverlay and the main switcher lock that connection?  Let's try it.
+shared_ptr guarantees thread-safe control - deletion, copy, reset, etc.
+    https://www.modernescpp.com/index.php/atomic-smart-pointers#:~:text=yes%20and%20no.-,Why%3F,will%20be%20deleted%20exactly%20once.
+    But OBJECT is still not thread safe.
+
+8/12 You're in the middle of figuring out whether things have smart pointers or not (in particular ConnectionToOverlay and gConnectionsToOverlayByProcessId)
+Make as many objects simple copies as possible (e.g. RPCConnections is just HANDLEs and DWORDs and void*s)
+Use std::thread to make sure to avoid conflict with Windows threads
+    do I need thread HANDLEs for anything?
+use std::mutex within a process
+    use CreateMutex only for cross-process synchronization and sparingly
+Identity any objects that may be accessed by multiple threads and why
+    unordered_maps mapping handles to tracking state must be locked
+        will be appended from negotiation thread
+        may have elements removed by overlay service thread
+    map of overlay thread ID to overlay state
+    list of overlay-owned objects in main process does *not* need to be locked?
+        they will only get destroyed in the overlay service thread?  What about 
+Why not just lock every API layer call?
+    Why?  Only Destroy has to be externally synchronized.  That means we won't be inside an XR command in an app's explicit threads when the handle is Destroyed.
+        But we could be in the overlay service thread accessing, say XrSession, when it is Destroyed. 
+
+
+
 Any RPC should check for Main Instance lost, return INSTANCE_LOST and Overlay convert to INITIALIZATION_FAILED
 
 CreateSession is an RPC Call
@@ -9,6 +34,10 @@ CreateSession is an RPC Call
     sendRPC["instanceCreateInfo"] = "%(member)s = gOverlaysLayerXrInstanceToHandleInfo.at(*instance).createInfo;\n"
     if not annotated, parameters are from and then to command call
     otherwise parameters annoted with "sendRPC" and "receiveRPC" for code to insert before RPC and after
+
+enum {
+    IPC_XR_CREATE_SESSION = 1,
+};
 
 struct OverlaysLayerRPCCreateSession
 {
@@ -274,7 +303,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     // Serialize our RPC args into the IPC buffer in shared memory
     XrFormFactor formFactor;
     {
-        // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN SUBSTITUTE THAT
+        // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN SUBSTITUTE THAT IN THE OVERLAY BEFORE THE RPC.
         std::unique_lock<std::mutex> m(gOverlaysLayerSystemIdToAtomInfoMutex);
         XrSystemGetInfo* systemGetInfo = gOverlaysLayerSystemIdToAtomInfo.at(createInfo.systemId).getInfo;
         formFactor = systemGetInfo.formFactor;
@@ -346,12 +375,9 @@ bool FindExtensionInList(const char* extension, uint32_t extensionsCount, const 
 }
 
 XrResult OverlaysLayerCreateSessionMainAsOverlay(
-    RPCChannels&                                channels,
+    ConnectionToOverlay::Ptr        connection,
     OverlaysLayerRPCCreateSession&              args)
 {
-    XrResult result;
-
-    *args.session = gMainSession;
     std::unique_lock<std::mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
     OverlaysLayerXrSessionHandleInfo& sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(gMainSession);
 
@@ -427,9 +453,8 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(
     {
         std::unique_lock<std::mutex> m(gOverlaysLayerSessionToHandleInfoMutex);
         OverlaysLayerXrSessionHandleInfo& sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(gMainSession);
-        systemId = sessionInfo.createInfo.systemId;
+        XrSystemId systemId = sessionInfo.createInfo.systemId;
 
-        // systemId here comes from...?
         std::unique_lock<std::mutex> m2(gOverlaysLayerSystemIdToAtomInfoMutex);
         auto it = gOverlaysLayerSystemIdToAtomInfo.find(systemId);
         XrSystemGetInfo* systemGetInfo = gOverlaysLayerSystemIdToAtomInfo.at(systemId).getInfo;
@@ -459,12 +484,18 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
-    create stand in for Main managing all Overlay app's stuff (in case Overlay unexpectedly exits); MainSessionContext
+    {
+        auto l = connection->GetLock();
+        l->ctx = std::make_shared<OverlaySessionContext>();
+    }
+    // create stand in for Main managing all Overlay app's stuff (in case Overlay unexpectedly exits); OverlaySessionContext
 
-    return result;
+    *args.session = gMainSession;
+
+    return XR_SUCCESS;
 }
 
-bool ProcessOverlayRequestOrReturnConnectionLost(RPCChannels& channels, IPCBuffer &ipcbuf, IPCHeader *hdr)
+bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr)
 {
     switch(hdr->requestType) {
 
@@ -476,19 +507,21 @@ bool ProcessOverlayRequestOrReturnConnectionLost(RPCChannels& channels, IPCBuffe
 
         case IPC_XR_CREATE_SESSION: {
             auto args = ipcbuf.getAndAdvance<OverlaysLayerRPCCreateSession>();
-            hdr->result = OverlaysLayerCreateSessionMainAsOverlay(channels, args);
+            hdr->result = OverlaysLayerCreateSessionMainAsOverlay(connection, args);
             break;
         }
 
-        // ...
+        // XXX fill others
 
         default: {
+            // XXX use log message func
             OutputDebugStringA("unknown request type in IPC");
-            return true;
+            return false;
             break;
         }
     }
-    return false;
+
+    return true;
 }
 
 OverlaysLayerLogMessage

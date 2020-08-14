@@ -64,15 +64,15 @@ void OverlaysLayerLogMessage(XrInstance instance,
     // callback.
     if(instance != XR_NULL_HANDLE) {
 
-        OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+        OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
 
         // To be a little more performant, check all messenger's
         // messageSeverities and messageTypes to make sure we will call at
         // least one
 
-        /* XXX TBD !instanceInfo.debug_data.Empty() */
+        /* XXX TBD !instanceInfo->debug_data.Empty() */
 
-        if (!instanceInfo.debugUtilsMessengers.empty()) {
+        if (!instanceInfo->debugUtilsMessengers.empty()) {
 
             // Setup our callback data once
             XrDebugUtilsMessengerCallbackDataEXT callback_data = {};
@@ -95,10 +95,10 @@ void OverlaysLayerLogMessage(XrInstance instance,
 #endif
 
             // Loop through all active messengers and give each a chance to output information
-            for (const auto &messenger : instanceInfo.debugUtilsMessengers) {
+            for (const auto &messenger : instanceInfo->debugUtilsMessengers) {
 
-                std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-                XrDebugUtilsMessengerCreateInfoEXT *messenger_create_info = gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(messenger).createInfo;
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                XrDebugUtilsMessengerCreateInfoEXT *messenger_create_info = gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo[messenger]->createInfo;
                 mlock.unlock();
 
                 // If a callback exists, and the message is of a type this callback cares about, call it.
@@ -196,19 +196,21 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     auto *next_dispatch = new XrGeneratedDispatchTable();
     GeneratedXrPopulateDispatchTable(next_dispatch, returned_instance, next_get_instance_proc_addr);
 
-    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-    gOverlaysLayerXrInstanceToHandleInfo.emplace(*instance, next_dispatch);
-    gOverlaysLayerXrInstanceToHandleInfo.at(*instance).createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
+    info->createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
+    gOverlaysLayerXrInstanceToHandleInfo[*instance] = info;
 
     return result;
 }
 
-XrResult OverlaysLayerXrDestroyInstance(XrInstance instance) {
-	std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-	OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
-	XrGeneratedDispatchTable *next_dispatch = instanceInfo.downchain;
-	instanceInfo.Destroy();
-	mlock.unlock();
+XrResult OverlaysLayerXrDestroyInstance(XrInstance instance)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
+    XrGeneratedDispatchTable *next_dispatch = instanceInfo->downchain;
+    instanceInfo->Destroy();
+    mlock.unlock();
 
     next_dispatch->DestroyInstance(instance);
 
@@ -224,7 +226,6 @@ XrInstance gMainSessionInstance;
 XrSession gMainSession;
 DWORD gMainProcessId;   // Set by Overlay to check for main process unexpected exit
 HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
-HANDLE gMainOverlayMutexHandle; // Held when Main and MainAsOverlay functions need to run exclusively
 
 // Both main and overlay processes call this function, which creates/opens
 // the negotiation mutex, shmem, and semaphores.
@@ -297,14 +298,14 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
     return true;
 }
 
-bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, RPCChannels& ch)
+bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId, RPCChannels& ch)
 {
     ch.instance = instance;
 
     ch.otherProcessId = otherProcessId;
     ch.otherProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, ch.otherProcessId);
 
-    ch.mutexHandle = CreateMutexA(NULL, TRUE, fmt(RPCChannels::mutexNameTemplate, overlayProcessId).c_str());
+    ch.mutexHandle = CreateMutexA(NULL, TRUE, fmt(RPCChannels::mutexNameTemplate, overlayId).c_str());
     if (ch.mutexHandle == NULL) {
         DWORD lastError = GetLastError();
         LPVOID messageBuf;
@@ -321,7 +322,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, RPCChannels& ch)
         PAGE_READWRITE,         // read/write access
         0,                      // size: high 32-bits
         RPCChannels::shmemSize,         // size: low 32-bits
-        fmt(RPCChannels::shmemNameTemplate, overlayProcessId).c_str());        // name of map object
+        fmt(RPCChannels::shmemNameTemplate, overlayId).c_str());        // name of map object
 
     if (ch.shmemHandle == NULL) {
         DWORD lastError = GetLastError();
@@ -345,7 +346,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, RPCChannels& ch)
         return false; 
     }
 
-    ch.overlayRequestSema = CreateSemaphoreA(nullptr, 0, 1, fmt(RPCChannels::overlayRequestSemaNameTemplate, overlayProcessId).c_str());
+    ch.overlayRequestSema = CreateSemaphoreA(nullptr, 0, 1, fmt(RPCChannels::overlayRequestSemaNameTemplate, overlayId).c_str());
     if(ch.overlayRequestSema == NULL) {
         DWORD lastError = GetLastError();
         LPVOID messageBuf;
@@ -356,7 +357,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, RPCChannels& ch)
         return false;
     }
 
-    ch.mainResponseSema = CreateSemaphoreA(nullptr, 0, 1, fmt(RPCChannels::mainResponseSemaNameTemplate, overlayProcessId).c_str());
+    ch.mainResponseSema = CreateSemaphoreA(nullptr, 0, 1, fmt(RPCChannels::mainResponseSemaNameTemplate, overlayId).c_str());
     if(ch.mainResponseSema == NULL) {
         DWORD lastError = GetLastError();
         LPVOID messageBuf;
@@ -371,62 +372,75 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, RPCChannels& ch)
 }
 
 
-std::unordered_map<DWORD, ConnectionToOverlay> gConnectionsToOverlayByProcessId;
+std::unordered_map<DWORD, std::shared_ptr<ConnectionToOverlay>> gConnectionsToOverlayByProcessId;
+std::recursive_mutex gConnectionsToOverlayByProcessIdMutex;
 
-DWORD WINAPI MainRPCThreadBody(void *param)
+void MainRPCThreadBody(ConnectionToOverlay::Ptr connection)
 {
-    RPCChannels *channels = reinterpret_cast<RPCChannels*>(param);
+    auto l = connection->GetLock();
+    RPCChannels rpc = connection->conn;
+    l.unlock();
 
-    DebugBreak();
-#if 0
     bool connectionLost = false;
+
     do {
-        IPCWaitResult result;
-        result = IPCWaitForRemoteRequestOrTermination();
+        RPCChannels::WaitResult result = rpc.WaitForOverlayRequestOrFail();
 
-        if(result == IPC_REMOTE_PROCESS_TERMINATED) {
+        if(result == RPCChannels::WaitResult::OVERLAY_PROCESS_TERMINATED) {
 
+            OutputDebugStringA("**OVERLAY** other process terminated\n");
+            DebugBreak();
+#if 0 // XXX
             if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
                 ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
                 gMainSession->overlaySession->swapchainMap.clear();
                 gMainSession->ClearOverlayLayers();
             }
+#endif
             connectionLost = true;
 
-        } else if(result == IPC_WAIT_ERROR) {
+        } else if(result == RPCChannels::WaitResult::WAIT_ERROR) {
 
-            if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
-                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
-                gMainSession->overlaySession->swapchainMap.clear();
-                gMainSession->ClearOverlayLayers();
-            }
-            connectionLost = true;
             OutputDebugStringA("**OVERLAY** IPC Wait Error\n");
+            DebugBreak();
+#if 0 // XXX
+            if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
+                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
+                gMainSession->overlaySession->swapchainMap.clear();
+                gMainSession->ClearOverlayLayers();
+            }
+#endif
+            connectionLost = true;
 
         } else {
 
-            IPCBuffer ipcbuf = IPCGetBuffer();
-            IPCXrHeader *hdr = ipcbuf.getAndAdvance<IPCXrHeader>();
+            IPCBuffer ipcbuf = rpc.GetIPCBuffer();
+            IPCHeader *hdr = ipcbuf.getAndAdvance<IPCHeader>();
 
             hdr->makePointersAbsolute(ipcbuf.base);
 
-            connectionLost = ProcessRemoteRequestOrReturnConnectionLost(*channels, ipcbuf, hdr);
+            bool success = ProcessOverlayRequestOrReturnConnectionLost(connection, hdr);
 
-            hdr->makePointersRelative(ipcbuf.base);
-
-            IPCFinishHostResponse();
+            if(!success) {
+                hdr->makePointersRelative(ipcbuf.base);
+                rpc.FinishMainResponse();
+            } else {
+                connectionLost = true;
+            }
         }
 
+#if 0 // XXX
         if(connectionLost && gMainSession && gMainSession->overlaySession) {
             gMainSession->DestroyOverlaySession();
         }
-
-    } while(!connectionLost && !gMainInstanceContext.exitIPCLoop);
 #endif
-	return 0;
+
+    } while(!connectionLost);
+    // XXX && !gMainInstanceContext.exitIPCLoop);
+
 }
 
-DWORD WINAPI MainNegotiateThreadBody(void*)
+void MainNegotiateThreadBody()
 {
     DWORD result;
     HANDLE handles[2];
@@ -444,7 +458,7 @@ DWORD WINAPI MainNegotiateThreadBody(void*)
         if(result == WAIT_OBJECT_0 + 0) {
 
             // Main process has signaled us to stop, probably Session was destroyed.
-            return 0;
+            return;
 
         } else if(result != WAIT_OBJECT_0 + 1) {
 
@@ -456,7 +470,7 @@ DWORD WINAPI MainNegotiateThreadBody(void*)
                 OverlaysLayerNoObjectInfo, fmt("FATAL: Could not wait on negotiation sema sema: WaitForMultipleObjects error was %08X (%s)\n", lastError, messageBuf).c_str());
             // XXX need way to signal main process that thread errored unexpectedly
             LocalFree(messageBuf);
-            return 0;
+            return;
         }
 
         if(gNegotiationChannels.params->status != NegotiationParams::SUCCESS) {
@@ -469,20 +483,25 @@ DWORD WINAPI MainNegotiateThreadBody(void*)
             DWORD overlayProcessId = gNegotiationChannels.params->overlayProcessId;
             RPCChannels channels;
 
-            if(!OpenRPCChannels(gNegotiationChannels.instance, overlayProcessId, channels)) {
+            if(!OpenRPCChannels(gNegotiationChannels.instance, overlayProcessId, overlayProcessId, channels)) {
 
                 OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
                     OverlaysLayerNoObjectInfo, fmt("WARNING: couldn't open RPC channels to overlay app, connection rejected.\n").c_str());
 
             } else {
+                ConnectionToOverlay::Ptr connection = std::make_shared<ConnectionToOverlay>(channels);
 
-                RPCChannels *threadChannels = new RPCChannels;
-                *threadChannels = channels; // thread frees
-                DWORD threadId;
-                HANDLE receiverThread = CreateThread(nullptr, 0, MainRPCThreadBody, threadChannels, 0, &threadId);
-                gConnectionsToOverlayByProcessId.emplace(std::piecewise_construct,
-					std::forward_as_tuple(overlayProcessId),
-					std::forward_as_tuple(channels, receiverThread, threadId));
+                {
+                    std::unique_lock<std::recursive_mutex> m(gConnectionsToOverlayByProcessIdMutex);
+                    gConnectionsToOverlayByProcessId[overlayProcessId] = connection;
+                }
+
+                std::thread receiverThread(MainRPCThreadBody, overlayProcessId);
+
+                {
+                    auto l = connection->GetLock();
+                    connection->thread = receiverThread;
+                }
             }
         }
     }
@@ -508,28 +527,33 @@ bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSess
     gNegotiationChannels.params->mainProcessId = GetCurrentProcessId();
     gNegotiationChannels.params->mainLayerBinaryVersion = gLayerBinaryVersion;
     gNegotiationChannels.mainNegotiateThreadStop = CreateEventA(nullptr, false, false, nullptr);
-    gNegotiationChannels.mainThread = CreateThread(nullptr, 0, MainNegotiateThreadBody, nullptr, 0, &gNegotiationChannels.mainThreadId);
+    gNegotiationChannels.mainThread = std::thread(MainNegotiateThreadBody);
 
     return true;
 }
 
-ConnectionToMain gConnectionToMain;
+ConnectionToMain::Ptr gConnectionToMain;
 
 XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
-    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-    OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
+    mlock.unlock();
 
-    XrResult xrresult = instanceInfo.downchain->CreateSession(instance, createInfo, session);
+    XrResult xrresult = instanceInfo->downchain->CreateSession(instance, createInfo, session);
 
     // XXX create unique local id, place as that instead of created handle
     XrSession actualHandle = *session;
-    XrSession localHandle = GetNextLocalHandle();
+    XrSession localHandle = (XrSession)GetNextLocalHandle();
 
-    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(localHandle), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
-    mlock.unlock();
-    gOverlaysLayerXrSessionToHandleInfo.at(localHandle).actualHandle = actualHandle;
-    gOverlaysLayerXrSessionToHandleInfo.at(localHandle).isOverlaySession = false;
+    OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
+    info->actualHandle = actualHandle;
+    info->isOverlaySession = false;
+
+    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
+    gOverlaysLayerXrSessionToHandleInfo[localHandle] = info;
+    mlock2.unlock();
+
     gAppHasAMainSession = true;
 
     bool result = CreateMainSessionNegotiateThread(instance, actualHandle);
@@ -596,7 +620,7 @@ bool ConnectToMain(XrInstance instance)
 
     ReleaseSemaphore(gNegotiationChannels.mainWaitSema, 1, nullptr);
 
-    if(!OpenRPCChannels(gNegotiationChannels.instance, gMainProcessId, gConnectionToMain.conn)) {
+    if(!OpenRPCChannels(gNegotiationChannels.instance, gMainProcessId, GetCurrentProcessId(), gConnectionToMain->conn)) {
         OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
             OverlaysLayerNoObjectInfo, "WARNING: couldn't open RPC channels to main app, connection failed.\n");
         return false;
@@ -616,17 +640,20 @@ XrResult OverlaysLayerCreateSessionOverlay(XrInstance instance, const XrSessionC
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
-    std::unique_lock<std::mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-    OverlaysLayerXrInstanceHandleInfo& instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
+    mlock.unlock();
 
         // create session
         // store proxy
 	result = XR_SUCCESS; // XXX
 
-    gOverlaysLayerXrSessionToHandleInfo.emplace(std::piecewise_construct, std::forward_as_tuple(*session), std::forward_as_tuple(instance, instance, instanceInfo.downchain));
     // XXX create unique local id, return that
 
-    mlock.unlock();
+    OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
+    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
+    gOverlaysLayerXrSessionToHandleInfo[*session] = info;
+    mlock2.unlock();
 
     return result;
 }
