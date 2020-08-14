@@ -497,29 +497,20 @@ in_destructor = {}
 
 add_to_handle_struct = {}
 
-# after_downchain[
-
 add_to_handle_struct["XrInstance"] = {
     "members" : """
-        XrInstanceCreateInfo *createInfo = nullptr;
+        const XrInstanceCreateInfo *createInfo = nullptr;
         std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
 """,
 }
 
 add_to_handle_struct["XrSession"] = {
     "members" : """
+        const XrSessionCreateInfo *createInfo = nullptr;
         XrSession actualHandle;
         bool isOverlaySession = false; // The XrSession is only valid in the Main XrInstance (i.e. in the Main Process)
 """,
 }
-
-after_downchain["xrCreateSession"] = """
-    XrSession actualHandle = *session;
-    XrSession localHandle = GetNextLocalHandle();
-    OverlaysLayerXrSessionInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionInfo>(instance, instance, createInfo);
-    gOverlaysLayerXrSessionToHandleInfo.at(localHandle) = info;
-    info->actualHandle = actualHandle;
-"""
 
 add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
     "members" : """
@@ -559,6 +550,7 @@ in_destructor["XrSpace"] = "    if(referenceSpaceCreateInfo) { FreeXrStructChain
 in_destructor["XrSpace"] += "    if(actionSpaceCreateInfo) { FreeXrStructChainWithFree(instance, actionSpaceCreateInfo); }\n";
 
 after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
+    mlock.lock();
     gOverlaysLayerXrInstanceToHandleInfo[instance]->debugUtilsMessengers.insert(*messenger);
     mlock.unlock();
     OverlaysLayerXrDebugUtilsMessengerEXTHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrDebugUtilsMessengerEXTHandleInfo>(instance, instance, instanceInfo->downchain);
@@ -569,7 +561,6 @@ after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
 """
 
 after_downchain["xrCreateActionSet"] = """
-    mlock.unlock();
     OverlaysLayerXrActionSetHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionSetHandleInfo>(instance, instance, instanceInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
     gOverlaysLayerXrActionSetToHandleInfo[*actionSet] = info;
@@ -578,7 +569,6 @@ after_downchain["xrCreateActionSet"] = """
 
 """
 after_downchain["xrCreateAction"] = """
-    mlock.unlock();
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionToHandleInfoMutex);
     gOverlaysLayerXrActionToHandleInfo[*action] = info;
@@ -588,7 +578,6 @@ after_downchain["xrCreateAction"] = """
 """
 
 after_downchain["xrStringToPath"] = """
-    mlock.unlock();
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerPathToAtomInfoMutex);
     gOverlaysLayerPathToAtomInfo[*path] = std::make_shared<OverlaysLayerPathAtomInfo>(pathString);
     mlock2.unlock();
@@ -596,7 +585,6 @@ after_downchain["xrStringToPath"] = """
 """
 
 after_downchain["xrGetSystem"] = """
-    mlock.unlock();
     XrSystemGetInfo* getInfoCopy = reinterpret_cast<XrSystemGetInfo*>(CopyXrStructChainWithMalloc(instance, getInfo));
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerSystemIdToAtomInfoMutex);
     gOverlaysLayerSystemIdToAtomInfo[*systemId] = std::make_shared<OverlaysLayerSystemIdAtomInfo>(getInfoCopy);
@@ -604,7 +592,6 @@ after_downchain["xrGetSystem"] = """
 """
 
 after_downchain["xrSuggestInteractionProfileBindings"] = """
-    mlock.unlock();
     auto search = gPathToSuggestedInteractionProfileBinding.find(suggestedBindings->interactionProfile);
     if(search != gPathToSuggestedInteractionProfileBinding.end()) {
         FreeXrStructChainWithFree(instance, search->second);
@@ -615,7 +602,6 @@ after_downchain["xrSuggestInteractionProfileBindings"] = """
 """
 
 after_downchain["xrCreateReferenceSpace"] = """
-    mlock.unlock();
     OverlaysLayerXrSpaceHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
     info->referenceSpaceCreateInfo = reinterpret_cast<XrReferenceSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo->parentInstance, createInfo));
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
@@ -624,12 +610,31 @@ after_downchain["xrCreateReferenceSpace"] = """
 """
 
 after_downchain["xrCreateActionSpace"] = """
-    mlock.unlock();
     OverlaysLayerXrSpaceHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
     info->actionSpaceCreateInfo = reinterpret_cast<XrActionSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo->parentInstance, createInfo));
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
     gOverlaysLayerXrSpaceToHandleInfo[*space] = info;
     mlock2.unlock();
+"""
+
+after_downchain["xrPollEvent"] = """
+    // An XrSession in an event must be "valid", which means it cannot have
+    // been destroyed prior, so implies runtimes never give us back
+    // an event that contains a destroyed session.  So we will be able to find the local handle.
+    // Let validation catch bad behavior.
+    if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+        auto p = reinterpret_cast<XrEventDataSessionStateChanged*>(eventData);
+        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
+        p->session = gActualSessionToLocalHandle[p->session];
+    } else if(eventData->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+        auto p = reinterpret_cast<XrEventDataReferenceSpaceChangePending*>(eventData);
+        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
+        p->session = gActualSessionToLocalHandle[p->session];
+    } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
+        auto p = reinterpret_cast<XrEventDataInteractionProfileChanged*>(eventData);
+        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
+        p->session = gActualSessionToLocalHandle[p->session];
+    }
 """
 
 # store preambles of generated header and source -----------------------------
@@ -1047,6 +1052,7 @@ void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct)
 
 # make functions returned by xrGetInstanceProcAddr ---------------------------
 
+handles_needing_substitution = ['XrSession'] # ['XrSwapchain', 'XrSpace']
 
 for command_name in [c for c in supported_commands if c not in manually_implemented_commands]:
     command = commands[command_name]
@@ -1063,6 +1069,12 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     # handles are guaranteed not to be destroyed while in another command according to the spec...
     source_text += f"    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
     source_text += f"    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo.at({handle_name});\n\n"
+
+    if handle_type in handles_needing_substitution:
+        source_text += f"    // substitute the real handle in\n";
+        source_text += f"    {handle_type} localHandleStore = {handle_name};\n"
+        source_text += f"    {handle_name} = {handle_name}Info->actualHandle;\n\n"
+
     source_text += f"    mlock.unlock();\n\n"
 
     source_text += before_downchain.get(command_name, "")
@@ -1070,6 +1082,10 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     parameter_names = ", ".join([parameter_to_name(command_name, parameter) for parameter in command["parameters"]])
     dispatch_command = dispatch_name_for_command(command_name)
     source_text += f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
+
+    if handle_type in handles_needing_substitution:
+        source_text += f"    // put the local handle back\n";
+        source_text += f"    {handle_name} = localHandleStore;\n"
 
     if command_name in after_downchain:
 
@@ -1086,6 +1102,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
             # just assume we hand-coded Instance creation so these are all child handle types
             # in C++17 this would be an initializer list but before that we have to use the forwarding syntax.
             parent_type = str(handles[created_type][1] or "")
+            source_text += f"    std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);\n"
             if parent_type == "XrInstance":
                 source_text += f"    {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, instance, {handle_name}Info->downchain);\n"
                 source_text += f"    g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
@@ -1093,8 +1110,8 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
                 source_text += f"    {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, {handle_name}Info->parentInstance, {handle_name}Info->downchain);\n"
                 source_text += f"    g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
             # XXX source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
+            source_text += f"    mlock2.unlock();\n"
 
-        source_text += f"    mlock.unlock();\n"
 
     source_text += "    return result;\n"
 

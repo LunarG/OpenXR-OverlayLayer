@@ -55,6 +55,11 @@ const char *kOverlayLayerName = "xr_extx_overlay";
 
 const std::set<HandleTypePair> OverlaysLayerNoObjectInfo = {};
 
+uint64_t GetNextLocalHandle()
+{
+    static std::atomic_uint64_t nextHandle = 1;
+    return nextHandle++;
+}
 
 void OverlaysLayerLogMessage(XrInstance instance,
                          XrDebugUtilsMessageSeverityFlagsEXT message_severity, const char* command_name,
@@ -217,9 +222,10 @@ XrResult OverlaysLayerXrDestroyInstance(XrInstance instance)
     return XR_SUCCESS;
 }
 
-NegotiationChannels gNegotiationChannels;
+std::recursive_mutex gActualSessionToLocalHandleMutex;
+std::unordered_map<XrSession, XrSession> gActualSessionToLocalHandle;
 
-int NegotiationChannels::maxAttempts = 10;
+NegotiationChannels gNegotiationChannels;
 
 bool gAppHasAMainSession = false;
 XrInstance gMainSessionInstance;
@@ -375,7 +381,418 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
 std::unordered_map<DWORD, std::shared_ptr<ConnectionToOverlay>> gConnectionsToOverlayByProcessId;
 std::recursive_mutex gConnectionsToOverlayByProcessIdMutex;
 
-void MainRPCThreadBody(ConnectionToOverlay::Ptr connection)
+enum {
+    IPC_XR_CREATE_SESSION = 1,
+};
+
+struct OverlaysLayerRPCCreateSession
+{
+    XrFormFactor                                formFactor;
+    const XrInstanceCreateInfo*                 instanceCreateInfo;
+    const XrSessionCreateInfo*                  createInfo;
+    XrSession*                                  session;
+};
+
+
+// Serialization helpers ----------------------------------------------------
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const T* p)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T;
+    if(!t)
+        return nullptr;
+
+    *t = *p;
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const T* p, size_t count)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T[count];
+    if(!t)
+        return nullptr;
+
+    for(size_t i = 0; i < count; i++)
+        t[i] = p[i];
+
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCHeader* header, const T* p)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T;
+    if(!t)
+        return nullptr;
+
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCHeader* header, const T* p, size_t count)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T[count];
+    if(!t)
+        return nullptr;
+
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+void IPCCopyOut(T* dst, const T* src)
+{
+    if(!src)
+        return;
+
+    *dst = *src;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+void IPCCopyOut(T* dst, const T* src, size_t count)
+{
+    if(!src)
+        return;
+
+    for(size_t i = 0; i < count; i++) {
+        dst[i] = src[i];
+    }
+}
+
+// Serialization of XR structs ----------------------------------------------
+
+XrBaseInStructure* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const XrBaseInStructure* srcbase, CopyType copyType)
+{
+    return CopyXrStructChain(instance, srcbase, copyType,
+            [&ipcbuf](size_t size){return ipcbuf.allocate(size);},
+            [&ipcbuf,&header](void* pointerToPointer){header->addOffsetToPointer(ipcbuf.base, pointerToPointer);});
+}
+
+// CopyOut XR structs -------------------------------------------------------
+
+template <>
+void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
+{
+    bool skipped = true;
+
+    do {
+        skipped = false;
+
+        if(!srcbase) {
+            return;
+        }
+
+        switch(dstbase->type) {
+            // XXX Generate these
+#if 0
+            case XR_TYPE_SPACE_LOCATION: {
+                auto src = reinterpret_cast<const XrSpaceLocation*>(srcbase);
+                auto dst = reinterpret_cast<XrSpaceLocation*>(dstbase);
+                dst->locationFlags = src->locationFlags;
+                dst->pose = src->pose;
+                break;
+            }
+
+            case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
+                auto src = reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase);
+                auto dst = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(dstbase);
+                dst->adapterLuid = src->adapterLuid;
+                dst->minFeatureLevel = src->minFeatureLevel;
+                break;
+            }
+
+            case XR_TYPE_FRAME_STATE: {
+                auto src = reinterpret_cast<const XrFrameState*>(srcbase);
+                auto dst = reinterpret_cast<XrFrameState*>(dstbase);
+                dst->predictedDisplayTime = src->predictedDisplayTime;
+                dst->predictedDisplayPeriod = src->predictedDisplayPeriod;
+                dst->shouldRender = src->shouldRender;
+                break;
+            }
+
+            case XR_TYPE_INSTANCE_PROPERTIES: {
+                auto src = reinterpret_cast<const XrInstanceProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrInstanceProperties*>(dstbase);
+                dst->runtimeVersion = src->runtimeVersion;
+                strncpy_s(dst->runtimeName, src->runtimeName, XR_MAX_RUNTIME_NAME_SIZE);
+                break;
+            }
+
+            case XR_TYPE_EXTENSION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrExtensionProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrExtensionProperties*>(dstbase);
+                strncpy_s(dst->extensionName, src->extensionName, XR_MAX_EXTENSION_NAME_SIZE);
+                dst->extensionVersion = src->extensionVersion;
+                break;
+            }
+
+            case XR_TYPE_SYSTEM_PROPERTIES: {
+                auto src = reinterpret_cast<const XrSystemProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrSystemProperties*>(dstbase);
+                dst->systemId = src->systemId;
+                dst->vendorId = src->vendorId;
+                dst->graphicsProperties = src->graphicsProperties;
+                dst->trackingProperties = src->trackingProperties;
+                strncpy_s(dst->systemName, src->systemName, XR_MAX_SYSTEM_NAME_SIZE);
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrViewConfigurationProperties*>(dstbase);
+                dst->viewConfigurationType = src->viewConfigurationType;
+                dst->fovMutable = src->fovMutable;
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
+                auto src = reinterpret_cast<const XrViewConfigurationView*>(srcbase);
+                auto dst = reinterpret_cast<XrViewConfigurationView*>(dstbase);
+                dst->recommendedImageRectWidth = src->recommendedImageRectWidth;
+                dst->maxImageRectWidth = src->maxImageRectWidth;
+                dst->recommendedImageRectHeight = src->recommendedImageRectHeight;
+                dst->maxImageRectHeight = src->maxImageRectHeight;
+                dst->recommendedSwapchainSampleCount = src->recommendedSwapchainSampleCount;
+                dst->maxSwapchainSampleCount = src->maxSwapchainSampleCount;
+                break;
+            }
+#endif
+
+            default: {
+                // I don't know what this is, drop it and keep going
+                OverlaysLayerLogMessage(XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
+                    OverlaysLayerNoObjectInfo, fmt("WARNING: IPCCopyOut called to copy out to %p of unknown type %d - skipped.\n", dstbase, dstbase->type).c_str());
+
+                dstbase = dstbase->next;
+                skipped = true;
+
+                // Don't increment srcbase.  Unknown structs were
+                // dropped during serialization, so keep going until we
+                // see a type we know and then we'll have caught up with
+                // what was serialized.
+                //
+                break;
+            }
+        }
+    } while(skipped);
+
+    IPCCopyOut(dstbase->next, srcbase->next);
+}
+
+template <>
+OverlaysLayerRPCCreateSession* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const OverlaysLayerRPCCreateSession* src)
+{
+    auto dst = new(ipcbuf) OverlaysLayerRPCCreateSession;
+
+    dst->formFactor = src->formFactor;
+
+    dst->instanceCreateInfo = reinterpret_cast<const XrInstanceCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->instanceCreateInfo), COPY_EVERYTHING));
+    header->addOffsetToPointer(ipcbuf.base, &dst->instanceCreateInfo);
+    dst->createInfo = reinterpret_cast<const XrSessionCreateInfo*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->createInfo), COPY_EVERYTHING));
+    header->addOffsetToPointer(ipcbuf.base, &dst->createInfo);
+
+    dst->session = IPCSerializeNoCopy(ipcbuf, header, src->session);
+    header->addOffsetToPointer(ipcbuf.base, &dst->session);
+
+    return dst;
+}
+
+template <>
+void IPCCopyOut(OverlaysLayerRPCCreateSession* dst, const OverlaysLayerRPCCreateSession* src)
+{
+    IPCCopyOut(dst->session, src->session);
+}
+
+
+template <class T>
+const T* FindStructInChain(const void *head, XrStructureType type)
+{
+    const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(head);
+    while(p) {
+        if(p->type == type) {
+            return reinterpret_cast<const T*>(p);
+        }
+    }
+    return nullptr;
+}
+
+bool FindExtensionInList(const char* extension, uint32_t extensionsCount, const char * const* extensions)
+{
+    for(uint32_t i = 0; i < extensionsCount; i++) {
+        if(strcmp(extension, extensions[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+XrResult OverlaysLayerCreateSessionMainAsOverlay(
+    ConnectionToOverlay::Ptr        connection,
+    OverlaysLayerRPCCreateSession*              args)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    if(args->createInfo->createFlags != sessionInfo->createInfo->createFlags) {
+        OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+            OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for overlay session had different flags (%08X) than those with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", args->createInfo->createFlags, sessionInfo->createInfo->createFlags).c_str());
+    }
+
+    // Verify that any structures match that are chained off args->createInfo
+    for(const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(args->createInfo->next); p; p = reinterpret_cast<const XrBaseInStructure*>(p->next)) {
+        switch(p->type) {
+
+            case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+                const XrGraphicsBindingD3D11KHR* d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
+                const XrGraphicsBindingD3D11KHR* other = FindStructInChain< XrGraphicsBindingD3D11KHR>(sessionInfo->createInfo->next, p->type);
+
+                if(!other) {
+                    // XXX send directly to channels somehow
+                    OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
+                        OverlaysLayerNoObjectInfo, "FATAL: xrCreateSession for overlay session specified a XrGraphicsBindingD3D11KHR but main session did not.\n");
+                    return XR_ERROR_INITIALIZATION_FAILED;
+                }
+
+                if(other->device != d3dbinding->device) {
+                    OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+                        OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for overlay session used different D3D11 Device (%08X) than that with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", d3dbinding->device, other->device).c_str());
+                }
+                break;
+            }
+
+            // XXX Check out all other GAPI structs as support for them is added
+
+            case XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX:
+                // This is fine, ignore.  We could probably remove it on the Overlay side and not pass it through...
+                break;
+
+            default: {
+                char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                XrResult r = sessionInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
+                if(r != XR_SUCCESS) {
+                    sprintf(structureTypeName, "(type %08X)", p->type);
+                }
+
+                OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
+                    OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateSession for an overlay session used a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
+                return XR_ERROR_INITIALIZATION_FAILED;
+                break;
+            }
+        }
+
+        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
+    }
+
+    // Verify that main session didn't have any unexpected structures that the overlay didn't have
+    for(const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(args->createInfo->next); p; p = reinterpret_cast<const XrBaseInStructure*>(p->next)) {
+        const XrBaseInStructure* other = FindStructInChain<XrBaseInStructure>(sessionInfo->createInfo->next, p->type);
+        if(!other) {
+            char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+            XrResult r = sessionInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
+            if(r != XR_SUCCESS) {
+                sprintf(structureTypeName, "(type %08X)", p->type);
+            }
+
+            OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+                OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for the main session used a struct (%s) which the overlay session did not. Effect is unknown, proceeding anyway.\n", structureTypeName).c_str());
+        }
+    }
+    
+    XrFormFactor mainSessionFormFactor;
+    {
+        std::unique_lock<std::recursive_mutex> m(gOverlaysLayerXrSessionToHandleInfoMutex);
+        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+        XrSystemId systemId = sessionInfo->createInfo->systemId;
+
+        std::unique_lock<std::recursive_mutex> m2(gOverlaysLayerSystemIdToAtomInfoMutex);
+        const XrSystemGetInfo* systemGetInfo = gOverlaysLayerSystemIdToAtomInfo[systemId]->getInfo;
+        mainSessionFormFactor = systemGetInfo->formFactor;
+    }
+    if(mainSessionFormFactor != args->formFactor) {
+        OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
+            OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateSession for the overlay session used an XrFormFactor (%s) which the main session did not.\n", args->formFactor).c_str());
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    bool didntFindExtension = false;
+    {
+        std::unique_lock<std::recursive_mutex> m(gOverlaysLayerXrInstanceToHandleInfoMutex);
+        OverlaysLayerXrInstanceHandleInfo::Ptr mainInstanceInfo = gOverlaysLayerXrInstanceToHandleInfo[gMainSessionInstance];
+        const XrInstanceCreateInfo* mainInstanceCreateInfo = mainInstanceInfo->createInfo;
+        for(uint32_t i = 0; i < args->instanceCreateInfo->enabledExtensionCount; i++) {
+            bool alsoInMain = FindExtensionInList(args->instanceCreateInfo->enabledExtensionNames[i], mainInstanceCreateInfo->enabledExtensionCount, mainInstanceCreateInfo->enabledExtensionNames);
+            if(!alsoInMain) {
+                OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+                    OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateInstance for the parent of the overlay session specified an extension (%s) which the main session did not.\n", args->instanceCreateInfo->enabledExtensionNames[i]).c_str());
+                didntFindExtension = true;
+            }
+        }
+    }
+    if(didntFindExtension) {
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    {
+        auto l = connection->GetLock();
+        connection->ctx = std::make_shared<OverlaySessionContext>();
+    }
+    // create stand in for Main managing all Overlay app's stuff (in case Overlay unexpectedly exits); OverlaySessionContext
+
+    *args->session = gMainSession;
+
+    return XR_SUCCESS;
+}
+
+bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr)
+{
+    switch(hdr->requestType) {
+
+        // Call into "Overlay_" function to handle functionality
+        // altered by Overlay connection and may not be disambiguated by XrSession,
+        // or call into "Overlay_" function to handle functionality only altered
+        // for the purposes of Overlay composition layers that can be disambiguated
+        // by XrSession or child handles
+
+        case IPC_XR_CREATE_SESSION: {
+            auto* args = ipcbuf.getAndAdvance<OverlaysLayerRPCCreateSession>();
+            hdr->result = OverlaysLayerCreateSessionMainAsOverlay(connection, args);
+            break;
+        }
+
+        // XXX fill others
+
+        default: {
+            // XXX use log message func
+            OutputDebugStringA("unknown request type in IPC");
+            return false;
+            break;
+        }
+    }
+
+    return true;
+}
+
+
+void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcessId)
 {
     auto l = connection->GetLock();
     RPCChannels rpc = connection->conn;
@@ -419,9 +836,9 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection)
 
             hdr->makePointersAbsolute(ipcbuf.base);
 
-            bool success = ProcessOverlayRequestOrReturnConnectionLost(connection, hdr);
+            bool success = ProcessOverlayRequestOrReturnConnectionLost(connection, ipcbuf, hdr);
 
-            if(!success) {
+            if(success) {
                 hdr->makePointersRelative(ipcbuf.base);
                 rpc.FinishMainResponse();
             } else {
@@ -496,11 +913,11 @@ void MainNegotiateThreadBody()
                     gConnectionsToOverlayByProcessId[overlayProcessId] = connection;
                 }
 
-                std::thread receiverThread(MainRPCThreadBody, overlayProcessId);
+                std::thread receiverThread(MainRPCThreadBody, connection, overlayProcessId);
 
                 {
                     auto l = connection->GetLock();
-                    connection->thread = receiverThread;
+                    connection->thread = std::move(receiverThread);
                 }
             }
         }
@@ -545,8 +962,15 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     // XXX create unique local id, place as that instead of created handle
     XrSession actualHandle = *session;
     XrSession localHandle = (XrSession)GetNextLocalHandle();
+    *session = localHandle;
+
+    {
+        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
+        gActualSessionToLocalHandle[actualHandle] = localHandle;
+    }
 
     OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
+    info->createInfo = reinterpret_cast<XrSessionCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
     info->actualHandle = actualHandle;
     info->isOverlaySession = false;
 
@@ -556,7 +980,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
 
     gAppHasAMainSession = true;
 
-    bool result = CreateMainSessionNegotiateThread(instance, actualHandle);
+    bool result = CreateMainSessionNegotiateThread(instance, localHandle);
 
     if(!result) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
@@ -567,11 +991,6 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     return xrresult;
 }
 
-XrResult OverlaysLayerCreateSessionMainAsOverlay(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
-{
-	return XR_SUCCESS;
-}
-
 bool ConnectToMain(XrInstance instance)
 {
     // check to make sure not already main session process
@@ -580,6 +999,8 @@ bool ConnectToMain(XrInstance instance)
             OverlaysLayerNoObjectInfo, "FATAL: attempt to make an overlay session while also having a main session\n");
         return false;
     }
+
+    gConnectionToMain = std::make_shared<ConnectionToMain>();
 
     if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
@@ -630,33 +1051,85 @@ bool ConnectToMain(XrInstance instance)
 }
 
 
-XrResult OverlaysLayerCreateSessionOverlay(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
+// Can this be generated?
+XrResult OverlaysLayerCreateSessionOverlay(
+    XrInstance                                  instance,
+    const XrSessionCreateInfo*                  createInfo,
+    XrSession*                                  session)
 {
     XrResult result = XR_SUCCESS;
 
+    // Only on Overlay XrSession Creation, connect to the main app.
     if(!ConnectToMain(instance)) {
         OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "XrCreateSession",
             OverlaysLayerNoObjectInfo, "WARNING: couldn't connect to main app.\n");
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
+    // Get our tracked information on this XrInstance 
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
-    mlock.unlock();
 
-        // create session
-        // store proxy
-	result = XR_SUCCESS; // XXX
+    // Create a header for RPC to MainAsOverlay
+    IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
+    IPCHeader* header = new(ipcbuf) IPCHeader{IPC_XR_CREATE_SESSION};
 
-    // XXX create unique local id, return that
+    // Serialize our RPC args into the IPC buffer in shared memory
+    XrFormFactor formFactor;
+    {
+        // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN SUBSTITUTE THAT IN THE OVERLAY BEFORE THE RPC.
+        std::unique_lock<std::recursive_mutex> m(gOverlaysLayerSystemIdToAtomInfoMutex);
+        const XrSystemGetInfo* systemGetInfo = gOverlaysLayerSystemIdToAtomInfo[createInfo->systemId]->getInfo;
+        formFactor = systemGetInfo->formFactor;
+        // XXX should check here that systemGetInfo->next == nullptr
+        // but current API Layer is not specified to support any
+        // XrSystemId-related extensions
+    }
 
+    OverlaysLayerRPCCreateSession args { formFactor, instanceInfo->createInfo, createInfo, session }; // ignore instance since Main won't use ours
+    OverlaysLayerRPCCreateSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    // Make pointers relative in anticipation of RPC (who will make them absolute, work on them, then make them relative again)
+    header->makePointersRelative(ipcbuf.base);
+
+    // Release Main process to do our work
+    gConnectionToMain->conn.FinishOverlayRequest();
+
+    // Wait for Main to report to us it has done the work
+    bool success = gConnectionToMain->conn.WaitForMainResponseOrFail();
+    if(!success) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "XrCreateSession",
+            OverlaysLayerNoObjectInfo, "WARNING: couldn't RPC CreateSession to main process.\n");
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    // Set pointers absolute so they are valid in our process space again
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // Copy anything that were "output" parameters into the command arguments
+    IPCCopyOut(&args, argsSerialized);
+
+    // Since Overlays are the parent object of a hierarchy of objects that the Main hosts on behalf of the Overlay,
+    // make a unique local XrSession that notes that this is actually an overlay session and any command on this handle has to be proxied.
+    // Non-Overlay XrSessions are also replaced locally with a unique local handle in case an overlay app has one.
+    XrSession actualHandle = *session;
+    XrSession localHandle = (XrSession)GetNextLocalHandle();
+
+    {
+        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
+        gActualSessionToLocalHandle[actualHandle] = localHandle;
+    }
+ 
     OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
+    info->actualHandle = actualHandle;
+    info->isOverlaySession = true;
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
-    gOverlaysLayerXrSessionToHandleInfo[*session] = info;
+    gOverlaysLayerXrSessionToHandleInfo[localHandle] = info;
     mlock2.unlock();
 
-    return result;
+    return header->result;
 }
+
 
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
