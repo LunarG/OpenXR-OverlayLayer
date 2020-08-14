@@ -2,11 +2,14 @@
 #define _OVERLAYS_H_
 
 #include <openxr/openxr.h>
+#include <mutex>
 #include <new>
 #include <set>
 #include <unordered_map>
 #include <functional>
 #include <memory>
+#include <thread>
+#include <atomic>
 
 enum CopyType {
     COPY_EVERYTHING,       // XR command will consume (aka input)
@@ -58,7 +61,7 @@ struct IPCHeader
     XrResult result;
 
     int pointerFixupCount;
-    constexpr int maxPointerFixupCount = 128
+    constexpr static int maxPointerFixupCount = 128;
     size_t pointerOffsets[maxPointerFixupCount];
 
     IPCHeader(uint64_t requestType) :
@@ -229,8 +232,7 @@ struct NegotiationChannels
     HANDLE overlayWaitSema;
     HANDLE mainWaitSema;
 
-    HANDLE mainThread;
-    DWORD mainThreadId;
+    std::thread mainThread;
 
     HANDLE mainNegotiateThreadStop;
 
@@ -248,7 +250,6 @@ extern bool gHaveMainSessionActive;
 extern XrInstance gMainSessionInstance;
 extern XrSession gMainSession;
 extern HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
-extern HANDLE gMainOverlayMutexHandle; // Held when Main and MainAsOverlay functions need to run exclusively
 
 struct RPCChannels
 {
@@ -271,6 +272,7 @@ struct RPCChannels
     constexpr static char *mutexNameTemplate = "LUNARG_XR_EXTX_overlay_rpc_mutex_%u";
     constexpr static uint32_t shmemSize = 1024 * 1024;
     constexpr static DWORD mutexWaitMillis = 500;
+    constexpr static DWORD overlayRequestWaitMillis = 500;
 
     enum WaitResult {
         OVERLAY_REQUEST_READY,
@@ -286,12 +288,7 @@ struct RPCChannels
         return IPCBuffer(shmem, shmemSize);
     }
 
-    void FinishOverlayRequest()
-    {
-        ReleaseSemaphore(overlayRequestSema, 1, nullptr);
-    }
-
-    bool WaitForMainResponseOrFail()
+    WaitResult WaitForMainResponseOrFail()
     {
         HANDLE handles[2];
 
@@ -301,44 +298,101 @@ struct RPCChannels
         DWORD result;
 
         do {
-            result = WaitForMultipleObjects(2, handles, FALSE, OVERLAY_REQUEST_WAIT_MILLIS);
+            result = WaitForMultipleObjects(2, handles, FALSE, overlayRequestWaitMillis);
         } while(result == WAIT_TIMEOUT);
 
         if(result == WAIT_OBJECT_0 + 0) {
-            return true;
+            return WaitResult::MAIN_RESPONSE_READY;
         }
 
         if(result == WAIT_OBJECT_0 + 1) {
-            // XXX log error
-            return false;
+            return WaitResult::MAIN_PROCESS_TERMINATED;
         }
 
         // XXX log error
-        return false;
+        return WaitResult::WAIT_ERROR;
     }
 
+    // Call from Host to get complete request in shmem
+    WaitResult WaitForOverlayRequestOrFail()
+    {
+        HANDLE handles[2];
+
+        handles[0] = overlayRequestSema;
+        handles[1] = otherProcessHandle;
+
+        DWORD result;
+
+        do {
+            result = WaitForMultipleObjects(2, handles, FALSE, overlayRequestWaitMillis);
+        } while(result == WAIT_TIMEOUT);
+
+        if(result == WAIT_OBJECT_0 + 0) {
+            return WaitResult::OVERLAY_REQUEST_READY;
+        }
+
+        if(result == WAIT_OBJECT_0 + 1) {
+            return WaitResult::OVERLAY_PROCESS_TERMINATED;
+        }
+
+        // XXX log error
+        return WaitResult::WAIT_ERROR;
+    }
+
+    void FinishOverlayRequest()
+    {
+        ReleaseSemaphore(overlayRequestSema, 1, nullptr);
+    }
+
+    void FinishMainResponse()
+    {
+        ReleaseSemaphore(mainResponseSema, 1, nullptr);
+    }
+};
+
+struct OverlaySessionContext
+{
+    int q; // XXX standin
+    typedef std::shared_ptr<OverlaySessionContext> Ptr;
 };
 
 struct ConnectionToOverlay
 {
+    std::recursive_mutex mutex;
     RPCChannels conn;
-    HANDLE thread;
-    DWORD threadId;
-    ConnectionToOverlay(const RPCChannels& conn, HANDLE thread, DWORD threadId) :
-        conn(conn),
-        thread(thread),
-        threadId(threadId)
+    OverlaySessionContext::Ptr *ctx = nullptr;
+    std::thread thread;
+
+    ConnectionToOverlay(const RPCChannels& conn) :
+        conn(conn)
     { }
+
+    std::unique_lock<std::recursive_mutex> GetLock()
+    {
+        return std::unique_lock<std::recursive_mutex>(mutex);
+    }
+
+    ~ConnectionToOverlay()
+    {
+        if(ctx) {
+            delete ctx;
+        }
+        // ...
+    }
+
+    typedef std::shared_ptr<ConnectionToOverlay> Ptr;
 };
 
 struct ConnectionToMain
 {
     RPCChannels conn;
+    typedef std::shared_ptr<ConnectionToMain> Ptr;
 };
 
-extern ConnectionToMain gConnectionToMain;
+extern ConnectionToMain::Ptr gConnectionToMain;
 
-extern std::unordered_map<DWORD, ConnectionToOverlay> gConnectionsToOverlayByProcessId;
+extern std::recursive_mutex gConnectionsToOverlayByProcessIdMutex;
+extern std::unordered_map<DWORD, ConnectionToOverlay::Ptr> gConnectionsToOverlayByProcessId;
 
 constexpr uint32_t gLayerBinaryVersion = 0x00000001;
 
