@@ -1,8 +1,178 @@
+8/17
+should IPCSerialize substitute handles / atoms?
+    probably not -> also need to substitute and restore on Main calls
+Items in IPCSerialize
+    auto dst = new(ipcbuf) IPCXrCommandName;
+    atomic
+        xr handle -> direct copy (asume other function does handle substitution)
+            "type" : "POD"
+            "pod_type" : handle_type
+        xr atom -> direct copy
+            "type" : "POD"
+            "pod_type" : atom_type
+        capacity INPUT / uint32_t -> direct copy
+            "type" : "POD"
+            "pod_type" : "uint32_t"
+    pointer to thingie output
+        MUST addOffsetToPointer for all serialized pointers
+        capacity OUTPUT / uint32_t -> IPCSerializeNoCopy template on one item
+            "type" : "pointer_to_pod"
+            "pod_type" : "uint32_t"
+        pointer to block of atomics / uint32_t -> IPCSerializeNoCopy template on array 
+            "type" : "fixed_array"
+            "base_type" : ...
+            "size" : input variable
+            e.g. swapchain formats, viewConfigurationTypes
+        pointer to INPUT XR struct chain -> IPCSerialize to generated Copy, COPY_EVERYTHING
+            "is_const" : True
+            "type" : "xrstruct_pointer"
+            "struct_type" : ...
+            these are "const" in parameters
+            e.g. GetInstanceProperties
+        pointer to OUTPUT XR struct chain -> IPCSerialize to generated Copy, COPY_ONLY_TYPE_NEXT (but this is an optimization, should be safe to copy?)
+            "is_const" : False
+            "type" : "xrstruct_pointer"
+            "struct_type" : ...
+            these are NOT "const" in parameters
+            e.g. GetInstanceProperties
+        pointer to OUTPUT block of XR structs
+            "type" : "pointer_to_xr_struct_array"
+            "struct_type" : member["size"], member["member_text"])
+            "name" : name
+            "size" : size variable or enum
+            new(ipcbuf) block of structs, then for each element in array
+                copy ->type
+                call IPCSerialize on each element.next
+            e.g. IPCXrEnumerateViewConfigurationViews
+
+Already have IPCSerialize on XR structs from xr.xml
+So only need IPCSerialize on RPC args structs 
+Do need IPCCopyOut on XR structs with case bodies filled, but if there are really only a handful more, just do by hand
+    need XrView
+    EventDataBuffer...?  How did this work before?
+        IPC wrapper called CopyEventChainIntoBuffer
+            "Runtimes may create valid next chains depending on enabled extensions, but they must guarantee that any such chains point only to objects which fit completely within the original XrEventDataBuffer pointed to by eventData"
+    Do these need to wait until I do input?
+        XrActionState{Boolean,Float,Vector2f,Pose}
+        XrInteractionProfileState
+Need IPCCopyOut on RPC args structs
+
+
+8/14 components of an RPC:
+    parameter struct definition, notably also input and output parameters
+    
+    IPCSerialize for args struct (will be similar functionality to Copy but different structs/types variables)
+
+    IPCCopyOut for args struct
+
+    %(command_name)sMainAsOverlay function
+
+        std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+        potential hand-written verification and error return
+
+        %(substitute_actual_handles_in_input_structs)s
+
+        XrResult result = sessionInfo->downchain->%(command_name_minusxr)s(???);
+
+        %(restore_local_handles_in_input_structs)s
+        %(restore_local_handles_in_output_structs)s
+
+        potential hand-written completion, checking return value and possibly overwriting result
+
+        return result;
+
+
+    %(command_name)sOverlay template:
+
+        // Create a header for RPC to MainAsOverlay
+        IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
+        IPCHeader* header = new(ipcbuf) IPCHeader{%(command_enum)};
+
+        // for each parameter, optionally:
+        // local variable and variable initialization
+        // including actual handle substitution?  Does this need to be done by hand or can it be generated?
+
+        OverlaysLayerRPC%(command_name)s args { parameter expressions here };
+        OverlaysLayerRPC%(command_name)s* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+        %(substitute_actual_handles_in_input_structs)s
+
+        // Make pointers relative in anticipation of RPC (who will make them absolute, work on them, then make them relative again)
+        header->makePointersRelative(ipcbuf.base);
+
+        // Release Main process to do our work
+        gConnectionToMain->conn.FinishOverlayRequest();
+
+        // Wait for Main to report to us it has done the work
+        bool success = gConnectionToMain->conn.WaitForMainResponseOrFail();
+        if(!success) {
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "%(command_name)s",
+                OverlaysLayerNoObjectInfo, "WARNING: couldn't RPC %(command_name)s to main process.\n");
+            return XR_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // Set pointers absolute so they are valid in our process space again
+        header->makePointersAbsolute(ipcbuf.base);
+
+        // is this necessary?  Are events the only structs that need handles substituted back to local?
+        // for now, yes, only sessions, but eventually space and swapchain will need to be made local
+        %(restore_local_handles_in_output_structs)s
+
+        // Copy anything that were "output" parameters into the command arguments
+        IPCCopyOut(&args, argsSerialized);
+
+        %(command_post)s
+
+    case statement in ProcessOverlayRequestOrReturnConnectionLost
+
+        case %(command_enum)s: {
+            auto* args = ipcbuf.getAndAdvance<OverlaysLayerRPC%(command_name)s>();
+            hdr->result = OverlaysLayer%(command_name)MainAsOverlay(connection, args);
+            break;
+        }
+
+    XrResult OverlaysLayer%(command_name)sMain(args)
+    {
+        take lock on any handleToInfo
+        %(substitute_actual_handles)s
+        XrResult result = sessionInfo->downchain->%(command_name)s(args);
+        %(restore_local_handles)s
+    }
+
+    XrResult OverlaysLayer%(command_name)s(args)
+    {
+        XrResult result;
+
+        %(substitute_actual_handles_in_parameters)s
+            // e.g.:
+            std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+            OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
+            mlock.unlock();
+            session = sessionInfo->actualHandle;
+
+        // must calculate isOverlay somewhere, e.g.
+            bool isOverlay = sessionInfo->isOverlay;
+
+        if(isOverlay) {
+            result = OverlaysLayer%(command_name)sMain(args XXX handle substitution);
+        } else {
+            result = OverlaysLayer%(command_name)sOverlay(args XXX handle substitution);
+        }
+
+        // restoration of value parameters not necessary
+    }
+
+
+
 8/13
-Should all receiver threads take a ConnectionToOverlay and the main switcher lock that connection?  Let's try it.
 shared_ptr guarantees thread-safe control - deletion, copy, reset, etc.
     https://www.modernescpp.com/index.php/atomic-smart-pointers#:~:text=yes%20and%20no.-,Why%3F,will%20be%20deleted%20exactly%20once.
     But OBJECT is still not thread safe.
+    all members could be private and all methods take the lock
+        init-only const accessors for private members (need to put in ctor) - no locking
+        otherwise return-by-value and set functions would lock in order to be atomic / exclusive
 
 8/12 You're in the middle of figuring out whether things have smart pointers or not (in particular ConnectionToOverlay and gConnectionsToOverlayByProcessId)
 Make as many objects simple copies as possible (e.g. RPCConnections is just HANDLEs and DWORDs and void*s)
@@ -295,135 +465,3 @@ in Python, if command_name in IPC_commands,
         call CommandNameMainAsOverlay
         make pointers relative
         return result
-
-
-void* IPCGetSharedMemory()
-{
-    return shared_mem;
-}
-
-// Call from Overlay when request in shmem is complete
-void IPCFinishOverlayRequest()
-{
-    ReleaseSemaphore(gOverlayRequestSema, 1, nullptr);
-}
-
-// Call from Main to get complete request in shmem
-IPCWaitResult IPCWaitForOverlayRequestOrTermination()
-{
-    HANDLE handles[2];
-
-    handles[0] = gOverlayRequestSema;
-    handles[1] = gOverlayProcessHandle;
-
-    DWORD result;
-
-    do {
-        result = WaitForMultipleObjects(2, handles, FALSE, REMOTE_REQUEST_WAIT_MILLIS);
-    } while(result == WAIT_TIMEOUT);
-
-    if(result == WAIT_OBJECT_0 + 0) {
-        return IPC_REMOTE_REQUEST_READY;
-    }
-
-    if(result == WAIT_OBJECT_0 + 1) {
-        return IPC_REMOTE_PROCESS_TERMINATED;
-    }
-
-    return IPC_WAIT_ERROR;
-}
-
-// Call from Main when response in shmem is complete
-void IPCFinishMainResponse()
-{
-    ReleaseSemaphore(gMainResponseSema, 1, nullptr);
-}
-
-// Call from Overlay to get complete request in shmem
-IPCWaitResult IPCWaitForMainResponse()
-{
-    DWORD result;
-
-    HANDLE handles[2];
-
-    handles[0] = gMainResponseSema;
-    handles[1] = gMainProcessHandle;
-
-    do {
-        result = WaitForMultipleObjects(2, handles, FALSE, MAIN_RESPONSE_WAIT_MILLIS);
-    } while(result == WAIT_TIMEOUT);
-
-    if(result == WAIT_OBJECT_0 + 0) {
-        return IPC_MAIN_RESPONSE_READY;
-    }
-
-    if(result == WAIT_OBJECT_0 + 1) {
-        return IPC_MAIN_PROCESS_TERMINATED;
-    }
-
-    return IPC_WAIT_ERROR;
-}
-
-// Set up shared memory using a named file-mapping object. 
-bool MapSharedMemory(UINT32 req_memsize)
-{ 
-    mutex_handle = CreateMutex(NULL, TRUE, kSharedMutexName);
-    if (NULL == mutex_handle) return false;
-    bool first = (GetLastError() != ERROR_ALREADY_EXISTS); 
-
-    shared_mem_handle = CreateFileMapping( 
-        INVALID_HANDLE_VALUE,   // use sys paging file instead of an existing file
-        NULL,                   // default security attributes
-        PAGE_READWRITE,         // read/write access
-        0,                      // size: high 32-bits
-        req_memsize,            // size: low 32-bits
-        kSharedMemName);        // name of map object
-
-    if (NULL == shared_mem_handle)
-    {
-        OutputDebugStringA("**OVERLAY** failed to CreateFileMapping\n");
-        if (first) ReleaseMutex(mutex_handle); 
-        CloseHandle(mutex_handle);
-        return false; 
-    }
-
-    // Get a pointer to the file-mapped shared memory, read/write
-    shared_mem = MapViewOfFile(shared_mem_handle, FILE_MAP_WRITE, 0, 0, 0);
-    if (NULL == shared_mem) 
-    {
-        OutputDebugStringA("**OVERLAY** failed to MapViewOfFile\n");
-        if (first) ReleaseMutex(mutex_handle); 
-        CloseHandle(mutex_handle);
-        return false; 
-    }
-
-    MEMORY_BASIC_INFORMATION mbi = { 0 };
-    VirtualQueryEx(GetCurrentProcess(), shared_mem, &mbi, sizeof(mbi));
-    mem_size = mbi.RegionSize;
-
-    // First will initialize memory
-    if (first)
-    {
-        memset(shared_mem, '\0', mem_size); 
-        ReleaseMutex(mutex_handle);
-    }
-    
-    return true;
-}
-
-// Unmap the shared memory and release handle
-//
-bool UnmapSharedMemory()
-{
-    // Close handle to mutex
-    CloseHandle(mutex_handle);
-
-    // Unmap shared memory from the process's address space
-    bool err = UnmapViewOfFile(shared_mem); 
- 
-    // Close the process's handle to the file-mapping object
-    if (!err) err = CloseHandle(shared_mem_handle);
-
-    return err;
-} 
-
