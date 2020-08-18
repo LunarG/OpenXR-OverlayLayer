@@ -828,7 +828,7 @@ DestroySessionRPC = {
     "command_enum" : "RPC_XR_DESTROY_SESSION",
     "params_to_rpc_args_expressions" : "session",
     "rpc_main_as_overlay_downchain_operation" : """
-    /* destroy tracking object here, causing chain of destroys and releases of swapchains and spaces in flight */
+    connection->closed = true;
     OutputDebugStringA("OVERLAY - DestroySession\\n");
     XrResult result = XR_SUCCESS;
 """,
