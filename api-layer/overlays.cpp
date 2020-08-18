@@ -1019,6 +1019,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     // Non-Overlay XrSessions are also replaced locally with a unique local handle in case an overlay app has one.
     XrSession actualHandle = *session;
     XrSession localHandle = (XrSession)GetNextLocalHandle();
+	*session = localHandle;
 
     {
         std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);

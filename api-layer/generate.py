@@ -1,4 +1,5 @@
 import sys
+import re
 import xml.etree.ElementTree as etree
 
 def parse_parameter(reg_parameter):
@@ -492,6 +493,7 @@ if False:
 
 before_downchain = {}
 
+# only invoked if downchain returned XR_SUCCEEDED(result)
 after_downchain = {}
 
 in_destructor = {}
@@ -821,12 +823,11 @@ for handle_type in supported_handles:
 
 # Serialize and CopyOut ------------------------------------------------------
 
-rpc_args_structs = []
+def rpc_command_name_to_enum(name):
+    return "RPC_XR_" + "_".join([s.upper() for s in re.split("([A-Z][^A-Z]*)", name) if s])
 
 DestroySessionRPC = {
     "command_name" : "DestroySession",
-    "command_enum" : "RPC_XR_DESTROY_SESSION",
-    "params_to_rpc_args_expressions" : "session",
     "rpc_main_as_overlay_downchain_operation" : """
     connection->closed = true;
     OutputDebugStringA("OVERLAY - DestroySession\\n");
@@ -839,11 +840,56 @@ DestroySessionRPC = {
             "pod_type" : "XrSession"
         },
     ),
+    "params_to_rpc_args_expressions" : "session",
+}
+
+EnumerateSwapchainFormatsRPC = {
+    "command_name" : "EnumerateSwapchainFormats",
+    "rpc_main_as_overlay_downchain_operation" : """
+    OutputDebugStringA("OVERLAY - EnumerateSwapchainFormats\\n");
+    // Already have our tracked information on this XrSession from generated code in sessionInfo
+    XrResult result = sessionInfo->downchain->EnumerateSwapchainFormats(sessionInfo->actualHandle, args->formatCapacityInput, args->formatCountOutput, args->formats);
+""",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+            "transformation" : """
+    std::unique_lock<std::recursive_mutex> mlockSessionInfo(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
+"""
+        },
+        {
+            "name" : "formatCapacityInput",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "formatCountOutput",
+            "type" : "pointer_to_pod",
+            "pod_type" : "uint32_t",
+            "is_const" : False
+        },
+        {
+            "name" : "formats",
+            "type" : "fixed_array",
+            "base_type" : "int64_t",
+            "input_size" : "formatCapacityInput",
+            "output_size" : "formatCountOutput",
+            "is_const" : False
+        },
+    ),
+    "params_to_rpc_args_expressions" : "sessionInfo->actualHandle, formatCapacityInput, formatCountOutput, formats",
 }
 
 rpcs = (
     DestroySessionRPC,
+    EnumerateSwapchainFormatsRPC,
 )
+
+for rpc in rpcs:
+    rpc["command_enum"] = rpc_command_name_to_enum(rpc["command_name"])
 
 header_text += "enum {\n"
 header_text += "    RPC_XR_CREATE_SESSION = 1,\n"
@@ -866,6 +912,10 @@ for rpc in rpcs:
     for arg in rpc["args"]:
         if arg["type"] == "POD": 
             rpc_args_struct += "    %(pod_type)s %(name)s;\n" % arg
+        elif arg["type"] == "pointer_to_pod":
+            rpc_args_struct += "    %(pod_type)s *%(name)s;\n" % arg
+        elif arg["type"] == "fixed_array":
+            rpc_args_struct += "    %(base_type)s *%(name)s;\n" % arg
         else:
             rpc_args_struct += "    XXX unknown type %(type)s\n" % arg
     rpc_args_struct += "};\n"
@@ -883,6 +933,12 @@ RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const 
     for arg in rpc["args"]:
         if arg["type"] == "POD": 
             ipc_serialize_function += "    dst->%(name)s = src->%(name)s;\n" % arg
+        elif arg["type"] == "pointer_to_pod":
+            ipc_serialize_function += "    dst->%(name)s = IPCSerializeNoCopy(ipcbuf, header, src->%(name)s);\n" % arg
+            ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
+        elif arg["type"] == "fixed_array":
+            ipc_serialize_function += "    dst->%(name)s = IPCSerializeNoCopy(ipcbuf, header, src->%(name)s, src->%(input_size)s);\n" % arg
+            ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
         else:
             ipc_serialize_function += "    XXX unknown type %(type)s\n" % arg
     # dst->properties = reinterpret_cast<XrSystemProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), COPY_ONLY_TYPE_NEXT));
@@ -892,6 +948,37 @@ RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const 
     return dst;
 }
 """
+
+    ipc_copyout_function_body = ""
+    for arg in rpc["args"]:
+        if arg["type"] == "POD": 
+            pass # input only
+        elif arg["type"] == "pointer_to_pod":
+            if arg["is_const"]:
+                pass # input only
+            else:
+                ipc_copyout_function_body += "    IPCCopyOut(dst->%(name)s, src->%(name)s);\n" % arg
+        elif arg["type"] == "fixed_array":
+            if arg["is_const"]:
+                pass # input only
+            else:
+                ipc_copyout_function_body += "    if (src->%(name)s) {\n" % arg
+                ipc_copyout_function_body += "        IPCCopyOut(dst->%(name)s, src->%(name)s, *src->%(output_size)s);\n" % arg
+                ipc_copyout_function_body += "    }\n" % arg
+        else:
+            ipc_copyout_function_body += "    XXX unknown type %(type)s\n" % arg
+
+    if ipc_copyout_function_body:
+
+        ipc_copyout_function = "template <>\n"
+        ipc_copyout_function += "void IPCCopyOut(RPCXr%(command_name)s* dst, const RPCXr%(command_name)s* src)\n" % rpc
+        ipc_copyout_function += "{\n"
+        ipc_copyout_function += ipc_copyout_function_body
+        ipc_copyout_function += "}\n"
+
+    else:
+
+        ipc_copyout_function = ""
 
     overlay_function = ""
 
@@ -934,7 +1021,10 @@ RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const 
     // is this necessary?  Are events the only structs that need handles substituted back to local?
     // for now, yes, only sessions, but eventually space and swapchain will need to be made local
     // XXX restore handles in output XR structs
+""" % rpc
 
+    if ipc_copyout_function:
+        overlay_function += """
     // Copy anything that were "output" parameters into the command arguments
     IPCCopyOut(&args, argsSerialized);
 """ % rpc
@@ -984,6 +1074,9 @@ RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const 
 
     source_text += ipc_serialize_function
 
+    if ipc_copyout_function:
+        source_text += ipc_copyout_function
+
     source_text += overlay_function
 
     source_text += main_as_overlay_function
@@ -1029,7 +1122,6 @@ stub_em = (
     "CreateReferenceSpace",
     "GetReferenceSpaceBoundsRect",
     "CreateActionSpace",
-    "EnumerateSwapchainFormats",
     "CreateSwapchain",
     "BeginSession",
     "EndSession",
@@ -1402,7 +1494,9 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     if command_name in after_downchain:
 
+        source_text += "    if(XR_SUCCEEDED(result)) {\n"
         source_text += after_downchain.get(command_name, "")
+        source_text += "    }\n"
 
     else:
 
