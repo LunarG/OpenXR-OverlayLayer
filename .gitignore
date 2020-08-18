@@ -10,6 +10,11 @@ Release
 # build dir
 build
 
+# working dir
+OverlayWorkingDir
+
+# place to put local linked libs
+vendored
 
 # Prerequisites
 *.d
