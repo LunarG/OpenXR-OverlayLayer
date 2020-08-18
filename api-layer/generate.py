@@ -404,13 +404,13 @@ supported_commands = [
 ]
 
 supported_handles = [
-    "XrInstance",
+    "XrSwapchain",
+    "XrSpace",
     "XrSession",
     "XrActionSet",
     "XrAction",
-    "XrSwapchain",
-    "XrSpace",
     "XrDebugUtilsMessengerEXT",
+    "XrInstance",
 ]
 
 # We know the opaque objects of these types are returned by the system as pointers that do not need to be deep copied
@@ -471,7 +471,8 @@ if True:
 
     out.close()
 
-# XXX development placeholder
+
+# dump debugging information
 if False:
     for command_name in supported_commands:
         command = commands[command_name]
@@ -507,10 +508,27 @@ add_to_handle_struct["XrInstance"] = {
 add_to_handle_struct["XrSession"] = {
     "members" : """
         const XrSessionCreateInfo *createInfo = nullptr;
+        std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
+        std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
         XrSession actualHandle;
-        bool isOverlaySession = false; // The XrSession is only valid in the Main XrInstance (i.e. in the Main Process)
+        bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
 """,
 }
+
+add_to_handle_struct["XrSwapchain"] = {
+    "members" : """
+        XrSwapchain actualHandle;
+        bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
+""",
+}
+
+in_destructor["XrSwapchain"] = """
+            if(!invalid) {
+                if(!isProxied) {
+                    downchain->DestroySwapchain(actualHandle);
+                }
+            }
+"""
 
 add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
     "members" : """
@@ -518,7 +536,7 @@ add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
 """,
 }
 
-in_destructor["XrDebugUtilsMessengerEXT"] = "    if(createInfo) { FreeXrStructChainWithFree(instance, createInfo); }\n";
+in_destructor["XrDebugUtilsMessengerEXT"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n";
 
 add_to_handle_struct["XrActionSet"] = {
     "members" : """
@@ -527,7 +545,7 @@ add_to_handle_struct["XrActionSet"] = {
 """,
 }
 
-in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(instance, createInfo); }\n";
+in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n";
 
 add_to_handle_struct["XrAction"] = {
     "members" : """
@@ -536,18 +554,31 @@ add_to_handle_struct["XrAction"] = {
 """,
 }
 
-in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(instance, createInfo); }\n";
+in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n";
 
 add_to_handle_struct["XrSpace"] = {
     "members" : """
         bool isReferenceSpace;
         XrReferenceSpaceCreateInfo *referenceSpaceCreateInfo = nullptr;
         XrActionSpaceCreateInfo *actionSpaceCreateInfo = nullptr;
+        XrSpace actualHandle;
+        bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
 """,
 }
 
-in_destructor["XrSpace"] = "    if(referenceSpaceCreateInfo) { FreeXrStructChainWithFree(instance, referenceSpaceCreateInfo); }\n";
-in_destructor["XrSpace"] += "    if(actionSpaceCreateInfo) { FreeXrStructChainWithFree(instance, actionSpaceCreateInfo); }\n";
+in_destructor["XrSpace"] = """
+            if(referenceSpaceCreateInfo) {
+                FreeXrStructChainWithFree(parentInstance, referenceSpaceCreateInfo);
+            }
+            if(actionSpaceCreateInfo) {
+                FreeXrStructChainWithFree(parentInstance, actionSpaceCreateInfo);
+            }
+            if(!invalid) {
+                if(!isProxied) {
+                    downchain->DestroySpace(actualHandle);
+                }
+            }
+"""
 
 after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
     mlock.lock();
@@ -607,6 +638,9 @@ after_downchain["xrCreateReferenceSpace"] = """
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
     gOverlaysLayerXrSpaceToHandleInfo[*space] = info;
     mlock2.unlock();
+    mlock.lock();
+    sessionInfo->childSpaces.insert(info);
+    mlock.unlock();
 """
 
 after_downchain["xrCreateActionSpace"] = """
@@ -615,6 +649,19 @@ after_downchain["xrCreateActionSpace"] = """
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
     gOverlaysLayerXrSpaceToHandleInfo[*space] = info;
     mlock2.unlock();
+    mlock.lock();
+    sessionInfo->childSpaces.insert(info);
+    mlock.unlock();
+"""
+
+after_downchain["xrCreateSwapchain"] = """
+    OverlaysLayerXrSwapchainHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+    gOverlaysLayerXrSwapchainToHandleInfo[*swapchain] = info;
+    mlock2.unlock();
+    mlock.lock();
+    sessionInfo->childSwapchains.insert(info);
+    mlock.unlock();
 """
 
 after_downchain["xrPollEvent"] = """
@@ -743,7 +790,7 @@ for handle_type in supported_handles:
         header_text += "        {}\n"
         header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
         header_text += "        {\n"
-        header_text += in_destructor.get(command_name, "")
+        header_text += in_destructor.get(handle_type, "")
         header_text += "        }\n"
     else:
         # we know this is XrInstance...
@@ -752,7 +799,7 @@ for handle_type in supported_handles:
         header_text += "        {}\n"
         header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
         header_text += "        {\n"
-        header_text += in_destructor.get(command_name, "")
+        header_text += in_destructor.get(handle_type, "")
         header_text += "            delete downchain;\n"
         header_text += "        }\n"
     header_text += f"        void Destroy() /* For OpenXR's intents, not a dtor */\n"
@@ -770,6 +817,255 @@ for handle_type in supported_handles:
     header_text += f"extern std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
 
     source_text += "\n"
+
+
+# Serialize and CopyOut ------------------------------------------------------
+
+rpc_args_structs = []
+
+DestroySessionRPC = {
+    "command_name" : "DestroySession",
+    "command_enum" : "RPC_XR_DESTROY_SESSION",
+    "params_to_rpc_args_expressions" : "session",
+    "rpc_main_as_overlay_downchain_operation" : """
+    /* destroy tracking object here, causing chain of destroys and releases of swapchains and spaces in flight */
+    OutputDebugStringA("OVERLAY - DestroySession\\n");
+    XrResult result = XR_SUCCESS;
+""",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession"
+        },
+    ),
+}
+
+rpcs = (
+    DestroySessionRPC,
+)
+
+header_text += "enum {\n"
+header_text += "    RPC_XR_CREATE_SESSION = 1,\n"
+for rpc in rpcs:
+    header_text += "    %(command_enum)s,\n" % rpc
+header_text += "};\n"
+
+rpc_case_bodies = ""
+
+for rpc in rpcs:
+
+    command_name = rpc["command_name"]
+    command = commands["xr" + command_name]
+    parameters = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
+    command_type = command["return_type"]
+    layer_command = api_layer_name_for_command("xr" + command_name)
+    
+    rpc_args_struct = ""
+    rpc_args_struct += "struct RPCXr%(command_name)s {\n" % rpc
+    for arg in rpc["args"]:
+        if arg["type"] == "POD": 
+            rpc_args_struct += "    %(pod_type)s %(name)s;\n" % arg
+        else:
+            rpc_args_struct += "    XXX unknown type %(type)s\n" % arg
+    rpc_args_struct += "};\n"
+
+
+    ipc_serialize_function = ""
+
+    ipc_serialize_function += """
+template <>
+RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const RPCXr%(command_name)s* src)
+{
+    auto dst = new(ipcbuf) RPCXr%(command_name)s;
+""" % rpc
+
+    for arg in rpc["args"]:
+        if arg["type"] == "POD": 
+            ipc_serialize_function += "    dst->%(name)s = src->%(name)s;\n" % arg
+        else:
+            ipc_serialize_function += "    XXX unknown type %(type)s\n" % arg
+    # dst->properties = reinterpret_cast<XrSystemProperties*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->properties), COPY_ONLY_TYPE_NEXT));
+    # header->addOffsetToPointer(ipcbuf.base, &dst->properties);
+
+    ipc_serialize_function += """
+    return dst;
+}
+"""
+
+    overlay_function = ""
+
+    overlay_function += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameters})\n"
+
+    overlay_function += """
+{
+     // Create a header for RPC to MainAsOverlay
+    IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
+    IPCHeader* header = new(ipcbuf) IPCHeader{%(command_enum)s};
+""" % rpc
+
+    for arg in rpc["args"]:
+        if "transformation" in arg:
+            overlay_function += arg["transformation"]
+
+    overlay_function += """
+    RPCXr%(command_name)s args { %(params_to_rpc_args_expressions)s };
+    RPCXr%(command_name)s* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+
+    // XXX substitute handles in input XR structs 
+
+    // Make pointers relative in anticipation of RPC (who will make them absolute, work on them, then make them relative again)
+    header->makePointersRelative(ipcbuf.base);
+
+    // Release Main process to do our work
+    gConnectionToMain->conn.FinishOverlayRequest();
+
+    // Wait for Main to report to us it has done the work
+    bool success = gConnectionToMain->conn.WaitForMainResponseOrFail();
+    if(!success) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "%(command_name)s",
+            OverlaysLayerNoObjectInfo, "FATAL: couldn't RPC %(command_name)s to main process.\\n");
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    // Set pointers absolute so they are valid in our process space again
+    header->makePointersAbsolute(ipcbuf.base);
+
+    // is this necessary?  Are events the only structs that need handles substituted back to local?
+    // for now, yes, only sessions, but eventually space and swapchain will need to be made local
+    // XXX restore handles in output XR structs
+
+    // Copy anything that were "output" parameters into the command arguments
+    IPCCopyOut(&args, argsSerialized);
+""" % rpc
+
+    if "command_post" in rpc:
+        overlay_function += """
+    %(command_post)s
+""" % rpc
+
+    overlay_function += "    return header->result;\n"
+    overlay_function += "}\n"
+
+    main_as_overlay_function = ""
+
+    main_as_overlay_function += f"XrResult {layer_command}MainAsOverlay(\n"
+
+    main_as_overlay_function += """
+    ConnectionToOverlay::Ptr        connection,
+    RPCXr%(command_name)s*              args)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    // XXX potential hand-written verification and error return
+
+    // XXX substitute_actual_handles_in_input_structs
+
+    %(rpc_main_as_overlay_downchain_operation)s
+
+    // XXX restore_local_handles_in_input_structs
+    // XXX restore_local_handles_in_output_structs
+
+    // potential hand-written completion, checking return value and possibly overwriting result
+
+    return result;
+}
+""" % rpc
+
+    rpc_case_bodies += "\n" 
+    rpc_case_bodies += "        case %(command_enum)s: {\n" % rpc
+    rpc_case_bodies += "            auto* args = ipcbuf.getAndAdvance<RPCXr%(command_name)s>();\n" % rpc
+    rpc_case_bodies += f"            hdr->result = {layer_command}MainAsOverlay(connection, args);\n"
+    rpc_case_bodies += "            break;\n"
+    rpc_case_bodies += "        }\n"
+
+    source_text += rpc_args_struct
+
+    source_text += ipc_serialize_function
+
+    source_text += overlay_function
+
+    source_text += main_as_overlay_function
+
+header_text += "bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr);\n"
+source_text += """
+bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr)
+{
+    switch(hdr->requestType) {
+
+        // Call into "Overlay_" function to handle functionality
+        // altered by Overlay connection and may not be disambiguated by XrSession,
+        // or call into "Overlay_" function to handle functionality only altered
+        // for the purposes of Overlay composition layers that can be disambiguated
+        // by XrSession or child handles
+
+        case RPC_XR_CREATE_SESSION: {
+            auto* args = ipcbuf.getAndAdvance<OverlaysLayerRPCCreateSession>();
+            hdr->result = OverlaysLayerCreateSessionMainAsOverlay(connection, args);
+            break;
+        }
+"""
+
+source_text += rpc_case_bodies
+
+source_text += """
+
+        default: {
+            // XXX use log message func
+            OutputDebugStringA("unknown request type in IPC");
+            return false;
+            break;
+        }
+    }
+
+    return true;
+}
+"""
+
+# XXX temporary stubs
+stub_em = (
+    "EnumerateReferenceSpaces",
+    "CreateReferenceSpace",
+    "GetReferenceSpaceBoundsRect",
+    "CreateActionSpace",
+    "EnumerateSwapchainFormats",
+    "CreateSwapchain",
+    "BeginSession",
+    "EndSession",
+    "RequestExitSession",
+    "WaitFrame",
+    "BeginFrame",
+    "EndFrame",
+    "LocateViews",
+    "AttachSessionActionSets",
+    "GetCurrentInteractionProfile",
+    "GetActionStateBoolean",
+    "GetActionStateFloat",
+    "GetActionStateVector2f",
+    "GetActionStatePose",
+    "SyncActions",
+    "EnumerateBoundSourcesForAction",
+    "GetInputSourceLocalizedName",
+    "ApplyHapticFeedback",
+    "StopHapticFeedback",
+    "SessionBeginDebugUtilsLabelRegionEXT",
+    "SessionEndDebugUtilsLabelRegionEXT",
+    "SessionInsertDebugUtilsLabelEXT",
+)
+
+for stub in stub_em:
+
+    command_name = stub
+    command = commands["xr" + command_name]
+    parameters = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
+    command_type = command["return_type"]
+    layer_command = api_layer_name_for_command("xr" + command_name)
+
+    header_text += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameters});\n"
+
+    source_text += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameters})\n"
+    source_text += "{ return XR_ERROR_VALIDATION_FAILURE; }\n"
 
 
 # deep copy and free functions -----------------------------------------------
@@ -1068,7 +1364,13 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     # handles are guaranteed not to be destroyed while in another command according to the spec...
     source_text += f"    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
-    source_text += f"    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo.at({handle_name});\n\n"
+    source_text += f"    auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});\n"
+    source_text += f"    if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{\n"
+    source_text += f"        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, \"{command_name}\",\n"
+    source_text += f"            OverlaysLayerNoObjectInfo, \"FATAL: invalid handle couldn't be found in tracking map.\\n\");\n"
+    source_text += f"        return XR_ERROR_VALIDATION_FAILURE;\n"
+    source_text += f"    }}\n"
+    source_text += f"    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = it->second;\n\n"
 
     if handle_type in handles_needing_substitution:
         source_text += f"    // substitute the real handle in\n";
@@ -1081,7 +1383,18 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     parameter_names = ", ".join([parameter_to_name(command_name, parameter) for parameter in command["parameters"]])
     dispatch_command = dispatch_name_for_command(command_name)
-    source_text += f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
+
+    if handle_type in handles_needing_substitution:
+        source_text += f"    bool isProxied = {handle_name}Info->isProxied;\n"
+        source_text += "    XrResult result;\n"
+        source_text += "    if(isProxied) {\n"
+        source_text += f"        result = OverlaysLayer{dispatch_command}Overlay({handle_name}Info->parentInstance, {parameter_names});\n"
+        source_text += "    } else {\n"
+        source_text += f"        result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
+        source_text += "    }\n"
+    else:
+        source_text += f"   XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
+
 
     if handle_type in handles_needing_substitution:
         source_text += f"    // put the local handle back\n";
@@ -1095,13 +1408,12 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
         # Attempt generation of special cases
 
-        # Special Case Create functions
+        # Special case handle Create functions
         if command_name.find("Create") >= 0:
             created_type = command["parameters"][-1].find("type").text
             created_name = command["parameters"][-1].find("name").text
             # just assume we hand-coded Instance creation so these are all child handle types
             # in C++17 this would be an initializer list but before that we have to use the forwarding syntax.
-            parent_type = str(handles[created_type][1] or "")
             source_text += f"    std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);\n"
             if parent_type == "XrInstance":
                 source_text += f"    {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, instance, {handle_name}Info->downchain);\n"
@@ -1111,7 +1423,6 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
                 source_text += f"    g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
             # XXX source_text += f"    {handle_name}Info.childHandles.insert(*{created_name});\n"
             source_text += f"    mlock2.unlock();\n"
-
 
     source_text += "    return result;\n"
 
@@ -1175,3 +1486,5 @@ if outputFilename == "xr_generated_overlays.cpp":
     open(outputFilename, "w").write(source_text)
 else:
     open(outputFilename, "w").write(header_text)
+
+# vi: set filetype=text

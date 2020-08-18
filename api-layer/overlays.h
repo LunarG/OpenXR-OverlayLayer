@@ -351,9 +351,38 @@ struct RPCChannels
     }
 };
 
+bool OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle);
+
+bool OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle);
+
 struct OverlaySessionContext
 {
-    int q; // XXX standin
+    // local handles so they can be looked up in our tracking maps
+    std::set<XrSpace> localSpaces;
+    std::set<XrSwapchain> localSwapchains;
+
+    // This structure needs to be locked because Main could Destroy its
+    // shared XrSession and all of its children and that would need to go
+    // through here to mark those handles destroyed.
+    // It would be smarter to provide accessors that lock.
+    // Or perhaps all objects should be shared_ptr so they get deleted thread-safely.
+
+    std::recursive_mutex mutex;
+    std::unique_lock<std::recursive_mutex> GetLock()
+    {
+        return std::unique_lock<std::recursive_mutex>(mutex);
+    }
+
+    ~OverlaySessionContext()
+    {
+        for(auto s: localSpaces) {
+            OverlaysLayerRemoveXrSpaceHandleInfo(s);
+        }
+        for(auto s: localSwapchains) {
+            OverlaysLayerRemoveXrSwapchainHandleInfo(s);
+        }
+    }
+
     typedef std::shared_ptr<OverlaySessionContext> Ptr;
 };
 
@@ -368,6 +397,7 @@ struct ConnectionToOverlay
         conn(conn)
     { }
 
+    // This structure probably does not need to be locked.
     std::unique_lock<std::recursive_mutex> GetLock()
     {
         return std::unique_lock<std::recursive_mutex>(mutex);
@@ -402,5 +432,105 @@ extern std::unordered_map<XrSession, XrSession> gActualSessionToLocalHandle;
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session);
 
 uint64_t GetNextLocalHandle();
+
+
+// Serialization helpers ----------------------------------------------------
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const T* p)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T;
+    if(!t)
+        return nullptr;
+
+    *t = *p;
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const T* p, size_t count)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T[count];
+    if(!t)
+        return nullptr;
+
+    for(size_t i = 0; i < count; i++)
+        t[i] = p[i];
+
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCHeader* header, const T* p)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T;
+    if(!t)
+        return nullptr;
+
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCHeader* header, const T* p, size_t count)
+{
+    if(!p)
+        return nullptr;
+
+    T* t = new(ipcbuf) T[count];
+    if(!t)
+        return nullptr;
+
+    return t;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+void IPCCopyOut(T* dst, const T* src)
+{
+    if(!src)
+        return;
+
+    *dst = *src;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+void IPCCopyOut(T* dst, const T* src, size_t count)
+{
+    if(!src)
+        return;
+
+    for(size_t i = 0; i < count; i++) {
+        dst[i] = src[i];
+    }
+}
+
+// Serialization of XR structs ----------------------------------------------
+
+struct OverlaysLayerRPCCreateSession
+{
+    XrFormFactor                                formFactor;
+    const XrInstanceCreateInfo*                 instanceCreateInfo;
+    const XrSessionCreateInfo*                  createInfo;
+    XrSession*                                  session;
+};
+
+XrResult OverlaysLayerCreateSessionMainAsOverlay(
+    ConnectionToOverlay::Ptr        connection,
+    OverlaysLayerRPCCreateSession*              args);
+
 
 #endif /* _OVERLAYS_H_ */
