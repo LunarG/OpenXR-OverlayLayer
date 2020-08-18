@@ -704,11 +704,11 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcess
     do {
         RPCChannels::WaitResult result = rpc.WaitForOverlayRequestOrFail();
 
-        if(result == RPCChannels::WaitResult::OVERLAY_PROCESS_TERMINATED) {
+        if(result == RPCChannels::WaitResult::OVERLAY_PROCESS_TERMINATED_UNEXPECTEDLY) {
 
             OutputDebugStringA("**OVERLAY** other process terminated\n");
             DebugBreak();
-#if 0 // XXX
+#if 0 // XXX this should happen through graceful dtor on connection
             if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
                 ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
                 gMainSession->overlaySession->swapchainMap.clear();
@@ -753,9 +753,12 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcess
         }
 #endif
 
-    } while(!connectionLost);
-    // XXX && !gMainInstanceContext.exitIPCLoop);
+    } while(!connectionLost && !connection->closed);
 
+    {
+        std::unique_lock<std::recursive_mutex> m(gConnectionsToOverlayByProcessIdMutex);
+        gConnectionsToOverlayByProcessId.erase(connection->conn.otherProcessId);
+    }
 }
 
 void MainNegotiateThreadBody()
@@ -819,6 +822,7 @@ void MainNegotiateThreadBody()
                 {
                     auto l = connection->GetLock();
                     connection->thread = std::move(receiverThread);
+					connection->thread.detach();
                 }
             }
         }

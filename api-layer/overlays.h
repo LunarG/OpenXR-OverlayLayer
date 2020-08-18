@@ -278,8 +278,11 @@ struct RPCChannels
     enum WaitResult {
         OVERLAY_REQUEST_READY,
         MAIN_RESPONSE_READY,
-        OVERLAY_PROCESS_TERMINATED,
-        MAIN_PROCESS_TERMINATED,
+        OVERLAY_PROCESS_TERMINATED_UNEXPECTEDLY,
+        MAIN_PROCESS_TERMINATED_UNEXPECTEDLY,
+        OVERLAY_PROCESS_TERMINATED_GRACEFULLY,
+        MAIN_PROCESS_TERMINATED_GRACEFULLY,
+        REQUEST_PROCESSED_SUCCESSFULLY,
         WAIT_ERROR,
     };
 
@@ -307,7 +310,7 @@ struct RPCChannels
         }
 
         if(result == WAIT_OBJECT_0 + 1) {
-            return WaitResult::MAIN_PROCESS_TERMINATED;
+            return WaitResult::MAIN_PROCESS_TERMINATED_UNEXPECTEDLY;
         }
 
         // XXX log error
@@ -333,7 +336,7 @@ struct RPCChannels
         }
 
         if(result == WAIT_OBJECT_0 + 1) {
-            return WaitResult::OVERLAY_PROCESS_TERMINATED;
+            return WaitResult::OVERLAY_PROCESS_TERMINATED_UNEXPECTEDLY;
         }
 
         // XXX log error
@@ -388,6 +391,7 @@ struct OverlaySessionContext
 
 struct ConnectionToOverlay
 {
+    bool closed = false;
     std::recursive_mutex mutex;
     RPCChannels conn;
     OverlaySessionContext::Ptr ctx = nullptr;
@@ -405,7 +409,6 @@ struct ConnectionToOverlay
 
     ~ConnectionToOverlay()
     {
-        ctx.reset();
         // ...
     }
 
