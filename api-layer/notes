@@ -1,3 +1,13 @@
+8/19
+Where you're at:
+    debugging an exception in OverlaysLayerXrSpaceHandleInfo,
+        it's probably being destroyed after everything else was destroyed
+        Why?
+
+8/18
+ConnectionToMain should be handed to all Overlay functions
+LocalSwapchain ctor could throw.  Maybe "create" function should call D3D and log errors and return false on failure.
+
 8/17
 should IPCSerialize substitute handles / atoms?
     probably not -> also need to substitute and restore on Main calls
