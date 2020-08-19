@@ -43,6 +43,10 @@
 #include <utility>
 #include <vector>
 
+#include <dxgi1_2.h>
+#include <d3d11_1.h>
+
+
 #if defined(__GNUC__) && __GNUC__ >= 4
 #define LAYER_EXPORT __attribute__((visibility("default")))
 #elif defined(_WIN32)
@@ -60,6 +64,261 @@ uint64_t GetNextLocalHandle()
     static std::atomic_uint64_t nextHandle = 1;
     return nextHandle++;
 }
+
+bool RestoreActualHandles(XrInstance instance, XrBaseInStructure *xrstruct)
+{
+    while(xrstruct) {
+        switch(xrstruct->type)
+        {
+            case XR_TYPE_VIEW_LOCATE_INFO: {
+                auto p = reinterpret_cast<XrViewLocateInfo*>(xrstruct);
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSpaceToHandleInfoMutex);
+                auto it = gOverlaysLayerXrSpaceToHandleInfo.find(p->space);
+                if(it == gOverlaysLayerXrSpaceToHandleInfo.end()) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateViews",
+                        OverlaysLayerNoObjectInfo, "FATAL: XrSpace handle couldn't be found in tracking map.\n");
+                    return false;
+                }
+
+                OverlaysLayerXrSpaceHandleInfo::Ptr info = it->second;
+                p->space = info->actualHandle;
+                break;
+            }
+            case XR_TYPE_FRAME_END_INFO: {
+                auto p = reinterpret_cast<XrFrameEndInfo*>(xrstruct);
+                for(uint32_t i = 0; i < p->layerCount; i++) {
+                    if(!RestoreActualHandles(instance, (XrBaseInStructure*)(p->layers[i]))) { /* We allocated this copy ourselves, so just cast ugly */
+                        return false;
+                    }
+                }
+                break;
+            }
+            case XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW: {
+                auto p = reinterpret_cast<XrCompositionLayerProjectionView*>(xrstruct);
+
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+                auto it = gOverlaysLayerXrSwapchainToHandleInfo.find(p->subImage.swapchain);
+                if(it == gOverlaysLayerXrSwapchainToHandleInfo.end()) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
+                        OverlaysLayerNoObjectInfo, "FATAL: XrSwapchain handle couldn't be found in tracking map.\n");
+                    return false;
+                }
+
+                OverlaysLayerXrSwapchainHandleInfo::Ptr info = it->second;
+                p->subImage.swapchain = info->actualHandle;
+				break;
+            }
+            case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+                auto p = reinterpret_cast<XrCompositionLayerProjection*>(xrstruct);
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSpaceToHandleInfoMutex);
+                auto it = gOverlaysLayerXrSpaceToHandleInfo.find(p->space);
+                if(it == gOverlaysLayerXrSpaceToHandleInfo.end()) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
+                        OverlaysLayerNoObjectInfo, "FATAL: XrSpace handle couldn't be found in tracking map.\n");
+                    return false;
+                }
+
+                OverlaysLayerXrSpaceHandleInfo::Ptr info = it->second;
+                p->space = info->actualHandle;
+
+                for(uint32_t i = 0; i < p->viewCount; i++) {
+                    if(!RestoreActualHandles(instance, (XrBaseInStructure*)(&p->views[i]))) { /* We allocated this copy ourselves, so just cast ugly */
+                        return false;
+                    }
+                }
+
+                break;
+            }
+            default: {
+                // I don't know what this is, skip it and try the next one
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                OverlaysLayerXrInstanceHandleInfo::Ptr info = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+                mlock.unlock();
+                char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                structTypeName[0] = '\0';
+                if(info->downchain->StructureTypeToString(instance, xrstruct->type, structTypeName) != XR_SUCCESS) {
+                    sprintf(structTypeName, "<type %08X>", xrstruct->type);
+                }
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                    nullptr, OverlaysLayerNoObjectInfo, fmt("RestoreActualHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.", xrstruct, structTypeName).c_str());
+                break;
+            }
+        }
+        xrstruct = (XrBaseInStructure*)xrstruct->next; /* We allocated this copy ourselves, so just cast ugly */
+    }
+    return true;
+}
+
+bool SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct)
+{
+    while(xrstruct) {
+        switch(xrstruct->type)
+        {
+            case XR_TYPE_SPACE_VELOCITY: {
+                break;
+            }
+            case XR_TYPE_SPACE_LOCATION: {
+                break;
+            }
+            case XR_TYPE_VIEW_STATE: {
+                break;
+            }
+            case XR_TYPE_VIEW: {
+                break;
+            }
+            default: {
+                // I don't know what this is, skip it and try the next one
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                OverlaysLayerXrInstanceHandleInfo::Ptr info = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+                mlock.unlock();
+                char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                structTypeName[0] = '\0';
+                if(info->downchain->StructureTypeToString(instance, xrstruct->type, structTypeName) != XR_SUCCESS) {
+                    sprintf(structTypeName, "<type %08X>", xrstruct->type);
+                }
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                    nullptr, OverlaysLayerNoObjectInfo, fmt("SubstituteHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.", xrstruct, structTypeName).c_str());
+                break;
+            }
+        }
+        xrstruct = (XrBaseOutStructure*)xrstruct->next; /* We allocated this copy ourselves, so just cast ugly */
+    }
+    return true;
+}
+
+void LogWindowsLastError(const char *xrfunc, const char* what, const char *file, int line)
+{
+    DWORD lastError = GetLastError();
+    LPVOID messageBuf;
+    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, xrfunc,
+        OverlaysLayerNoObjectInfo, fmt("FATAL: %s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf).c_str());
+    LocalFree(messageBuf);
+}
+
+void LogWindowsError(HRESULT result, const char *xrfunc, const char* what, const char *file, int line)
+{
+    LPVOID messageBuf;
+    FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
+    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, xrfunc,
+        OverlaysLayerNoObjectInfo, fmt("FATAL: %s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf).c_str());
+    LocalFree(messageBuf);
+}
+
+bool LocalSwapchain::CreateTextures(XrInstance instance, ID3D11Device *d3d11, DWORD mainProcessId)
+{
+    for(int i = 0; i < swapchainTextures.size(); i++) {
+        D3D11_TEXTURE2D_DESC desc;
+        desc.Width = width;
+        desc.Height = height;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = format;
+        desc.SampleDesc.Count = 1;
+        desc.SampleDesc.Quality = 0;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+
+        HRESULT result;
+        if((result = d3d11->CreateTexture2D(&desc, NULL, &swapchainTextures[i])) != S_OK) {
+            LogWindowsError(result, "xrCreateSwapchain", "CreateTexture2D", __FILE__, __LINE__);
+            return false;
+        }
+
+        {
+            IDXGIResource1* sharedResource = NULL;
+            if((result = swapchainTextures[i]->QueryInterface(__uuidof(IDXGIResource1), (LPVOID*) &sharedResource)) != S_OK) {
+                LogWindowsError(result, "xrCreateSwapchain", "QueryInterface", __FILE__, __LINE__);
+                return false;
+            }
+
+            HANDLE thisProcessHandle = GetCurrentProcess();
+            HANDLE hostProcessHandle;
+            hostProcessHandle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, mainProcessId);
+            if(hostProcessHandle == NULL) {
+                LogWindowsLastError("xrCreateSwapchain", "OpenProcess", __FILE__, __LINE__);
+                return false;
+            }
+
+            HANDLE handle;
+
+            // Get the Shared Handle for the texture. This is still local to this process but is an actual HANDLE
+            if((result = sharedResource->CreateSharedHandle(NULL,
+                DXGI_SHARED_RESOURCE_READ, // GENERIC_ALL | DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE,
+                NULL, &handle)) != S_OK) {
+
+                LogWindowsError(result, "xrCreateSwapchain", "CreateSharedHandle", __FILE__, __LINE__);
+                return false;
+            }
+            
+            // Duplicate the handle so "Host" RPC service process can use it
+            if(!DuplicateHandle(thisProcessHandle, handle, hostProcessHandle, &swapchainHandles[i], 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+                LogWindowsLastError("xrCreateSwapchain", "DuplicateHandle", __FILE__, __LINE__);
+                return false;
+            }
+            CloseHandle(handle);
+            sharedResource->Release();
+        }
+    }
+    return true;
+}
+
+
+SwapchainCachedData::~SwapchainCachedData()
+{
+    for(HANDLE acquired : remoteImagesAcquired) {
+        IDXGIKeyedMutex* keyedMutex;
+        ID3D11Texture2D *sharedTexture;
+        auto it = handleTextureMap.find(acquired);
+        if(it != handleTextureMap.end()) {
+            sharedTexture = it->second;
+            HRESULT result = sharedTexture->QueryInterface( __uuidof(IDXGIKeyedMutex), (LPVOID*)&keyedMutex);
+            if(result == S_OK) {
+                keyedMutex->ReleaseSync(KEYED_MUTEX_OVERLAY);
+                keyedMutex->Release();
+            }
+        }
+    }
+    remoteImagesAcquired.clear();
+    for(auto shared : handleTextureMap) {
+        shared.second->Release();
+        CloseHandle(shared.first);
+    }
+    for(auto texture : swapchainImages) {
+        texture->Release();
+    }
+    handleTextureMap.clear();
+}
+
+ID3D11Texture2D* SwapchainCachedData::getSharedTexture(ID3D11Device *d3d11Device, HANDLE sourceHandle)
+{
+    ID3D11Texture2D *sharedTexture;
+
+    ID3D11Device1 *device1;
+
+    HRESULT result;
+
+    if((result = d3d11Device->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1)) != S_OK) {
+        LogWindowsError(result, "xrCreateSwapchain", "QueryInterface", __FILE__, __LINE__);
+        return nullptr;
+    }
+
+    auto it = handleTextureMap.find(sourceHandle);
+    if(it == handleTextureMap.end()) {
+        if((result = device1->OpenSharedResource1(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture)) != S_OK) {
+            LogWindowsError(result, "xrCreateSwapchain", "OpenSharedResource1", __FILE__, __LINE__);
+            return nullptr;
+        }
+        handleTextureMap[sourceHandle] = sharedTexture;
+    } else  {
+        sharedTexture = it->second;
+    }
+    device1->Release();
+
+    return sharedTexture;
+}
+
 
 // XXX could generate
 bool OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
@@ -222,8 +481,8 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     delete[] extensionNamesMinusOverlay;
 
     // Create the dispatch table to the next levels
-    auto *next_dispatch = new XrGeneratedDispatchTable();
-    GeneratedXrPopulateDispatchTable(next_dispatch, returned_instance, next_get_instance_proc_addr);
+    std::shared_ptr<XrGeneratedDispatchTable> next_dispatch = std::make_shared<XrGeneratedDispatchTable>();
+    GeneratedXrPopulateDispatchTable(next_dispatch.get(), returned_instance, next_get_instance_proc_addr);
 
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
     OverlaysLayerXrInstanceHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
@@ -237,7 +496,7 @@ XrResult OverlaysLayerXrDestroyInstance(XrInstance instance)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
-    XrGeneratedDispatchTable *next_dispatch = instanceInfo->downchain;
+    std::shared_ptr<XrGeneratedDispatchTable> next_dispatch = instanceInfo->downchain;
     instanceInfo->Destroy();
     mlock.unlock();
 
@@ -429,8 +688,6 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
         }
 
         switch(dstbase->type) {
-            // XXX Generate these??
-#if 0
             case XR_TYPE_SPACE_LOCATION: {
                 auto src = reinterpret_cast<const XrSpaceLocation*>(srcbase);
                 auto dst = reinterpret_cast<XrSpaceLocation*>(dstbase);
@@ -502,7 +759,6 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
                 dst->maxSwapchainSampleCount = src->maxSwapchainSampleCount;
                 break;
             }
-#endif
 
             default: {
                 // I don't know what this is, drop it and keep going
@@ -572,20 +828,18 @@ bool FindExtensionInList(const char* extension, uint32_t extensionsCount, const 
     return false;
 }
 
-XrResult OverlaysLayerCreateSessionMainAsOverlay(
-    ConnectionToOverlay::Ptr        connection,
-    OverlaysLayerRPCCreateSession*              args)
+XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, XrSession *session)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
 
-    if(args->createInfo->createFlags != sessionInfo->createInfo->createFlags) {
+    if(createInfo->createFlags != sessionInfo->createInfo->createFlags) {
         OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for overlay session had different flags (%08X) than those with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", args->createInfo->createFlags, sessionInfo->createInfo->createFlags).c_str());
+            OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for overlay session had different flags (%08X) than those with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", createInfo->createFlags, sessionInfo->createInfo->createFlags).c_str());
     }
 
-    // Verify that any structures match that are chained off args->createInfo
-    for(const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(args->createInfo->next); p; p = reinterpret_cast<const XrBaseInStructure*>(p->next)) {
+    // Verify that any structures match that are chained off createInfo
+    for(const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next); p; p = reinterpret_cast<const XrBaseInStructure*>(p->next)) {
         switch(p->type) {
 
             case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
@@ -630,7 +884,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(
     }
 
     // Verify that main session didn't have any unexpected structures that the overlay didn't have
-    for(const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(args->createInfo->next); p; p = reinterpret_cast<const XrBaseInStructure*>(p->next)) {
+    for(const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next); p; p = reinterpret_cast<const XrBaseInStructure*>(p->next)) {
         // XXX this should probably just reject any structure that isn't known.
         const XrBaseInStructure* other = FindStructInChain<XrBaseInStructure>(sessionInfo->createInfo->next, p->type);
         if(!other) {
@@ -655,9 +909,9 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(
         const XrSystemGetInfo* systemGetInfo = gOverlaysLayerSystemIdToAtomInfo[systemId]->getInfo;
         mainSessionFormFactor = systemGetInfo->formFactor;
     }
-    if(mainSessionFormFactor != args->formFactor) {
+    if(mainSessionFormFactor != formFactor) {
         OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateSession for the overlay session used an XrFormFactor (%s) which the main session did not.\n", args->formFactor).c_str());
+            OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateSession for the overlay session used an XrFormFactor (%s) which the main session did not.\n", formFactor).c_str());
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -666,11 +920,11 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(
         std::unique_lock<std::recursive_mutex> m(gOverlaysLayerXrInstanceToHandleInfoMutex);
         OverlaysLayerXrInstanceHandleInfo::Ptr mainInstanceInfo = gOverlaysLayerXrInstanceToHandleInfo[gMainSessionInstance];
         const XrInstanceCreateInfo* mainInstanceCreateInfo = mainInstanceInfo->createInfo;
-        for(uint32_t i = 0; i < args->instanceCreateInfo->enabledExtensionCount; i++) {
-            bool alsoInMain = FindExtensionInList(args->instanceCreateInfo->enabledExtensionNames[i], mainInstanceCreateInfo->enabledExtensionCount, mainInstanceCreateInfo->enabledExtensionNames);
+        for(uint32_t i = 0; i < instanceCreateInfo->enabledExtensionCount; i++) {
+            bool alsoInMain = FindExtensionInList(instanceCreateInfo->enabledExtensionNames[i], mainInstanceCreateInfo->enabledExtensionCount, mainInstanceCreateInfo->enabledExtensionNames);
             if(!alsoInMain) {
                 OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-                    OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateInstance for the parent of the overlay session specified an extension (%s) which the main session did not.\n", args->instanceCreateInfo->enabledExtensionNames[i]).c_str());
+                    OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateInstance for the parent of the overlay session specified an extension (%s) which the main session did not.\n", instanceCreateInfo->enabledExtensionNames[i]).c_str());
                 didntFindExtension = true;
             }
         }
@@ -681,13 +935,13 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(
 
     {
         auto l = connection->GetLock();
-        connection->ctx = std::make_shared<OverlaySessionContext>();
+        connection->ctx = std::make_shared<MainAsOverlaySessionContext>();
     }
     // XXX create stand in for Main managing all Overlay app's stuff (in case Overlay unexpectedly exits); OverlaySessionContext
 
     // XXX should gMainSession be the downchain session so MainAsOverlay can use it directly?
     // Then looking it up in ...ToHandleInfo requires mapping backward to the local handle
-    *args->session = gMainSession;
+    *session = gMainSession;
 
     return XR_SUCCESS;
 }
@@ -960,7 +1214,8 @@ bool ConnectToMain(XrInstance instance)
 XrResult OverlaysLayerCreateSessionOverlay(
     XrInstance                                  instance,
     const XrSessionCreateInfo*                  createInfo,
-    XrSession*                                  session)
+    XrSession*                                  session,
+    ID3D11Device*   d3d11Device)
 {
     XrResult result = XR_SUCCESS;
 
@@ -975,11 +1230,6 @@ XrResult OverlaysLayerCreateSessionOverlay(
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
 
-    // Create a header for RPC to MainAsOverlay
-    IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
-    IPCHeader* header = new(ipcbuf) IPCHeader{RPC_XR_CREATE_SESSION};
-
-    // Serialize our RPC args into the IPC buffer in shared memory
     XrFormFactor formFactor;
     {
         // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN SUBSTITUTE THAT IN THE OVERLAY BEFORE THE RPC.
@@ -991,6 +1241,11 @@ XrResult OverlaysLayerCreateSessionOverlay(
         // XrSystemId-related extensions
     }
 
+    // Create a header for RPC to MainAsOverlay
+    IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
+    IPCHeader* header = new(ipcbuf) IPCHeader{RPC_XR_CREATE_SESSION};
+
+    // Serialize our RPC args into the IPC buffer in shared memory
     OverlaysLayerRPCCreateSession args { formFactor, instanceInfo->createInfo, createInfo, session }; // ignore instance since Main won't use ours
     OverlaysLayerRPCCreateSession* argsSerialized = IPCSerialize(ipcbuf, header, &args);
 
@@ -1029,6 +1284,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
     info->actualHandle = actualHandle;
     info->isProxied = true;
+    info->d3d11Device = d3d11Device;
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
     gOverlaysLayerXrSessionToHandleInfo[localHandle] = info;
     mlock2.unlock();
@@ -1070,11 +1326,194 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
     if(!cio) {
         result = OverlaysLayerCreateSessionMain(instance, createInfo, session);
     } else {
-        result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session);
+        result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session, d3dbinding->device);
     }
 
     return result;
 }
+
+XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    XrResult result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfo, swapchain);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    OutputDebugStringA("OVERLAY - EnumerateSwapchainFormats\\n");
+
+    uint32_t count;
+    result = sessionInfo->downchain->EnumerateSwapchainImages(*swapchain, 0, &count, nullptr);
+    if(!XR_SUCCEEDED(result)) {
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
+            OverlaysLayerNoObjectInfo, "FATAL: Couldn't call EnumerateSwapchainImages to get swapchain image count.\n");
+        return result;
+    }
+
+    std::vector<XrSwapchainImageD3D11KHR> swapchainImages(count);
+    std::vector<ID3D11Texture2D*> swapchainTextures(count);
+    for(uint32_t i = 0; i < count; i++) {
+        swapchainImages[i].type = XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+        swapchainImages[i].next = nullptr;
+    }
+    result = sessionInfo->downchain->EnumerateSwapchainImages(*swapchain, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages.data()));
+    if(!XR_SUCCEEDED(result)) {
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
+            OverlaysLayerNoObjectInfo, "FATAL: Couldn't call EnumerateSwapchainImages to get swapchain images.\n");
+        return result;
+    }
+
+    for(uint32_t i = 0; i < count; i++) {
+        swapchainTextures[i] = swapchainImages[i].texture;
+    }
+    connection->ctx->swapchainMap[*swapchain] = std::make_shared<SwapchainCachedData>(*swapchain, swapchainTextures);
+
+    *swapchainCount = count;
+
+    return result;
+}
+
+XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    uint32_t swapchainCount;
+
+    XrResult result = RPCCallCreateSwapchain(instance, sessionInfo->actualHandle, createInfo, swapchain, &swapchainCount);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    XrSwapchain actualHandle = *swapchain;
+    XrSwapchain localHandle = (XrSwapchain)GetNextLocalHandle();
+    *swapchain = localHandle;
+
+    {
+        std::unique_lock<std::recursive_mutex> lock(gActualXrSwapchainToLocalHandleMutex);
+        gActualXrSwapchainToLocalHandle[actualHandle] = localHandle;
+    }
+
+    OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+
+    swapchainInfo->actualHandle = actualHandle;
+
+    LocalSwapchain::Ptr localSwapchain = std::make_shared<LocalSwapchain>(*swapchain, swapchainCount, createInfo);
+    swapchainInfo->localSwapchain = localSwapchain;
+
+    if(!localSwapchain->CreateTextures(instance, sessionInfo->d3d11Device, gConnectionToMain->conn.otherProcessId)) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
+            OverlaysLayerNoObjectInfo, "FATAL: couldn't create D3D local resources for swapchain images\\n");
+        // XXX This leaks the session in main process if the Session is not closed.
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    { 
+        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+        gOverlaysLayerXrSwapchainToHandleInfo[*swapchain] = swapchainInfo;
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerCreateSwapchain(XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    auto it = gOverlaysLayerXrSessionToHandleInfo.find(session);
+    if(it == gOverlaysLayerXrSessionToHandleInfo.end()) {
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
+            OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
+        return XR_ERROR_VALIDATION_FAILURE;
+    }
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = it->second;
+
+    bool isProxied = sessionInfo->isProxied;
+    XrResult result;
+    if(isProxied) {
+
+        result = OverlaysLayerCreateSwapchainOverlay(sessionInfo->parentInstance, session, createInfo, swapchain);
+
+    } else {
+
+        result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfo, swapchain);
+
+        XrSwapchain actualHandle = *swapchain;
+        XrSwapchain localHandle = (XrSwapchain)GetNextLocalHandle();
+        *swapchain = localHandle;
+
+        {
+            std::unique_lock<std::recursive_mutex> lock(gActualXrSwapchainToLocalHandleMutex);
+            gActualXrSwapchainToLocalHandle[actualHandle] = localHandle;
+        }
+
+        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+        OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+        gOverlaysLayerXrSwapchainToHandleInfo[*swapchain] = swapchainInfo;
+        swapchainInfo->actualHandle = actualHandle;
+
+    }
+
+    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+    sessionInfo->childSwapchains.insert(gOverlaysLayerXrSwapchainToHandleInfo[*swapchain]);
+
+    return result;
+}
+
+XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    connection->closed = true;
+    OutputDebugStringA("OVERLAY - DestroySession\n");
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession session)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    XrResult result = sessionInfo->downchain->DestroySession(sessionInfo->actualHandle);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    OutputDebugStringA("OVERLAY - EnumerateSwapchainFormats\\n");
+    // Already have our tracked information on this XrSession from generated code in sessionInfo
+    XrResult result = sessionInfo->downchain->EnumerateSwapchainFormats(sessionInfo->actualHandle, formatCapacityInput, formatCountOutput, formats);
+
+    return result;
+}
+
+XrResult OverlaysLayerEnumerateSwapchainFormatsOverlay(XrInstance instance, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+
+    XrResult result = sessionInfo->downchain->DestroySession(sessionInfo->actualHandle);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
+
 
 extern "C" {
 

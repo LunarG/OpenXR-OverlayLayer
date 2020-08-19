@@ -24,6 +24,9 @@ XrBaseInStructure* CopyEventChainIntoBuffer(XrInstance instance, const XrEventDa
 XrBaseInStructure* CopyXrStructChainWithMalloc(XrInstance instance, const void* xrstruct);
 void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct);
 
+bool RestoreActualHandles(XrInstance instance, XrBaseInStructure *xrstruct);
+bool SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct);
+
 typedef std::pair<uint64_t, XrObjectType> HandleTypePair;
 
 extern const std::set<HandleTypePair> OverlaysLayerNoObjectInfo;
@@ -358,11 +361,43 @@ bool OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle);
 
 bool OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle);
 
-struct OverlaySessionContext
+// Bookkeeping of SwapchainImages for copying remote SwapchainImages on ReleaseSwapchainImage
+struct SwapchainCachedData
+{
+    enum {
+        KEYED_MUTEX_OVERLAY = 0,
+        KEYED_MUTEX_MAIN = 1,
+    };
+
+    XrSwapchain swapchain;
+    std::vector<ID3D11Texture2D*> swapchainImages;
+    std::set<HANDLE> remoteImagesAcquired;
+    std::unordered_map<HANDLE, ID3D11Texture2D*> handleTextureMap;
+    std::vector<uint32_t>   acquired;
+
+    SwapchainCachedData(XrSwapchain swapchain_, const std::vector<ID3D11Texture2D*>& swapchainImages_) :
+        swapchain(swapchain_),
+        swapchainImages(swapchainImages_)
+    {
+        for(auto texture : swapchainImages) {
+            texture->AddRef();
+        }
+    }
+
+    ~SwapchainCachedData();
+    ID3D11Texture2D* getSharedTexture(ID3D11Device *d3d11Device, HANDLE sourceHandle);
+
+    typedef std::shared_ptr<SwapchainCachedData> Ptr;
+};
+
+
+struct MainAsOverlaySessionContext
 {
     // local handles so they can be looked up in our tracking maps
-    std::set<XrSpace> localSpaces;
+    std::set<XrSpace> localSpaces; // use swapchainMap? 
     std::set<XrSwapchain> localSwapchains;
+
+    std::unordered_map<XrSwapchain, SwapchainCachedData::Ptr> swapchainMap;
 
     // This structure needs to be locked because Main could Destroy its
     // shared XrSession and all of its children and that would need to go
@@ -376,7 +411,7 @@ struct OverlaySessionContext
         return std::unique_lock<std::recursive_mutex>(mutex);
     }
 
-    ~OverlaySessionContext()
+    ~MainAsOverlaySessionContext()
     {
         for(auto s: localSpaces) {
             OverlaysLayerRemoveXrSpaceHandleInfo(s);
@@ -386,7 +421,7 @@ struct OverlaySessionContext
         }
     }
 
-    typedef std::shared_ptr<OverlaySessionContext> Ptr;
+    typedef std::shared_ptr<MainAsOverlaySessionContext> Ptr;
 };
 
 struct ConnectionToOverlay
@@ -394,7 +429,7 @@ struct ConnectionToOverlay
     bool closed = false;
     std::recursive_mutex mutex;
     RPCChannels conn;
-    OverlaySessionContext::Ptr ctx = nullptr;
+    MainAsOverlaySessionContext::Ptr ctx = nullptr;
     std::thread thread;
 
     ConnectionToOverlay(const RPCChannels& conn) :
@@ -428,13 +463,41 @@ extern std::unordered_map<DWORD, ConnectionToOverlay::Ptr> gConnectionsToOverlay
 
 constexpr uint32_t gLayerBinaryVersion = 0x00000001;
 
-extern std::recursive_mutex gActualSessionToLocalHandleMutex;
-extern std::unordered_map<XrSession, XrSession> gActualSessionToLocalHandle;
-
-// Not generated
-XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session);
-
 uint64_t GetNextLocalHandle();
+
+// Local render target for passing to "Swapchain"
+struct LocalSwapchain
+{
+    XrSwapchain             swapchain;
+    std::vector<ID3D11Texture2D*> swapchainTextures;
+    std::vector<HANDLE>          swapchainHandles;
+    std::vector<uint32_t>   acquired;
+    bool                    waited;
+    int                     width;
+    int                     height;
+    DXGI_FORMAT             format;
+
+
+    LocalSwapchain(XrSwapchain sc, size_t count, const XrSwapchainCreateInfo* createInfo) :
+        swapchain(sc),
+        swapchainTextures(count),
+        swapchainHandles(count),
+        waited(false),
+        width(createInfo->width),
+        height(createInfo->height),
+        format(static_cast<DXGI_FORMAT>(createInfo->format))
+    {
+    }
+    bool CreateTextures(XrInstance instance, ID3D11Device *d3d11, DWORD mainProcessId);
+    ~LocalSwapchain()
+    {
+        // XXX Need to AcquireSync from remote side?
+        for(int i = 0; i < swapchainTextures.size(); i++) {
+            swapchainTextures[i]->Release();
+        }
+    }
+    typedef std::shared_ptr<LocalSwapchain> Ptr;
+};
 
 
 // Serialization helpers ----------------------------------------------------
@@ -531,9 +594,20 @@ struct OverlaysLayerRPCCreateSession
     XrSession*                                  session;
 };
 
-XrResult OverlaysLayerCreateSessionMainAsOverlay(
-    ConnectionToOverlay::Ptr        connection,
-    OverlaysLayerRPCCreateSession*              args);
+// Manually written functions -----------------------------------------------
+
+XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, XrSession *session); 
+XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session);
+
+XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount);
+XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain);
+XrResult OverlaysLayerCreateSwapchain(XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain);
+
+XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session);
+XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession session);
+
+XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats);
+XrResult OverlaysLayerEnumerateSwapchainFormatsOverlay(XrInstance instance, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats);
 
 
 #endif /* _OVERLAYS_H_ */
