@@ -1104,6 +1104,7 @@ bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSess
     gNegotiationChannels.params->mainLayerBinaryVersion = gLayerBinaryVersion;
     gNegotiationChannels.mainNegotiateThreadStop = CreateEventA(nullptr, false, false, nullptr);
     gNegotiationChannels.mainThread = std::thread(MainNegotiateThreadBody);
+    gNegotiationChannels.mainThread.detach();
 
     return true;
 }

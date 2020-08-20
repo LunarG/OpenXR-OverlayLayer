@@ -499,82 +499,63 @@ after_downchain = {}
 
 in_destructor = {}
 
+in_destroy = {}
+
 add_to_handle_struct = {}
+
+
+# XrInstance
 
 add_to_handle_struct["XrInstance"] = {
     "members" : """
-        const XrInstanceCreateInfo *createInfo = nullptr;
-        std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
+    const XrInstanceCreateInfo *createInfo = nullptr;
+    std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
 """,
 }
+
+
+# XrSession
 
 add_to_handle_struct["XrSession"] = {
     "members" : """
-        ID3D11Device*   d3d11Device;
-        const XrSessionCreateInfo *createInfo = nullptr;
-        std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
-        std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
-        XrSession actualHandle;
-        bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
+    ID3D11Device*   d3d11Device;
+    const XrSessionCreateInfo *createInfo = nullptr;
+    std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
+    std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
 """,
 }
+
+in_destroy["XrSession"] = """
+    childSwapchains.clear();
+    childSpaces.clear();
+"""
+
+
+# XrSwapchain
 
 add_to_handle_struct["XrSwapchain"] = {
     "members" : """
-        LocalSwapchain::Ptr localSwapchain;
-        XrSwapchain actualHandle;
-        bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
+    LocalSwapchain::Ptr localSwapchain;
 """,
 }
 
-in_destructor["XrSwapchain"] = """
-            if(!invalid) {
-                if(!isProxied) {
-                    downchain->DestroySwapchain(actualHandle);
-                }
-            }
+after_downchain["xrCreateSwapchain"] = """
+    {
+        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+        sessionInfo->childSwapchains.insert(gOverlaysLayerXrSwapchainToHandleInfo[*swapchain]);
+    }
 """
+
+
+# XrDebugUtilsMessenger
 
 add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
     "members" : """
-        XrDebugUtilsMessengerCreateInfoEXT *createInfo = nullptr;
+    XrDebugUtilsMessengerCreateInfoEXT *createInfo = nullptr;
 """,
 }
 
 in_destructor["XrDebugUtilsMessengerEXT"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
-
-add_to_handle_struct["XrActionSet"] = {
-    "members" : """
-        XrActionSetCreateInfo *createInfo = nullptr;
-        std::unordered_map<uint64_t, uint64_t> remoteActionSetByLocalSession;
-""",
-}
-
-in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
-
-add_to_handle_struct["XrAction"] = {
-    "members" : """
-        XrActionCreateInfo *createInfo = nullptr;
-        std::unordered_map<uint64_t, uint64_t> remoteActionByLocalSession;
-""",
-}
-
-in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
-
-add_to_handle_struct["XrSpace"] = {
-    "members" : """
-        XrSpace actualHandle;
-        bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
-""",
-}
-
-in_destructor["XrSpace"] = """
-            if(!invalid) {
-                if(!isProxied) {
-                    downchain->DestroySpace(actualHandle);
-                }
-            }
-"""
 
 after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
     gOverlaysLayerXrInstanceToHandleInfo[instance]->debugUtilsMessengers.insert(*messenger);
@@ -585,14 +566,36 @@ after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
     mlock2.unlock();
 """
 
+
+# XrActionSet
+
+add_to_handle_struct["XrActionSet"] = {
+    "members" : """
+    XrActionSetCreateInfo *createInfo = nullptr;
+    std::unordered_map<uint64_t, uint64_t> remoteActionSetByLocalSession;
+""",
+}
+
+in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
+
 after_downchain["xrCreateActionSet"] = """
     OverlaysLayerXrActionSetHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionSetHandleInfo>(instance, instance, instanceInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
     gOverlaysLayerXrActionSetToHandleInfo[*actionSet] = info;
     info->createInfo = reinterpret_cast<XrActionSetCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
     mlock2.unlock();
-
 """
+
+
+# XrAction
+
+add_to_handle_struct["XrAction"] = {
+    "members" : """
+    XrActionCreateInfo *createInfo = nullptr;
+    std::unordered_map<uint64_t, uint64_t> remoteActionByLocalSession;
+""",
+}
+
 after_downchain["xrCreateAction"] = """
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionToHandleInfoMutex);
@@ -602,29 +605,10 @@ after_downchain["xrCreateAction"] = """
 
 """
 
-after_downchain["xrStringToPath"] = """
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerPathToAtomInfoMutex);
-    gOverlaysLayerPathToAtomInfo[*path] = std::make_shared<OverlaysLayerPathAtomInfo>(pathString);
-    mlock2.unlock();
+in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
 
-"""
 
-after_downchain["xrGetSystem"] = """
-    XrSystemGetInfo* getInfoCopy = reinterpret_cast<XrSystemGetInfo*>(CopyXrStructChainWithMalloc(instance, getInfo));
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerSystemIdToAtomInfoMutex);
-    gOverlaysLayerSystemIdToAtomInfo[*systemId] = std::make_shared<OverlaysLayerSystemIdAtomInfo>(getInfoCopy);
-    mlock2.unlock();
-"""
-
-after_downchain["xrSuggestInteractionProfileBindings"] = """
-    auto search = gPathToSuggestedInteractionProfileBinding.find(suggestedBindings->interactionProfile);
-    if(search != gPathToSuggestedInteractionProfileBinding.end()) {
-        FreeXrStructChainWithFree(instance, search->second);
-    }
-    // XXX this needs to be by profile, not the whole thing
-    gPathToSuggestedInteractionProfileBinding[suggestedBindings->interactionProfile] = reinterpret_cast<XrInteractionProfileSuggestedBinding*>(CopyXrStructChainWithMalloc(instance, suggestedBindings));
-
-"""
+# XrSpace
 
 after_downchain["xrCreateReferenceSpace"] = """
     {
@@ -640,12 +624,41 @@ after_downchain["xrCreateActionSpace"] = """
     }
 """
 
-after_downchain["xrCreateSwapchain"] = """
-    {
-        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-        sessionInfo->childSwapchains.insert(gOverlaysLayerXrSwapchainToHandleInfo[*swapchain]);
-    }
+
+# XrPath
+
+after_downchain["xrStringToPath"] = """
+    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerPathToAtomInfoMutex);
+    gOverlaysLayerPathToAtomInfo[*path] = std::make_shared<OverlaysLayerPathAtomInfo>(pathString);
+    mlock2.unlock();
+
 """
+
+
+# XrSystemId
+
+after_downchain["xrGetSystem"] = """
+    XrSystemGetInfo* getInfoCopy = reinterpret_cast<XrSystemGetInfo*>(CopyXrStructChainWithMalloc(instance, getInfo));
+    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerSystemIdToAtomInfoMutex);
+    gOverlaysLayerSystemIdToAtomInfo[*systemId] = std::make_shared<OverlaysLayerSystemIdAtomInfo>(getInfoCopy);
+    mlock2.unlock();
+"""
+
+
+# XrSuggestedInteractionProfileBinding
+
+after_downchain["xrSuggestInteractionProfileBindings"] = """
+    auto search = gPathToSuggestedInteractionProfileBinding.find(suggestedBindings->interactionProfile);
+    if(search != gPathToSuggestedInteractionProfileBinding.end()) {
+        FreeXrStructChainWithFree(instance, search->second);
+    }
+    // XXX this needs to be by profile, not the whole thing
+    gPathToSuggestedInteractionProfileBinding[suggestedBindings->interactionProfile] = reinterpret_cast<XrInteractionProfileSuggestedBinding*>(CopyXrStructChainWithMalloc(instance, suggestedBindings));
+
+"""
+
+
+# Additional special handling in functions
 
 before_downchain["xrEndFrame"] = """
     XrBaseInStructure *newFrameEndInfo = CopyXrStructChainWithMalloc(sessionInfo->parentInstance, frameEndInfo);
@@ -660,6 +673,7 @@ before_downchain["xrEndFrame"] = """
 after_downchain["xrEndFrame"] = """
     FreeXrStructChainWithFree(sessionInfo->parentInstance, newFrameEndInfo);
 """
+
 
 before_downchain["xrLocateViews"] = """
     XrBaseInStructure *newViewLocateInfo = CopyXrStructChainWithMalloc(sessionInfo->parentInstance, viewLocateInfo);
@@ -688,6 +702,7 @@ after_downchain["xrLocateViews"] = """
         }
     }
 """
+
 
 before_downchain["xrLocateSpace"] = """
     {
@@ -817,40 +832,91 @@ only_child_handles = [h for h in supported_handles if h != "XrInstance"]
 for handle_type in supported_handles:
     header_text += f"struct {LayerName}{handle_type}HandleInfo\n"
     header_text += "{\n"
-    # XXX header_text += "        std::set<HandleTypePair> childHandles;\n"
+    # XXX header_text += "    std::set<HandleTypePair> childHandles;\n"
     parent_type = str(handles[handle_type][1] or "")
     if parent_type:
-        header_text += f"        {parent_type} parentHandle;\n"
-        header_text += "        XrInstance parentInstance;\n"
-    header_text += "        std::shared_ptr<XrGeneratedDispatchTable> downchain;\n"
-    header_text += "        bool invalid = false;\n"
+        header_text += f"    {parent_type} parentHandle;\n"
+        header_text += "    XrInstance parentInstance;\n"
+        if handle_type in handles_needing_substitution:
+            header_text += f"    {handle_type} actualHandle;\n"
+            header_text += "    bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)\n"
+    header_text += "    std::shared_ptr<XrGeneratedDispatchTable> downchain;\n"
+    header_text += "    bool valid = true;\n"
     header_text += add_to_handle_struct.get(handle_type, {}).get("members", "")
+
+    header_text += f"""
+    void Destroy() /* For OpenXR's intents, not a dtor */
+    {{
+        if(valid) {{
+"""
+
+    if handle_type in handles_needing_substitution:
+        header_text += f"""
+"""
+
+        header_text += f"""
+"""
+
+    header_text += f"""
+            // XXX also Destroy all child handles
+            {in_destroy.get(handle_type, "")}
+            downchain.reset();
+"""
     if parent_type:
-        header_text += f"        {LayerName}{handle_type}HandleInfo({parent_type} parent, XrInstance parentInstance_, std::shared_ptr<XrGeneratedDispatchTable> downchain_) : \n"
-        header_text += "            parentHandle(parent),\n"
-        header_text += "            parentInstance(parentInstance_),\n"
-        header_text += "            downchain(downchain_)\n"
-        header_text += "        {}\n"
-        header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
-        header_text += "        {\n"
-        header_text += in_destructor.get(handle_type, "")
-        header_text += "        }\n"
+        header_text += "            parentHandle = XR_NULL_HANDLE;\n";
+        header_text += "            parentInstance = XR_NULL_HANDLE;\n";
+
+    if handle_type in handles_needing_substitution:
+        header_text += "            actualHandle = XR_NULL_HANDLE;\n"
+
+    header_text += f"""
+            valid = false;
+        }} else {{
+            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
+                OverlaysLayerNoObjectInfo, "WARNING: unexpected Destroy() on already Destroyed {handle_type}HandleInfo.\\n");
+        }}
+    }}
+    typedef std::shared_ptr<{LayerName}{handle_type}HandleInfo> Ptr;
+"""
+
+
+    if parent_type:
+        header_text += f"""
+    {LayerName}{handle_type}HandleInfo({parent_type} parent, XrInstance parentInstance_, std::shared_ptr<XrGeneratedDispatchTable> downchain_) :
+        parentHandle(parent),
+        parentInstance(parentInstance_),
+        downchain(downchain_)
+    {{}}
+"""
+
     else:
+
         # we know this is XrInstance...
-        header_text += f"        {LayerName}{handle_type}HandleInfo(std::shared_ptr<XrGeneratedDispatchTable> downchain_): \n"
-        header_text += "            downchain(downchain_)\n"
-        header_text += "        {}\n"
-        header_text += f"        ~{LayerName}{handle_type}HandleInfo()\n"
-        header_text += "        {\n"
-        header_text += in_destructor.get(handle_type, "")
-        header_text += "        }\n"
-    header_text += f"        void Destroy() /* For OpenXR's intents, not a dtor */\n"
-    header_text += "        {\n"
-    header_text += "            invalid = true;\n"
-    # XXX header_text += "            ;\n" delete all child handles, and how will we do that?
-    header_text += "        }\n"
-    header_text += f"        typedef std::shared_ptr<{LayerName}{handle_type}HandleInfo> Ptr;\n"
-    header_text += "};\n"
+        header_text += f"""
+    {LayerName}{handle_type}HandleInfo(std::shared_ptr<XrGeneratedDispatchTable> downchain_):
+        downchain(downchain_)
+    {{}}
+"""
+
+    header_text += f"""
+    ~{LayerName}{handle_type}HandleInfo()
+    {{
+        if(valid) {{
+            {in_destructor.get(handle_type, "")}
+            Destroy();
+"""
+    if handle_type in handles_needing_substitution:
+        header_text += f"""
+            if(!isProxied) {{
+                downchain->Destroy{handle_type[2:]}(actualHandle);
+            }}
+"""
+    header_text += f"""
+        }}
+    }}
+}};
+"""
+
 
     source_text += f"std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;\n"
     header_text += f"extern std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;\n"
@@ -1599,7 +1665,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     # Attempt generation of special cases
 
     # Special case handle Create functions
-    if command_name.find("Create") >= 0:
+    if command_name[2:8] == "Create":
         created_type = command["parameters"][-1].find("type").text
         created_name = command["parameters"][-1].find("name").text
 
@@ -1638,6 +1704,9 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
         # XXX source_text += f"        {handle_name}Info.childHandles.insert(*{created_name});\n"
 
         source_text += f"    }}\n"
+
+    if command_name[2:9] == "Destroy":
+        source_text += f"    {handle_name}Info->Destroy();\n"
 
     if command_name in after_downchain:
         source_text += "    if(XR_SUCCEEDED(result)) {\n"
