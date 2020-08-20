@@ -961,7 +961,6 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcess
         if(result == RPCChannels::WaitResult::OVERLAY_PROCESS_TERMINATED_UNEXPECTEDLY) {
 
             OutputDebugStringA("**OVERLAY** other process terminated\n");
-            DebugBreak();
 #if 0 // XXX this should happen through graceful dtor on connection
             if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
                 ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
@@ -1304,22 +1303,20 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
         if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX) {
             cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXTX*>(p);
         }
-        if(false) {
-            // XXX save off requested API in Overlay, match against Main API
-            // XXX save off requested API in Main, match against Overlay API
-            if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XCB_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WAYLAND_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR) ||
-                (p->type == XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR)) {
-                return XR_ERROR_GRAPHICS_DEVICE_INVALID;
-            }
-            if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
-                d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
-            }
+        // XXX save off requested API in Overlay, match against Main API
+        // XXX save off requested API in Main, match against Overlay API
+        if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XCB_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WAYLAND_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR) ||
+            (p->type == XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR)) {
+            return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+        }
+        if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+            d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
         }
         p = reinterpret_cast<const XrBaseInStructure*>(p->next);
     }
@@ -1336,7 +1333,7 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
 XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
     XrResult result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfo, swapchain);
 
@@ -1380,7 +1377,7 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
 XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
     uint32_t swapchainCount;
 
@@ -1402,6 +1399,7 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
 
     swapchainInfo->actualHandle = actualHandle;
+    swapchainInfo->isProxied = true;
 
     LocalSwapchain::Ptr localSwapchain = std::make_shared<LocalSwapchain>(*swapchain, swapchainCount, createInfo);
     swapchainInfo->localSwapchain = localSwapchain;
@@ -1467,7 +1465,7 @@ XrResult OverlaysLayerCreateSwapchain(XrSession session, const XrSwapchainCreate
 XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
     connection->closed = true;
     OutputDebugStringA("OVERLAY - DestroySession\n");
@@ -1478,9 +1476,9 @@ XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr conne
 XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession session)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
-    XrResult result = sessionInfo->downchain->DestroySession(sessionInfo->actualHandle);
+    XrResult result = RPCCallDestroySession(instance, sessionInfo->actualHandle);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1492,7 +1490,7 @@ XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession sessi
 XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
     OutputDebugStringA("OVERLAY - EnumerateSwapchainFormats\\n");
     // Already have our tracked information on this XrSession from generated code in sessionInfo
@@ -1504,9 +1502,9 @@ XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay
 XrResult OverlaysLayerEnumerateSwapchainFormatsOverlay(XrInstance instance, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
-    XrResult result = sessionInfo->downchain->DestroySession(sessionInfo->actualHandle);
+    XrResult result = RPCCallEnumerateSwapchainFormats(instance, sessionInfo->actualHandle, formatCapacityInput, formatCountOutput, formats);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
