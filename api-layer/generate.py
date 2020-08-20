@@ -546,7 +546,6 @@ after_downchain["xrCreateSwapchain"] = """
     }
 """
 
-
 # XrDebugUtilsMessenger
 
 add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
@@ -1095,8 +1094,8 @@ for rpc in rpcs:
 
 
     ipc_serialize_function = """
-template <>
-RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const RPCXr%(command_name)s* src)
+/* template <> */
+RPCXr%(command_name)s* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const RPCXr%(command_name)s* src)
 {
     auto dst = new(ipcbuf) RPCXr%(command_name)s;
 """ % rpc
@@ -1112,9 +1111,9 @@ RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const 
             ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
         elif arg["type"] == "xr_struct_pointer":
             if arg["is_const"]:
-                ipc_serialize_function += "    dst->%(name)s = reinterpret_cast<%(struct_type)s*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s), COPY_EVERYTHING));\n" % arg
+                ipc_serialize_function += "    dst->%(name)s = reinterpret_cast<%(struct_type)s*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s), COPY_EVERYTHING));\n" % arg
             else:
-                ipc_serialize_function += "    dst->%(name)s = reinterpret_cast<%(struct_type)s*>(IPCSerialize(ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s), COPY_ONLY_TYPE_NEXT));\n" % arg
+                ipc_serialize_function += "    dst->%(name)s = reinterpret_cast<%(struct_type)s*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s), COPY_ONLY_TYPE_NEXT));\n" % arg
             ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
         else:
             ipc_serialize_function += "    XXX unknown type %(type)s\n" % arg
@@ -1177,7 +1176,7 @@ RPCXr%(command_name)s* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header, const 
     IPCHeader* header = new(ipcbuf) IPCHeader{{ {rpc["command_enum"]} }};
 
     RPCXr{command_name} args {{ {rpc_arguments_list} }};
-    RPCXr{command_name}* argsSerialized = IPCSerialize(ipcbuf, header, &args);
+    RPCXr{command_name}* argsSerialized = IPCSerialize(instance, ipcbuf, header, &args);
 
     // XXX substitute handles in input XR structs 
 
@@ -1706,7 +1705,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
         source_text += f"    }}\n"
 
     if command_name[2:9] == "Destroy":
-        source_text += f"    {handle_name}Info->Destroy();\n"
+        source_text += f"    g{LayerName}{handle_type}ToHandleInfo.erase({handle_name});\n"
 
     if command_name in after_downchain:
         source_text += "    if(XR_SUCCEEDED(result)) {\n"

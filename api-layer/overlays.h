@@ -584,6 +584,8 @@ void IPCCopyOut(T* dst, const T* src, size_t count)
     }
 }
 
+XrBaseInStructure* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const XrBaseInStructure* srcbase, CopyType copyType);
+
 // Serialization of XR structs ----------------------------------------------
 
 struct OverlaysLayerRPCCreateSession

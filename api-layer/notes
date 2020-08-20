@@ -1,3 +1,7 @@
+8/20
+swapchain was already actualized in OverlaysLayerEnumerateSwapchainImages and is going to be again in OverlaysLayerEnumerateSwapchainImagesOverlay?
+but worse, SwapchainHandleInfo::isProxied wasn't set, so OverlaysLayerEnumerateSwapchainImages calls downchain in the overlay app
+
 8/19
 Where you're at:
     debugging an exception in ~OverlaysLayerXrSpaceHandleInfo,
