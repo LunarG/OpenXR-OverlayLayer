@@ -1,6 +1,6 @@
 8/19
 Where you're at:
-    debugging an exception in OverlaysLayerXrSpaceHandleInfo,
+    debugging an exception in ~OverlaysLayerXrSpaceHandleInfo,
         it's probably being destroyed after everything else was destroyed
         Why?
 
