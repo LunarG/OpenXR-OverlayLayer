@@ -1,12 +1,8 @@
 8/20
-swapchain was already actualized in OverlaysLayerEnumerateSwapchainImages and is going to be again in OverlaysLayerEnumerateSwapchainImagesOverlay?
-but worse, SwapchainHandleInfo::isProxied wasn't set, so OverlaysLayerEnumerateSwapchainImages calls downchain in the overlay app
-
-8/19
-Where you're at:
-    debugging an exception in ~OverlaysLayerXrSpaceHandleInfo,
-        it's probably being destroyed after everything else was destroyed
-        Why?
+You're about to add SubstituteHandles to automatic generation
+Then you're going to spend a bunch of hours cleaning up the generator
+Add EnumerateReferenceSpaces to overlay_sample and implement it
+Implement CreateReferenceSpace
 
 8/18
 ConnectionToMain should be handed to all Overlay functions

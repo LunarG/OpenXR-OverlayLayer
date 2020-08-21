@@ -195,8 +195,15 @@ for reg_type in reg_types:
                 member["size"] = name_tail[1:-1]
 
             elif not type_tail and not name_tail:
-                member["type"] = "POD"
-                member["pod_type"] = type_text
+
+                is_an_xr_type = (type_text[0:2] == 'Xr')
+
+                if is_an_xr_type and type_text in structs:
+                    member["type"] = "xr_simple_struct"
+                    member["struct_type"] = type_text
+                else:
+                    member["type"] = "POD"
+                    member["pod_type"] = type_text
 
             elif type_tail == "*" and not name_tail : # and reg_member_text == "const struct" or reg_member_text == "struct":
                 size_and_len = reg_member.attrib.get("len", "").strip()
@@ -227,29 +234,6 @@ for reg_type in reg_types:
                 dump(sys.stdout, 4, 100, reg_member)
                 sys.exit(-1)
 
-            foo = """
-            member : {}
-                type : {}
-                    text = "XrStructureType"
-                name : {}
-                    text = "type"
-            member : {}
-                text = "const"
-                type : {}
-                    text = "void"
-                    tail = "*"
-                name : {}
-                    text = "next"
-            member : {}
-                type : {}
-                    text = "char"
-                name : {}
-                    text = "layerName"
-                    tail = "["
-                enum : {}
-                    text = "XR_MAX_API_LAYER_NAME_SIZE"
-                    tail = "]"
-"""
             members.append(member)
         structs[struct_name] = (struct_name, typeenum, extends, members)
 
@@ -267,8 +251,6 @@ supported_structs = [
     "XrOffset2Di",
     "XrExtent2Di",
     "XrRect2Di",
-    "XrBaseInStructure",
-    "XrBaseOutStructure",
     "XrApiLayerProperties",
     "XrExtensionProperties",
     "XrApplicationInfo",
@@ -282,7 +264,7 @@ supported_structs = [
     "XrSessionCreateInfo",
     "XrSessionBeginInfo",
     "XrSwapchainCreateInfo",
-    "XrSwapchainImageBaseHeader",
+    # "XrSwapchainImageBaseHeader",
     "XrSwapchainImageD3D11KHR",
     "XrSwapchainImageAcquireInfo",
     "XrSwapchainImageWaitInfo",
@@ -297,7 +279,7 @@ supported_structs = [
     "XrViewState",
     "XrViewConfigurationView",
     "XrSwapchainSubImage",
-    "XrCompositionLayerBaseHeader",
+    # "XrCompositionLayerBaseHeader",
     "XrCompositionLayerProjectionView",
     "XrCompositionLayerProjection",
     "XrCompositionLayerQuad",
@@ -305,9 +287,9 @@ supported_structs = [
     "XrFrameEndInfo",
     "XrFrameWaitInfo",
     "XrFrameState",
-    "XrHapticBaseHeader",
+    # "XrHapticBaseHeader",
     "XrHapticVibration",
-    "XrEventDataBaseHeader",
+    # "XrEventDataBaseHeader",
     "XrEventDataBuffer",
     "XrEventDataEventsLost",
     "XrEventDataInstanceLossPending",
@@ -463,6 +445,8 @@ if True:
                 s += "%s %s[%s]" % (member["base_type"], member["name"], member["size"])
             elif member["type"] == "POD":
                 s += "%s %s" % (member["pod_type"], member["name"])
+            elif member["type"] == "xr_simple_struct":
+                s += "%s %s" % (member["struct_type"], member["name"])
             else:
                 s += "XXX \"%s\" %s" % (member["type"], member["name"])
 
@@ -726,19 +710,7 @@ after_downchain["xrPollEvent"] = """
     // been destroyed prior, so implies runtimes never give us back
     // an event that contains a destroyed session.  So we will be able to find the local handle.
     // Let validation catch bad behavior.
-    if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
-        auto p = reinterpret_cast<XrEventDataSessionStateChanged*>(eventData);
-        std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
-        p->session = gActualXrSessionToLocalHandle[p->session];
-    } else if(eventData->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
-        auto p = reinterpret_cast<XrEventDataReferenceSpaceChangePending*>(eventData);
-        std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
-        p->session = gActualXrSessionToLocalHandle[p->session];
-    } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
-        auto p = reinterpret_cast<XrEventDataInteractionProfileChanged*>(eventData);
-        std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
-        p->session = gActualXrSessionToLocalHandle[p->session];
-    }
+    SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
 """
 
 # store preambles of generated header and source -----------------------------
@@ -947,6 +919,8 @@ def rpc_arg_to_cdecl(arg) :
 
     if arg["type"] == "POD": 
         return f"{const_part}{arg['pod_type']} {arg['name']}"
+    elif arg["type"] == "xr_simple_struct": 
+        return f"{const_part}{arg['struct_type']} {arg['name']}"
     elif arg["type"] == "pointer_to_pod":
         return f"{const_part}{arg['pod_type']} *{arg['name']}"
     elif arg["type"] == "fixed_array":
@@ -1332,13 +1306,213 @@ for stub in stub_em:
     source_text += "{ return XR_ERROR_VALIDATION_FAILURE; }\n"
 
 
-# deep copy and free functions -----------------------------------------------
+# deep copy, free, substitute and restore handles functions ------------------
 
 xr_typed_structs = [name for name in supported_structs if structs[name][1]]
+xr_simple_structs = [name for name in supported_structs if not structs[name][1]]
+
+# accessor_prefix could be e.g. "p->"
+# instance_string could be e.g. "instance" or e.g. "XR_NULL_HANDLE"
+def get_code_to_restore_handle(member, instance_string, accessor_prefix):
+    if member["type"] == "char_array":
+        return ""
+    elif member["type"] == "c_string":
+        return ""
+    elif member["type"] == "string_list":
+        return ""
+    elif member["type"] == "list_of_struct_pointers":
+
+        return f"""
+            // array of pointers to XR structs for {name}
+            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+                if(!RestoreActualHandles({instance_string}, (XrBaseInStructure *){accessor_prefix}{member["name"]}[i])) {{
+                    return false;
+                }}
+            }}
+"""
+    elif member["type"] == "pointer_to_struct":
+        return ""
+    elif member["type"] == "pointer_to_atom_or_handle":
+        if member["struct_type"] in handles_needing_substitution:
+            return f"""
+            // array of {member["struct_type"]} for {name}  fooblargle
+            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayer{member["struct_type"]}ToHandleInfoMutex);
+                auto it = gOverlaysLayer{member["struct_type"]}ToHandleInfo.find({accessor_prefix}{member["name"]});
+                if(it == gOverlaysLayer{member["struct_type"]}ToHandleInfo.end()) {{
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "unknown",
+                        OverlaysLayerNoObjectInfo, "FATAL: {member["struct_type"]} handle couldn't be found in tracking map.\\n");
+                    return false;
+                }}
+
+                OverlaysLayer{member["struct_type"]}HandleInfo::Ptr info = it->second;
+                {accessor_prefix}{member["name"]} = info->actualHandle;
+            }}
+"""
+        else:
+            return ""
+
+    elif member["type"] == "pointer_to_struct_array":
+        return ""
+    elif member["type"] == "pointer_to_opaque":
+        return ""
+    elif member["type"] == "void_pointer":
+        return ""
+    elif member["type"] == "fixed_array":
+        return ""
+    elif member["type"] == "POD":
+        if member["pod_type"] in handles_needing_substitution:
+            return f"""
+                {{
+                    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayer{member["pod_type"]}ToHandleInfoMutex);
+                    auto it = gOverlaysLayer{member["pod_type"]}ToHandleInfo.find({accessor_prefix}{member["name"]});
+                    if(it == gOverlaysLayer{member["pod_type"]}ToHandleInfo.end()) {{
+                        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "unknown",
+                            OverlaysLayerNoObjectInfo, "FATAL: {member["pod_type"]} handle couldn't be found in tracking map.\\n");
+                        return false;
+                    }}
+
+                    OverlaysLayer{member["pod_type"]}HandleInfo::Ptr info = it->second;
+                    {accessor_prefix}{member["name"]} = info->actualHandle;
+                }}
+"""
+        else:
+            return ""
+    elif member["type"] == "xr_simple_struct":
+        return f"""
+            // Expect this to find function with signature by type
+            if(!RestoreActualHandles({instance_string}, &{accessor_prefix}{member["name"]})) {{
+                return false;
+            }}
+"""
+    elif member["type"] == "pointer_to_xr_struct_array":
+        return f"""
+            // pointer to XR structs for {name}
+            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+                if(!RestoreActualHandles({instance_string}, (XrBaseInStructure *)&{accessor_prefix}{member["name"]}[i])) {{
+                    return false;
+                }}
+            }}
+"""
+
+    return "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
+
+
+# accessor_prefix could be e.g. "p->"
+# instance_string could be e.g. "instance" or e.g. "XR_NULL_HANDLE"
+def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
+    if member["type"] == "char_array":
+        return ""
+    elif member["type"] == "c_string":
+        return ""
+    elif member["type"] == "string_list":
+        return ""
+    elif member["type"] == "list_of_struct_pointers":
+
+        return f"""
+            // array of pointers to XR structs for {name}
+            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+                if(!SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *){accessor_prefix}{member["name"]}[i])) {{
+                    return false;
+                }}
+            }}
+"""
+    elif member["type"] == "pointer_to_struct":
+        return ""
+    elif member["type"] == "pointer_to_atom_or_handle":
+        if member["struct_type"] in handles_needing_substitution:
+            return f"""
+            // array of {member["struct_type"]} for {name}
+            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+                std::unique_lock<std::recursive_mutex> lock(gActual{member["struct_type"]}ToLocalHandleMutex);
+                {accessor_prefix}{member["name"]} = gActual{member["struct_type"]}ToLocalHandle[{accessor_prefix}{member["name"]}];
+            }}
+"""
+        else:
+            return ""
+
+    elif member["type"] == "pointer_to_struct_array":
+        return ""
+    elif member["type"] == "pointer_to_opaque":
+        return ""
+    elif member["type"] == "void_pointer":
+        return ""
+    elif member["type"] == "fixed_array":
+        return ""
+    elif member["type"] == "POD":
+        if member["pod_type"] in handles_needing_substitution:
+            return f"""
+                {{
+                    std::unique_lock<std::recursive_mutex> lock(gActual{member["pod_type"]}ToLocalHandleMutex);
+                    {accessor_prefix}{member["name"]} = gActual{member["pod_type"]}ToLocalHandle[{accessor_prefix}{member["name"]}];
+                }}
+"""
+        else:
+            return ""
+    elif member["type"] == "xr_simple_struct":
+        return f"""
+            // Expect this to find function with signature by type
+            if(!SubstituteLocalHandles({instance_string}, &{accessor_prefix}{member["name"]})) {{
+                return false;
+            }}
+"""
+    elif member["type"] == "pointer_to_xr_struct_array":
+        return f"""
+            // pointer to XR structs for {name}
+            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+                if(!SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *)&{accessor_prefix}{member["name"]}[i])) {{
+                    return false;
+                }}
+            }}
+"""
+
+    return "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
+
+
 
 copy_function_case_bodies = ""
 
 free_function_case_bodies = ""
+
+restore_handles_case_bodies = ""
+
+substitute_handles_case_bodies = ""
+
+
+for name in xr_simple_structs:
+    struct = structs[name]
+
+    restore_handles_function_prototype = f"bool RestoreActualHandles(XrInstance instance, {name} *xrstruct)"
+    restore_handles_function_header = f"{restore_handles_function_prototype};\n"
+    restore_handles_function_source = f"""
+{restore_handles_function_prototype}
+{{
+"""
+    for member in struct[3]:
+        restore_handles_function_source += get_code_to_restore_handle(member, "instance", "xrstruct->")
+    restore_handles_function_source += f"""
+    return true;
+}}
+"""
+
+    substitute_handles_function_prototype = f"bool SubstituteLocalHandles(XrInstance instance, {name} *xrstruct)"
+    substitute_handles_function_header = f"{substitute_handles_function_prototype};\n"
+    substitute_handles_function_source = f"""
+{substitute_handles_function_prototype}
+{{
+"""
+    for member in struct[3]:
+        substitute_handles_function_source += get_code_to_substitute_handle(member, "instance", "xrstruct->")
+    substitute_handles_function_source += f"""
+    return true;
+}}
+"""
+
+    source_text += restore_handles_function_source
+    header_text += restore_handles_function_header
+    source_text += substitute_handles_function_source
+    header_text += substitute_handles_function_header
+
 
 for name in xr_typed_structs:
     struct = structs[name]
@@ -1353,7 +1527,21 @@ void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc
 {
 """ % {"name" : struct[0]}
 
+    restore_handles_case_bodies += f"""
+            case {struct[1]}: {{
+                auto p = reinterpret_cast<{name}*>(xrstruct);
+"""
+
+    substitute_handles_case_bodies += f"""
+            case {struct[1]}: {{
+                auto p = reinterpret_cast<{name}*>(xrstruct);
+"""
+
     for member in struct[3]:
+
+        restore_handles_case_bodies += get_code_to_restore_handle(member, "instance", "p->");
+
+        substitute_handles_case_bodies += get_code_to_substitute_handle(member, "instance", "p->");
 
         if member["type"] == "char_array":
 
@@ -1451,6 +1639,8 @@ void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc
             free_function += """
     freefunc(p->%(name)s);
 """ % member
+
+
         elif member["type"] == "pointer_to_struct_array":
             copy_function += "    %(struct_type)s *%(name)s = reinterpret_cast<%(struct_type)s*>(alloc(sizeof(%(struct_type)s) * src->%(size)s));\n" % member
             copy_function += "    memcpy(%(name)s, src->%(name)s, sizeof(%(struct_type)s) * src->%(size)s);\n" % member
@@ -1468,6 +1658,8 @@ void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc
             copy_function += "    memcpy(dst->%(name)s, src->%(name)s, sizeof(%(base_type)s) * %(size)s);\n" % member
         elif member["type"] == "POD":
             copy_function += "    dst->%(name)s = src->%(name)s;\n" % member
+        elif member["type"] == "xr_simple_struct":
+            copy_function += "    dst->%(name)s = src->%(name)s;\n" % member
         else:
             copy_function += "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
             free_function += "    // XXX XXX \"%s\" %s\n" % (member["type"], member["name"])
@@ -1483,6 +1675,16 @@ void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc
 
     free_function += "    FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(p->next), freefunc);\n"
     free_function += "}\n\n"
+
+    restore_handles_case_bodies += f"""
+                break;
+            }}
+"""
+
+    substitute_handles_case_bodies += f"""
+                break;
+            }}
+"""
 
     source_text += copy_function
     source_text += free_function
@@ -1609,6 +1811,64 @@ void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct)
 }
 """
 
+source_text += """
+bool RestoreActualHandles(XrInstance instance, XrBaseInStructure *xrstruct)
+{
+    while(xrstruct) {
+        switch(xrstruct->type)
+        {
+"""
+source_text += restore_handles_case_bodies
+source_text += """
+            default: {
+                // I don't know what this is, skip it and try the next one
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                OverlaysLayerXrInstanceHandleInfo::Ptr info = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+                mlock.unlock();
+                char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                structTypeName[0] = '\\0';
+                if(info->downchain->StructureTypeToString(instance, xrstruct->type, structTypeName) != XR_SUCCESS) {
+                    sprintf(structTypeName, "<type %08X>", xrstruct->type);
+                }
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                    nullptr, OverlaysLayerNoObjectInfo, fmt("RestoreActualHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.\\n", xrstruct, structTypeName).c_str());
+                break;
+            }
+        }
+        xrstruct = (XrBaseInStructure*)xrstruct->next; /* We allocated this copy ourselves, so just cast ugly */
+    }
+    return true;
+}
+
+bool SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct)
+{
+    while(xrstruct) {
+        switch(xrstruct->type)
+        {
+"""
+source_text += substitute_handles_case_bodies
+source_text += """
+            default: {
+                // I don't know what this is, skip it and try the next one
+                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+                OverlaysLayerXrInstanceHandleInfo::Ptr info = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+                mlock.unlock();
+                char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                structTypeName[0] = '\\0';
+                if(info->downchain->StructureTypeToString(instance, xrstruct->type, structTypeName) != XR_SUCCESS) {
+                    sprintf(structTypeName, "<type %08X>", xrstruct->type);
+                }
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
+                    nullptr, OverlaysLayerNoObjectInfo, fmt("SubstituteHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.\\n", xrstruct, structTypeName).c_str());
+                break;
+            }
+        }
+        xrstruct = (XrBaseOutStructure*)xrstruct->next; /* We allocated this copy ourselves, so just cast ugly */
+    }
+    return true;
+}
+"""
+
 
 # make functions returned by xrGetInstanceProcAddr ---------------------------
 
@@ -1712,7 +1972,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
         source_text += f"    }}\n"
 
     if command_is_destroy:
-        source_text += f"    g{LayerName}{handle_type}ToHandleInfo.erase({handle_name});\n"
+        source_text += f"    {handle_name}Info->Destroy();\n"
 
     if command_name in after_downchain:
         source_text += "    if(XR_SUCCEEDED(result)) {\n"
