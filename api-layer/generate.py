@@ -340,7 +340,7 @@ supported_structs = [
 
 manually_implemented_commands = [
     "xrCreateSession",
-    "xrCreateSwapchain",
+    # "xrCreateSwapchain",
 ]
 
 supported_commands = [
@@ -535,7 +535,9 @@ in_destroy["XrSession"] = """
 
 add_to_handle_struct["XrSwapchain"] = {
     "members" : """
-    LocalSwapchain::Ptr localSwapchain;
+    OverlaySwapchain::Ptr overlaySwapchain;             // Swapchain data on Overlay side
+    SwapchainCachedData::Ptr mainCachedSwapchainData;   // Swapchain data on Main side
+
 """,
 }
 
@@ -1286,7 +1288,6 @@ stub_em = (
     "LocateSpace",
     "DestroySpace",
     "DestroySwapchain",
-    "EnumerateSwapchainImages",
     "AcquireSwapchainImage",
     "WaitSwapchainImage",
     "ReleaseSwapchainImage",
@@ -1623,6 +1624,17 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     handle_type = command["parameters"][0].find("type").text
     handle_name = command["parameters"][0].find("name").text
 
+    command_is_create = (command_name[2:8] == "Create")
+    if command_is_create:
+        created_type = command["parameters"][-1].find("type").text
+        created_name = command["parameters"][-1].find("name").text
+        if created_type in handles:
+            created_types_parent_type = handles.get(created_type)[1]
+        else:
+            created_types_parent_type = ""
+
+    command_is_destroy = (command_name[2:9] == "Destroy")
+
     # handles are guaranteed not to be destroyed while in another command according to the spec...
     source_text += f"    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
     source_text += f"    auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});\n"
@@ -1642,42 +1654,21 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     if handle_type in handles_needing_substitution:
 
-        source_text += f"    // substitute the real handle in\n";
-        source_text += f"    {handle_type} localHandleStore = {handle_name};\n"
-        source_text += f"    {handle_name} = {handle_name}Info->actualHandle;\n\n"
-        source_text += f"    bool isProxied = {handle_name}Info->isProxied;\n"
-
+        source_text += f"   bool isProxied = {handle_name}Info->isProxied;\n"
         source_text += "    XrResult result;\n"
         source_text += "    if(isProxied) {\n"
         source_text += f"        result = OverlaysLayer{dispatch_command}Overlay({handle_name}Info->parentInstance, {parameter_names});\n"
         source_text += "    } else {\n"
+        source_text += f"        // substitute the real handle in\n";
+        source_text += f"        {handle_type} localHandleStore = {handle_name};\n"
+        source_text += f"        {handle_name} = {handle_name}Info->actualHandle;\n\n"
+        source_text += f"\n";
         source_text += f"        result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
-        source_text += "    }\n"
-
-        source_text += f"    // put the local handle back\n";
-        source_text += f"    {handle_name} = localHandleStore;\n"
-
-    else:
-        source_text += f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
-
-
-    # Attempt generation of special cases
-
-    # Special case handle Create functions
-    if command_name[2:8] == "Create":
-        created_type = command["parameters"][-1].find("type").text
-        created_name = command["parameters"][-1].find("name").text
-
-        if created_type in handles:
-            created_types_parent_type = handles.get(created_type)[1]
-        else:
-            created_types_parent_type = ""
-
-        # just assume we hand-coded Instance creation so these are all child handle types
-
-        source_text += f"    {{\n"
-
-        if created_type in handles_needing_substitution:
+        source_text += f"\n";
+        source_text += f"        // put the local handle back\n";
+        source_text += f"        {handle_name} = localHandleStore;\n"
+        source_text += f"\n";
+        if command_is_create:
             source_text += f"        {created_type} actualHandle = *{created_name};\n"
             source_text += f"        {created_type} localHandle = ({created_type})GetNextLocalHandle();\n"
             source_text += f"        *{created_name} = localHandle;\n"
@@ -1688,23 +1679,39 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
             source_text += f"        }}\n"
             source_text += f"\n"
 
-        source_text += f"        std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);\n"
+            source_text += f"        std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);\n"
 
-        if created_types_parent_type == "XrInstance":
-            source_text += f"        {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, instance, {handle_name}Info->downchain);\n"
-            source_text += f"        g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
-        else:
-            source_text += f"        {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, {handle_name}Info->parentInstance, {handle_name}Info->downchain);\n"
-            source_text += f"        g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
+            if created_types_parent_type == "XrInstance":
+                source_text += f"        {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, instance, {handle_name}Info->downchain);\n"
+                source_text += f"        g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
+            else:
+                source_text += f"        {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, {handle_name}Info->parentInstance, {handle_name}Info->downchain);\n"
+                source_text += f"        g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
 
-        if created_type in handles_needing_substitution:
-            source_text += f"        {created_name}Info->actualHandle = actualHandle;\n"
+            if created_type in handles_needing_substitution:
+                source_text += f"        {created_name}Info->actualHandle = actualHandle;\n"
+
+        source_text += "    }\n"
+
+
+    else:
+        source_text += f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
+
+
+    # Attempt generation of special cases
+
+    # Special case handle Create functions
+    if command_is_create:
+
+        # just assume we hand-coded Instance creation so these are all child handle types
+
+        source_text += f"    {{\n"
 
         # XXX source_text += f"        {handle_name}Info.childHandles.insert(*{created_name});\n"
 
         source_text += f"    }}\n"
 
-    if command_name[2:9] == "Destroy":
+    if command_is_destroy:
         source_text += f"    g{LayerName}{handle_type}ToHandleInfo.erase({handle_name});\n"
 
     if command_name in after_downchain:
