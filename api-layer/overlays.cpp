@@ -19,7 +19,11 @@
 // Author: Mark Young <marky@lunarg.com>
 // Author: Dave Houlton <daveh@lunarg.com>
 // Author: Brad Grantham <brad@lunarg.com>
-//
+
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif  // !NOMINMAX
 
 #include "loader_interfaces.h"
 #include "platform_utils.hpp"
@@ -205,7 +209,7 @@ void LogWindowsError(HRESULT result, const char *xrfunc, const char* what, const
     LocalFree(messageBuf);
 }
 
-bool LocalSwapchain::CreateTextures(XrInstance instance, ID3D11Device *d3d11, DWORD mainProcessId)
+bool OverlaySwapchain::CreateTextures(XrInstance instance, ID3D11Device *d3d11, DWORD mainProcessId)
 {
     for(int i = 0; i < swapchainTextures.size(); i++) {
         D3D11_TEXTURE2D_DESC desc;
@@ -1367,9 +1371,15 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
     for(uint32_t i = 0; i < count; i++) {
         swapchainTextures[i] = swapchainImages[i].texture;
     }
-    connection->ctx->swapchainMap[*swapchain] = std::make_shared<SwapchainCachedData>(*swapchain, swapchainTextures);
 
     *swapchainCount = count;
+
+    OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+    swapchainInfo->mainCachedSwapchainData = std::make_shared<SwapchainCachedData>(*swapchain, swapchainTextures);
+    { 
+        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+        gOverlaysLayerXrSwapchainToHandleInfo[*swapchain] = swapchainInfo;
+    }
 
     return result;
 }
@@ -1401,10 +1411,10 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
     swapchainInfo->actualHandle = actualHandle;
     swapchainInfo->isProxied = true;
 
-    LocalSwapchain::Ptr localSwapchain = std::make_shared<LocalSwapchain>(*swapchain, swapchainCount, createInfo);
-    swapchainInfo->localSwapchain = localSwapchain;
+    OverlaySwapchain::Ptr overlaySwapchain = std::make_shared<OverlaySwapchain>(*swapchain, swapchainCount, createInfo);
+    swapchainInfo->overlaySwapchain = overlaySwapchain;
 
-    if(!localSwapchain->CreateTextures(instance, sessionInfo->d3d11Device, gConnectionToMain->conn.otherProcessId)) {
+    if(!overlaySwapchain->CreateTextures(instance, sessionInfo->d3d11Device, gConnectionToMain->conn.otherProcessId)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
             OverlaysLayerNoObjectInfo, "FATAL: couldn't create D3D local resources for swapchain images\\n");
         // XXX This leaks the session in main process if the Session is not closed.
@@ -1419,6 +1429,8 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
     return result;
 }
 
+#if 0
+// XXX this is equivalent to the generated but generated is actually a little better - was I expecting to do hand-coding here?
 XrResult OverlaysLayerCreateSwapchain(XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
@@ -1461,6 +1473,7 @@ XrResult OverlaysLayerCreateSwapchain(XrSession session, const XrSwapchainCreate
 
     return result;
 }
+#endif
 
 XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
@@ -1468,7 +1481,6 @@ XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr conne
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
     connection->closed = true;
-    OutputDebugStringA("OVERLAY - DestroySession\n");
 
     return XR_SUCCESS;
 }
@@ -1492,7 +1504,6 @@ XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
-    OutputDebugStringA("OVERLAY - EnumerateSwapchainFormats\\n");
     // Already have our tracked information on this XrSession from generated code in sessionInfo
     XrResult result = sessionInfo->downchain->EnumerateSwapchainFormats(sessionInfo->actualHandle, formatCapacityInput, formatCountOutput, formats);
 
@@ -1512,6 +1523,52 @@ XrResult OverlaysLayerEnumerateSwapchainFormatsOverlay(XrInstance instance, XrSe
 
     return result;
 }
+
+// EnumerateSwapchainImages is handled entirely on Overlay side because we
+// already Enumerated the main SwapchainImages when we created the Swapchain.
+XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
+        XrInstance instance,
+        XrSwapchain swapchain,
+        uint32_t imageCapacityInput,
+        uint32_t* imageCountOutput,
+        XrSwapchainImageBaseHeader* images)
+{
+    std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSwapchainToHandleInfoMutex);
+    OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = gOverlaysLayerXrSwapchainToHandleInfo[swapchain];
+
+    auto& overlaySwapchain = swapchainInfo->overlaySwapchain;
+
+    if(imageCapacityInput == 0) {
+        *imageCountOutput = (uint32_t)overlaySwapchain->swapchainTextures.size();
+        return XR_SUCCESS;
+    }
+
+    if(images[0].type != XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR) {
+        std::unique_lock<std::recursive_mutex> lock2(gOverlaysLayerXrInstanceToHandleInfoMutex);
+        OverlaysLayerXrInstanceHandleInfo::Ptr info = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+        lock2.unlock();
+        char structTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+        structTypeName[0] = '\0';
+        if(info->downchain->StructureTypeToString(instance, images[0].type, structTypeName) != XR_SUCCESS) {
+            sprintf(structTypeName, "<type %08X>", images[0].type);
+        }
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEnumerateSwapchainImages",
+            OverlaysLayerNoObjectInfo, fmt("FATAL: images structure type is %s and not XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR.\n", structTypeName).c_str());
+        return XR_ERROR_VALIDATION_FAILURE;
+    }
+
+    // (If storage is provided) Give back the "local" swapchainimages (rendertarget) for rendering
+    auto sci = reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
+    uint32_t toWrite = std::min(imageCapacityInput, (uint32_t)overlaySwapchain->swapchainTextures.size());
+    for(uint32_t i = 0; i < toWrite; i++) {
+        sci[i].texture = overlaySwapchain->swapchainTextures[i];
+    }
+
+    *imageCountOutput = toWrite;
+
+    return XR_SUCCESS;
+}
+
 
 
 extern "C" {
