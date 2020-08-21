@@ -56,7 +56,6 @@ def api_layer_name_for_command(command):
 def dispatch_name_for_command(command):
     return command[2:]
 
-
 def dump(file, indent, depth, element):
     # if element.tag == "type" and element.attrib.get("name", "") == "XrEventDataBuffer":
         # file.write("%s\n" % dir(element[2]))
@@ -322,7 +321,6 @@ supported_structs = [
 
 manually_implemented_commands = [
     "xrCreateSession",
-    # "xrCreateSwapchain",
 ]
 
 supported_commands = [
@@ -747,102 +745,142 @@ header_text = """
 """
 
 
-# make types, structs, variables ---------------------------------------------
+# types, structs, variables --------------------------------------------------
 
 
 # XrPath
 
-header_text += f"struct {LayerName}PathAtomInfo\n"
-header_text += """
-{
+header_text += f"""
+struct {LayerName}PathAtomInfo
+{{
     std::string pathString;
-"""
-header_text += f"    {LayerName}PathAtomInfo(const char *pathString_) :\n"
-header_text += """
+    {LayerName}PathAtomInfo(const char *pathString_) :
         pathString(pathString_)
-    {
-    }
+    {{
+    }}
     // map of remote XrPath by XrSession
     std::unordered_map<uint64_t, uint64_t> remotePathByLocalSession;
     typedef std::shared_ptr<OverlaysLayerPathAtomInfo> Ptr;
-};
+}};
+
+extern std::unordered_map<XrPath, {LayerName}PathAtomInfo::Ptr> g{LayerName}PathToAtomInfo;
+extern std::recursive_mutex g{LayerName}PathToAtomInfoMutex;
 
 """
 
-header_text += f"extern std::unordered_map<XrPath, {LayerName}PathAtomInfo::Ptr> g{LayerName}PathToAtomInfo;\n\n"
-source_text += f"std::unordered_map<XrPath, {LayerName}PathAtomInfo::Ptr> g{LayerName}PathToAtomInfo;\n\n"
-header_text += f"extern std::recursive_mutex g{LayerName}PathToAtomInfoMutex;\n"
-source_text += f"std::recursive_mutex g{LayerName}PathToAtomInfoMutex;\n"
+source_text += f"""
+
+std::unordered_map<XrPath, {LayerName}PathAtomInfo::Ptr> g{LayerName}PathToAtomInfo;
+std::recursive_mutex g{LayerName}PathToAtomInfoMutex;
+"""
 
 
 # XrSystemId
 
-header_text += f"struct {LayerName}SystemIdAtomInfo\n"
-header_text += """
-{
+header_text += f"""
+struct {LayerName}SystemIdAtomInfo
+{{
     const XrSystemGetInfo *getInfo;
-"""
-header_text += f"    {LayerName}SystemIdAtomInfo(const XrSystemGetInfo *copyOfGetInfo)\n"
-header_text += """
-    : getInfo(copyOfGetInfo)
-    {}
+    {LayerName}SystemIdAtomInfo(const XrSystemGetInfo *copyOfGetInfo)
+        : getInfo(copyOfGetInfo)
+    {{}}
     // map of remote XrSystemId by XrSession
     typedef std::shared_ptr<OverlaysLayerSystemIdAtomInfo> Ptr;
-};
+}};
+
+extern std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo::Ptr> g{LayerName}SystemIdToAtomInfo;
+extern std::recursive_mutex g{LayerName}SystemIdToAtomInfoMutex;
 
 """
 
-header_text += f"extern std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo::Ptr> g{LayerName}SystemIdToAtomInfo;\n\n"
-source_text += f"std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo::Ptr> g{LayerName}SystemIdToAtomInfo;\n\n"
-header_text += f"extern std::recursive_mutex g{LayerName}SystemIdToAtomInfoMutex;\n"
-source_text += f"std::recursive_mutex g{LayerName}SystemIdToAtomInfoMutex;\n"
+source_text += f"""
+
+std::unordered_map<XrSystemId, {LayerName}SystemIdAtomInfo::Ptr> g{LayerName}SystemIdToAtomInfo;
+std::recursive_mutex g{LayerName}SystemIdToAtomInfoMutex;
+"""
+
+# All Handle types
 
 handles_needing_substitution = ['XrSession', 'XrSwapchain', 'XrSpace']
-
 
 only_child_handles = [h for h in supported_handles if h != "XrInstance"]
 
 for handle_type in supported_handles:
-    header_text += f"struct {LayerName}{handle_type}HandleInfo\n"
-    header_text += "{\n"
-    # XXX header_text += "    std::set<HandleTypePair> childHandles;\n"
-    parent_type = str(handles[handle_type][1] or "")
-    if parent_type:
-        header_text += f"    {parent_type} parentHandle;\n"
-        header_text += "    XrInstance parentInstance;\n"
-        if handle_type in handles_needing_substitution:
-            header_text += f"    {handle_type} actualHandle;\n"
-            header_text += "    bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)\n"
-    header_text += "    std::shared_ptr<XrGeneratedDispatchTable> downchain;\n"
-    header_text += "    bool valid = true;\n"
-    header_text += add_to_handle_struct.get(handle_type, {}).get("members", "")
 
-    header_text += f"""
+    # If this handle has a parent handle type (e.g. XrSpace has the
+    # parent XrSession), then create members, ctor, and dtor text to track
+    # and manage those handles
+    parent_type = str(handles[handle_type][1] or "")
+
+    if parent_type:
+        parent_members = f"""
+    {parent_type} parentHandle;
+    XrInstance parentInstance;
+"""
+        parent_dtor = f"""
+            parentHandle = XR_NULL_HANDLE;
+            parentInstance = XR_NULL_HANDLE;
+"""
+        parent_ctor_params = f"""{parent_type} parent, XrInstance parentInstance_, """
+        parent_ctor_member_init = f"""
+    parentHandle(parent),
+    parentInstance(parentInstance_),
+"""
+    else:
+        parent_members = ""
+        parent_dtor = ""
+        parent_ctor_params = ""
+        parent_ctor_member_init = ""
+
+    # If this API layer creates local handles to disambiguate handles
+    # from this and other processes, create members, ctor, and dtor text
+    # to track and manage the local handles and actual handles
+    if handle_type in handles_needing_substitution:
+        substitution_members = f"""
+{handle_type} actualHandle;
+    bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
+"""
+        substitution_dtor = f"""
+            actualHandle = XR_NULL_HANDLE;
+"""
+        substitution_destroy = f"""
+            if(!isProxied) {{
+                downchain->Destroy{handle_type[2:]}(actualHandle);
+            }}
+"""
+        substitution_header_text = f"""
+extern std::recursive_mutex gActual{handle_type}ToLocalHandleMutex;
+extern std::unordered_map<{handle_type}, {handle_type}> gActual{handle_type}ToLocalHandle;
+"""
+        substitution_source_text = f"""
+std::recursive_mutex gActual{handle_type}ToLocalHandleMutex;
+std::unordered_map<{handle_type}, {handle_type}> gActual{handle_type}ToLocalHandle;
+"""
+    else:
+        substitution_dtor = ""
+        substitution_destroy = ""
+        substitution_header_text = ""
+        substitution_source_text = ""
+
+    handle_header_text = f"""
+
+struct {LayerName}{handle_type}HandleInfo
+{{
+
+    std::shared_ptr<XrGeneratedDispatchTable> downchain;
+    bool valid = true;
+    {parent_members}
+    {substitution_members}
+    {add_to_handle_struct.get(handle_type, {}).get("members", "")}
+
     void Destroy() /* For OpenXR's intents, not a dtor */
     {{
         if(valid) {{
-"""
-
-    if handle_type in handles_needing_substitution:
-        header_text += f"""
-"""
-
-        header_text += f"""
-"""
-
-    header_text += f"""
             // XXX also Destroy all child handles
             {in_destroy.get(handle_type, "")}
             downchain.reset();
-"""
-    if parent_type:
-        header_text += "            parentHandle = XR_NULL_HANDLE;\n";
-        header_text += "            parentInstance = XR_NULL_HANDLE;\n";
-
-    if handle_type in handles_needing_substitution:
-        header_text += "            actualHandle = XR_NULL_HANDLE;\n"
-
-    header_text += f"""
+            {substitution_dtor}
+            {parent_dtor}
             valid = false;
         }} else {{
             OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
@@ -850,63 +888,41 @@ for handle_type in supported_handles:
         }}
     }}
     typedef std::shared_ptr<{LayerName}{handle_type}HandleInfo> Ptr;
-"""
 
-
-    if parent_type:
-        header_text += f"""
-    {LayerName}{handle_type}HandleInfo({parent_type} parent, XrInstance parentInstance_, std::shared_ptr<XrGeneratedDispatchTable> downchain_) :
-        parentHandle(parent),
-        parentInstance(parentInstance_),
+    {LayerName}{handle_type}HandleInfo({parent_ctor_params}std::shared_ptr<XrGeneratedDispatchTable> downchain_) :
+        {parent_ctor_member_init}
         downchain(downchain_)
     {{}}
-"""
 
-    else:
-
-        # we know this is XrInstance...
-        header_text += f"""
-    {LayerName}{handle_type}HandleInfo(std::shared_ptr<XrGeneratedDispatchTable> downchain_):
-        downchain(downchain_)
-    {{}}
-"""
-
-    header_text += f"""
     ~{LayerName}{handle_type}HandleInfo()
     {{
         if(valid) {{
             {in_destructor.get(handle_type, "")}
             Destroy();
-"""
-    if handle_type in handles_needing_substitution:
-        header_text += f"""
-            if(!isProxied) {{
-                downchain->Destroy{handle_type[2:]}(actualHandle);
-            }}
-"""
-    header_text += f"""
+            {substitution_destroy}
         }}
     }}
 }};
+
+extern std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;
+extern std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
+{substitution_header_text}
+"""
+
+    handle_source_text = f"""
+
+std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;
+std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
+{substitution_source_text}
 """
 
 
-    source_text += f"std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;\n"
-    header_text += f"extern std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;\n"
-
-    source_text += f"std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
-    header_text += f"extern std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;\n"
-
-    if handle_type in handles_needing_substitution:
-        header_text += f"extern std::recursive_mutex gActual{handle_type}ToLocalHandleMutex;\n"
-        source_text += f"std::recursive_mutex gActual{handle_type}ToLocalHandleMutex;\n"
-        header_text += f"extern std::unordered_map<{handle_type}, {handle_type}> gActual{handle_type}ToLocalHandle;\n"
-        source_text += f"std::unordered_map<{handle_type}, {handle_type}> gActual{handle_type}ToLocalHandle;\n"
-
-    source_text += "\n"
+    header_text += handle_header_text
+    source_text += handle_source_text
 
 
-# Serialize and CopyOut ------------------------------------------------------
+
+# Generate functions for RPC; RPCCallXyz, RPCServeXyz, Serialize, Copyout ----
 
 def rpc_command_name_to_enum(name):
     return "RPC_XR_" + "_".join([s.upper() for s in re.split("([A-Z][^A-Z]*)", name) if s])
@@ -928,7 +944,59 @@ def rpc_arg_to_cdecl(arg) :
     elif arg["type"] == "xr_struct_pointer":
         return f"{const_part}{arg['struct_type']} *{arg['name']}"
     else:
-        return f"XXX unknown type %(type)s\n" % arg
+        return f"XXX unknown type {arg['type']}\n"
+
+def rpc_arg_to_serialize(arg):
+    if arg["type"] == "POD": 
+        return f"    dst->{arg['name']} = src->{arg['name']};\n"
+    elif arg["type"] == "pointer_to_pod":
+        return f"""
+    dst->{arg["name"]} = IPCSerializeNoCopy(ipcbuf, header, src->{arg["name"]});
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
+"""
+    elif arg["type"] == "fixed_array":
+        return f"""
+    dst->{arg['name']} = IPCSerializeNoCopy(ipcbuf, header, src->{arg['name']}, src->{arg['input_size']});
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg['name']});
+"""
+    elif arg["type"] == "xr_struct_pointer":
+        copy_type = {True: "COPY_EVERYTHING", False: "COPY_ONLY_TYPE_NEXT"}[arg["is_const"]]
+        return f"""
+dst->{arg["name"]} = reinterpret_cast<{arg["struct_type"]}*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->{arg["name"]}), {copy_type}));
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
+"""
+    else:
+        return f"#error    XXX unimplemented rpc argument type {arg['type']}\n"
+
+def rpc_arg_to_copyout(arg):
+    if arg["type"] == "POD": 
+        return "" # input only
+    elif arg["type"] == "pointer_to_pod":
+        if arg["is_const"]:
+            return "" # input only
+        else:
+            return f"    IPCCopyOut(dst->{arg['name']}, src->{arg['name']});\n"
+    elif arg["type"] == "fixed_array":
+        if arg["is_const"]:
+            return "" # input only
+        else:
+            return f"""
+    if (src->{arg["name"]}) {{
+        IPCCopyOut(dst->{arg["name"]}, src->{arg["name"]}, *src->{arg["output_size"]});
+    }}
+"""
+    elif arg["type"] == "xr_struct_pointer":
+        if arg["is_const"]:
+            return "" # input only
+        else:
+            return f"""
+    IPCCopyOut(
+        reinterpret_cast<XrBaseOutStructure*>(dst->{arg["name"]}),
+        reinterpret_cast<const XrBaseOutStructure*>(src->{arg["name"]})
+        );
+"""
+    else:
+        return f"#error XXX unknown type {arg['type']}"
 
 
 CreateSessionRPC = {
@@ -1061,91 +1129,48 @@ for rpc in rpcs:
     rpc_arguments_list = ", ".join(["%s" % arg["name"] for arg in rpc["args"]])
     served_args = ", ".join(["args->%s" % arg["name"] for arg in rpc["args"]])
     served_args_cdecls = ", ".join([rpc_arg_to_cdecl(arg) for arg in rpc["args"]])
-    
-    rpc_args_struct = ""
-    rpc_args_struct += "struct RPCXr%(command_name)s {\n" % rpc
+
+    rpc_args_struct_members = ""
+    rpc_serialize_members = ""
+    rpc_copyout_members = ""
     for arg in rpc["args"]:
-        rpc_args_struct += "    " + rpc_arg_to_cdecl(arg) + ";\n"
-    rpc_args_struct += "};\n"
+        rpc_args_struct_members += "    " + rpc_arg_to_cdecl(arg) + ";\n"
+        rpc_serialize_members += rpc_arg_to_serialize(arg)
+        rpc_copyout_members += rpc_arg_to_copyout(arg)
 
-
-    ipc_serialize_function = """
-/* template <> */
-RPCXr%(command_name)s* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const RPCXr%(command_name)s* src)
-{
-    auto dst = new(ipcbuf) RPCXr%(command_name)s;
-""" % rpc
-
-    for arg in rpc["args"]:
-        if arg["type"] == "POD": 
-            ipc_serialize_function += "    dst->%(name)s = src->%(name)s;\n" % arg
-        elif arg["type"] == "pointer_to_pod":
-            ipc_serialize_function += "    dst->%(name)s = IPCSerializeNoCopy(ipcbuf, header, src->%(name)s);\n" % arg
-            ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
-        elif arg["type"] == "fixed_array":
-            ipc_serialize_function += "    dst->%(name)s = IPCSerializeNoCopy(ipcbuf, header, src->%(name)s, src->%(input_size)s);\n" % arg
-            ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
-        elif arg["type"] == "xr_struct_pointer":
-            if arg["is_const"]:
-                ipc_serialize_function += "    dst->%(name)s = reinterpret_cast<%(struct_type)s*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s), COPY_EVERYTHING));\n" % arg
-            else:
-                ipc_serialize_function += "    dst->%(name)s = reinterpret_cast<%(struct_type)s*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->%(name)s), COPY_ONLY_TYPE_NEXT));\n" % arg
-            ipc_serialize_function += "    header->addOffsetToPointer(ipcbuf.base, &dst->%(name)s);\n" % arg
-        else:
-            ipc_serialize_function += "    XXX unknown type %(type)s\n" % arg
-
-
-    ipc_serialize_function += """
-    return dst;
-}
+    rpc_args_struct = f"""
+struct RPCXr{command_name}
+{{
+{rpc_args_struct_members}
+}};
 """
 
-    ipc_copyout_function_body = ""
-    for arg in rpc["args"]:
-        if arg["type"] == "POD": 
-            pass # input only
-        elif arg["type"] == "pointer_to_pod":
-            if arg["is_const"]:
-                pass # input only
-            else:
-                ipc_copyout_function_body += "    IPCCopyOut(dst->%(name)s, src->%(name)s);\n" % arg
-        elif arg["type"] == "fixed_array":
-            if arg["is_const"]:
-                pass # input only
-            else:
-                ipc_copyout_function_body += "    if (src->%(name)s) {\n" % arg
-                ipc_copyout_function_body += "        IPCCopyOut(dst->%(name)s, src->%(name)s, *src->%(output_size)s);\n" % arg
-                ipc_copyout_function_body += "    }\n" % arg
-        elif arg["type"] == "xr_struct_pointer":
-            if arg["is_const"]:
-                pass # input only
-            else:
-                ipc_copyout_function_body += "    IPCCopyOut(\n"
-                ipc_copyout_function_body += "        reinterpret_cast<XrBaseOutStructure*>(dst->%(name)s),\n" % arg
-                ipc_copyout_function_body += "        reinterpret_cast<const XrBaseOutStructure*>(src->%(name)s)\n" % arg
-                ipc_copyout_function_body += "        );\n"
-        else:
-            ipc_copyout_function_body += "    XXX unknown type %(type)s\n" % arg
+    ipc_serialize_function = f"""
+RPCXr{command_name}* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const RPCXr{command_name}* src)
+{{
+    auto dst = new(ipcbuf) RPCXr{command_name};
 
-    if ipc_copyout_function_body:
+{rpc_serialize_members}
 
-        ipc_copyout_function = "template <>\n"
-        ipc_copyout_function += "void IPCCopyOut(RPCXr%(command_name)s* dst, const RPCXr%(command_name)s* src)\n" % rpc
-        ipc_copyout_function += "{\n"
-        ipc_copyout_function += ipc_copyout_function_body
-        ipc_copyout_function += "}\n"
+    return dst;
+}}
+"""
 
-    else:
-
+    if rpc_copyout_members:
+        ipc_copyout_function = f"""
+template <>
+void IPCCopyOut(RPCXr{command_name}* dst, const RPCXr{command_name}* src)
+{{
+{rpc_copyout_members}
+}}
+"""
+    else: 
         ipc_copyout_function = ""
 
     rpc_call_function_proto = f"{command_type} RPCCall{command_name}(XrInstance instance, {served_args_cdecls});\n"
 
-    rpc_call_function = ""
-
-    rpc_call_function += f"{command_type} RPCCall{command_name}(XrInstance instance, {served_args_cdecls})\n"
-
-    rpc_call_function += f"""
+    rpc_call_function = f"""
+{command_type} RPCCall{command_name}(XrInstance instance, {served_args_cdecls})
 {{
     // Create a header for RPC
     IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
@@ -1179,27 +1204,24 @@ RPCXr%(command_name)s* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCH
 """
 
     if ipc_copyout_function:
-        rpc_call_function += """
+        rpc_call_function += f"""
     // Copy anything that were "output" parameters into the command arguments
     IPCCopyOut(&args, argsSerialized);
-""" % rpc
+"""
 
     if "command_post" in rpc:
-        rpc_call_function += """
-    if(XR_SUCCEEDED(header->result)) {
-        %(command_post)s
-    }
-""" % rpc
+        rpc_call_function += f"""
+    if(XR_SUCCEEDED(header->result)) {{
+        {rpc["command_post"]}
+    }}
+"""
 
     rpc_call_function += """
     return header->result;
 }
 """
 
-
-    rpc_service_function = ""
-
-    rpc_service_function += f"""
+    rpc_service_function = f"""
 XrResult RPCServe{command_name}(
     ConnectionToOverlay::Ptr        connection,
     RPCXr{command_name}*              args)
@@ -1212,7 +1234,7 @@ XrResult RPCServe{command_name}(
 
     return result;
 }}
-""" % rpc
+"""
 
     rpc_case_bodies += f"""
         case {rpc["command_enum"]}: {{
@@ -1222,17 +1244,15 @@ XrResult RPCServe{command_name}(
         }}
 """
 
+    header_text += rpc_call_function_proto
+
     source_text += rpc_args_struct
-
     source_text += ipc_serialize_function
-
     if ipc_copyout_function:
         source_text += ipc_copyout_function
-
-    header_text += rpc_call_function_proto
     source_text += rpc_call_function
-
     source_text += rpc_service_function
+
 
 header_text += "bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr);\n"
 source_text += """
@@ -1303,7 +1323,7 @@ for stub in stub_em:
     header_text += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameter_cdecls});\n"
 
     source_text += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameter_cdecls})\n"
-    source_text += "{ return XR_ERROR_VALIDATION_FAILURE; }\n"
+    source_text += "{ return XR_ERROR_VALIDATION_FAILURE; } // not implemented yet\n"
 
 
 # deep copy, free, substitute and restore handles functions ------------------
@@ -1878,9 +1898,6 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     parameter_cdecls = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
     command_type = command["return_type"]
     layer_command = api_layer_name_for_command(command_name)
-    source_text += f"{command_type} {layer_command}({parameter_cdecls})\n"
-    source_text += "{\n"
-
     handle_type = command["parameters"][0].find("type").text
     handle_name = command["parameters"][0].find("name").text
 
@@ -1895,110 +1912,130 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     command_is_destroy = (command_name[2:9] == "Destroy")
 
-    # handles are guaranteed not to be destroyed while in another command according to the spec...
-    source_text += f"    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);\n"
-    source_text += f"    auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});\n"
-    source_text += f"    if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{\n"
-    source_text += f"        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, \"{command_name}\",\n"
-    source_text += f"            OverlaysLayerNoObjectInfo, \"FATAL: invalid handle couldn't be found in tracking map.\\n\");\n"
-    source_text += f"        return XR_ERROR_VALIDATION_FAILURE;\n"
-    source_text += f"    }}\n"
-    source_text += f"    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = it->second;\n\n"
-
     parameter_names = ", ".join([parameter_to_name(command_name, parameter) for parameter in command["parameters"]])
     dispatch_command = dispatch_name_for_command(command_name)
 
-    if command_name in before_downchain:
-        source_text += before_downchain.get(command_name, "")
-        source_text += "\n"
+    if command_is_create:
+        if created_types_parent_type == "XrInstance":
+            instance_ctor_parameter = "instance"
+        else:
+            instance_ctor_parameter = f"{handle_name}Info->parentInstance"
+
+        if created_type in handles_needing_substitution:
+            store_actual_handle = f"    {created_name}Info->actualHandle = actualHandle;\n"
+        else:
+            store_actual_handle = ""
+
+        make_and_store_new_local_handle = f"""
+    {created_type} actualHandle = *{created_name};
+    {created_type} localHandle = ({created_type})GetNextLocalHandle();
+    *{created_name} = localHandle;
+
+    {{
+        std::unique_lock<std::recursive_mutex> lock(gActual{created_type}ToLocalHandleMutex);
+        gActual{created_type}ToLocalHandle[actualHandle] = localHandle;
+    }}
+
+    std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);
+
+    {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, {instance_ctor_parameter}, {handle_name}Info->downchain);
+
+    g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;
+    {store_actual_handle};
+"""
+    else:
+        make_and_store_new_local_handle = ""
+
+    if handle_type in handles_needing_substitution:
+        command_for_main_side = f"""
+{command_type} {layer_command}Main(XrInstance parentInstance, {parameter_cdecls})
+{{
+    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
+    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info =  g{LayerName}{handle_type}ToHandleInfo[{handle_name}];
+    // restore the actual handle
+    {handle_type} localHandleStore = {handle_name};
+    {handle_name} = {handle_name}Info->actualHandle;
+
+    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});
+
+    // put the local handle back
+    {handle_name} = localHandleStore;
+
+    {make_and_store_new_local_handle}
+
+    return result;
+}}
+"""
+    else:
+        command_for_main_side = ""
 
     if handle_type in handles_needing_substitution:
 
-        source_text += f"   bool isProxied = {handle_name}Info->isProxied;\n"
-        source_text += "    XrResult result;\n"
-        source_text += "    if(isProxied) {\n"
-        source_text += f"        result = OverlaysLayer{dispatch_command}Overlay({handle_name}Info->parentInstance, {parameter_names});\n"
-        source_text += "    } else {\n"
-        source_text += f"        // substitute the real handle in\n";
-        source_text += f"        {handle_type} localHandleStore = {handle_name};\n"
-        source_text += f"        {handle_name} = {handle_name}Info->actualHandle;\n\n"
-        source_text += f"\n";
-        source_text += f"        result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
-        source_text += f"\n";
-        source_text += f"        // put the local handle back\n";
-        source_text += f"        {handle_name} = localHandleStore;\n"
-        source_text += f"\n";
-        if command_is_create:
-            source_text += f"        {created_type} actualHandle = *{created_name};\n"
-            source_text += f"        {created_type} localHandle = ({created_type})GetNextLocalHandle();\n"
-            source_text += f"        *{created_name} = localHandle;\n"
-            source_text += f"\n"
-            source_text += f"        {{\n"
-            source_text += f"            std::unique_lock<std::recursive_mutex> lock(gActual{created_type}ToLocalHandleMutex);\n"
-            source_text += f"            gActual{created_type}ToLocalHandle[actualHandle] = localHandle;\n"
-            source_text += f"        }}\n"
-            source_text += f"\n"
-
-            source_text += f"        std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);\n"
-
-            if created_types_parent_type == "XrInstance":
-                source_text += f"        {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, instance, {handle_name}Info->downchain);\n"
-                source_text += f"        g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
-            else:
-                source_text += f"        {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, {handle_name}Info->parentInstance, {handle_name}Info->downchain);\n"
-                source_text += f"        g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;\n"
-
-            if created_type in handles_needing_substitution:
-                source_text += f"        {created_name}Info->actualHandle = actualHandle;\n"
-
-        source_text += "    }\n"
-
-
+        call_actual_command = f"""
+    bool isProxied = {handle_name}Info->isProxied;
+    XrResult result;
+    if(isProxied) {{
+        result = OverlaysLayer{dispatch_command}Overlay({handle_name}Info->parentInstance, {parameter_names});
+    }} else {{
+        result = OverlaysLayer{dispatch_command}Main({handle_name}Info->parentInstance, {parameter_names});
+    }}
+"""
     else:
-        source_text += f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
-
-
-    # Attempt generation of special cases
-
-    # Special case handle Create functions
-    if command_is_create:
-
-        # just assume we hand-coded Instance creation so these are all child handle types
-
-        source_text += f"    {{\n"
-
-        # XXX source_text += f"        {handle_name}Info.childHandles.insert(*{created_name});\n"
-
-        source_text += f"    }}\n"
-
-    if command_is_destroy:
-        source_text += f"    {handle_name}Info->Destroy();\n"
+        call_actual_command = f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
 
     if command_name in after_downchain:
-        source_text += "    if(XR_SUCCEEDED(result)) {\n"
-        source_text += after_downchain.get(command_name, "")
-        source_text += "    }\n"
+        after_downchain_if_success = f"""
+    if(XR_SUCCEEDED(result)) {{
+        {after_downchain.get(command_name, "")}
+    }}
+"""
+    else:
+        after_downchain_if_success = ""
 
-    source_text += "    return result;\n"
+    if command_is_destroy:
+        special_case_postscript = f"    {handle_name}Info->Destroy();\n"
+    # elif other special cases
+        # special_case_postscript = ...
+    else:
+        special_case_postscript = ""
 
-    source_text += "}\n"
-    source_text += "\n"
+    # handles are guaranteed not to be destroyed while in another command according to the spec
+    api_layer_proc = f"""
+{command_type} {layer_command}({parameter_cdecls})
+{{
+    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
+    auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});
+    if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, \"{command_name}\",
+            OverlaysLayerNoObjectInfo, \"FATAL: invalid handle couldn't be found in tracking map.\\n\");
+        return XR_ERROR_VALIDATION_FAILURE;
+    }}
+    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = it->second;
+
+    {before_downchain.get(command_name, "")}
+
+    {call_actual_command}
+
+    {special_case_postscript}
+
+    {after_downchain_if_success}
+
+    return result;
+}}
+"""
+
+    if command_for_main_side:
+        source_text += command_for_main_side
+    source_text += api_layer_proc
 
 # make GetInstanceProcAddr ---------------------------------------------------
 
-header_text += f"XrResult {LayerName}XrGetInstanceProcAddr("
-header_text += """
-    XrInstance                                  instance,
-    const char*                                 name,
-    PFN_xrVoidFunction*                         function);
-"""
+header_text += f"XrResult {LayerName}XrGetInstanceProcAddr( XrInstance instance, const char* name, PFN_xrVoidFunction* function);\n"
 
-source_text += f"XrResult {LayerName}XrGetInstanceProcAddr("
-source_text += """
-    XrInstance                                  instance,
-    const char*                                 name,
-    PFN_xrVoidFunction*                         function)
-{
+
+source_text += f"""
+XrResult {LayerName}XrGetInstanceProcAddr( XrInstance instance, const char* name, PFN_xrVoidFunction* function)
+{{
     // Set the function pointer to NULL so that the fall-through below actually works:
     *function = nullptr;
 
@@ -2030,12 +2067,11 @@ source_text += """
     }
 
     // Since Overlays proxies Session and Session children over IPC
-    // and has special handling for some objects,
-    // if we didn't set up the function, we must not offer it.
+    // and has special handling for some objects, if we didn't set up the
+    // function, we must not offer the downchain function.
     return XR_ERROR_FUNCTION_UNSUPPORTED;
 }
 """
-
 
 if outputFilename == "xr_generated_overlays.cpp":
     open(outputFilename, "w").write(source_text)
