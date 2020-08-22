@@ -1,16 +1,12 @@
-8/20
-You're about to add SubstituteHandles to automatic generation
-Then you're going to spend a bunch of hours cleaning up the generator
+8/21
+In the middle of PollEvent
 Add EnumerateReferenceSpaces to overlay_sample and implement it
-Implement CreateReferenceSpace
 
 8/18
 ConnectionToMain should be handed to all Overlay functions
 LocalSwapchain ctor could throw.  Maybe "create" function should call D3D and log errors and return false on failure.
 
 8/17
-should IPCSerialize substitute handles / atoms?
-    probably not -> also need to substitute and restore on Main calls
 Items in IPCSerialize
     auto dst = new(ipcbuf) IPCXrCommandName;
     atomic
@@ -55,126 +51,6 @@ Items in IPCSerialize
                 call IPCSerialize on each element.next
             e.g. IPCXrEnumerateViewConfigurationViews
 
-Already have IPCSerialize on XR structs from xr.xml
-So only need IPCSerialize on RPC args structs 
-Do need IPCCopyOut on XR structs with case bodies filled, but if there are really only a handful more, just do by hand
-    need XrView
-    EventDataBuffer...?  How did this work before?
-        IPC wrapper called CopyEventChainIntoBuffer
-            "Runtimes may create valid next chains depending on enabled extensions, but they must guarantee that any such chains point only to objects which fit completely within the original XrEventDataBuffer pointed to by eventData"
-    Do these need to wait until I do input?
-        XrActionState{Boolean,Float,Vector2f,Pose}
-        XrInteractionProfileState
-Need IPCCopyOut on RPC args structs
-
-
-8/14 components of an RPC:
-    parameter struct definition, notably also input and output parameters
-    
-    IPCSerialize for args struct (will be similar functionality to Copy but different structs/types variables)
-
-    IPCCopyOut for args struct
-
-    %(command_name)sMainAsOverlay function
-
-        std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
-
-        potential hand-written verification and error return
-
-        %(substitute_actual_handles_in_input_structs)s
-
-        XrResult result = sessionInfo->downchain->%(command_name_minusxr)s(???);
-
-        %(restore_local_handles_in_input_structs)s
-        %(restore_local_handles_in_output_structs)s
-
-        potential hand-written completion, checking return value and possibly overwriting result
-
-        return result;
-
-
-    %(command_name)sOverlay template:
-
-        // Create a header for RPC to MainAsOverlay
-        IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
-        IPCHeader* header = new(ipcbuf) IPCHeader{%(command_enum)};
-
-        // for each parameter, optionally:
-        // local variable and variable initialization
-        // including actual handle substitution?  Does this need to be done by hand or can it be generated?
-
-        OverlaysLayerRPC%(command_name)s args { parameter expressions here };
-        OverlaysLayerRPC%(command_name)s* argsSerialized = IPCSerialize(ipcbuf, header, &args);
-
-        %(substitute_actual_handles_in_input_structs)s
-
-        // Make pointers relative in anticipation of RPC (who will make them absolute, work on them, then make them relative again)
-        header->makePointersRelative(ipcbuf.base);
-
-        // Release Main process to do our work
-        gConnectionToMain->conn.FinishOverlayRequest();
-
-        // Wait for Main to report to us it has done the work
-        bool success = gConnectionToMain->conn.WaitForMainResponseOrFail();
-        if(!success) {
-            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "%(command_name)s",
-                OverlaysLayerNoObjectInfo, "WARNING: couldn't RPC %(command_name)s to main process.\n");
-            return XR_ERROR_INITIALIZATION_FAILED;
-        }
-
-        // Set pointers absolute so they are valid in our process space again
-        header->makePointersAbsolute(ipcbuf.base);
-
-        // is this necessary?  Are events the only structs that need handles substituted back to local?
-        // for now, yes, only sessions, but eventually space and swapchain will need to be made local
-        %(restore_local_handles_in_output_structs)s
-
-        // Copy anything that were "output" parameters into the command arguments
-        IPCCopyOut(&args, argsSerialized);
-
-        %(command_post)s
-
-    case statement in ProcessOverlayRequestOrReturnConnectionLost
-
-        case %(command_enum)s: {
-            auto* args = ipcbuf.getAndAdvance<OverlaysLayerRPC%(command_name)s>();
-            hdr->result = OverlaysLayer%(command_name)MainAsOverlay(connection, args);
-            break;
-        }
-
-    XrResult OverlaysLayer%(command_name)sMain(args)
-    {
-        take lock on any handleToInfo
-        %(substitute_actual_handles)s
-        XrResult result = sessionInfo->downchain->%(command_name)s(args);
-        %(restore_local_handles)s
-    }
-
-    XrResult OverlaysLayer%(command_name)s(args)
-    {
-        XrResult result;
-
-        %(substitute_actual_handles_in_parameters)s
-            // e.g.:
-            std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-            OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
-            mlock.unlock();
-            session = sessionInfo->actualHandle;
-
-        // must calculate isOverlay somewhere, e.g.
-            bool isOverlay = sessionInfo->isOverlay;
-
-        if(isOverlay) {
-            result = OverlaysLayer%(command_name)sMain(args XXX handle substitution);
-        } else {
-            result = OverlaysLayer%(command_name)sOverlay(args XXX handle substitution);
-        }
-
-        // restoration of value parameters not necessary
-    }
-
-
 
 8/13
 shared_ptr guarantees thread-safe control - deletion, copy, reset, etc.
@@ -200,7 +76,6 @@ Identity any objects that may be accessed by multiple threads and why
 Why not just lock every API layer call?
     Why?  Only Destroy has to be externally synchronized.  That means we won't be inside an XR command in an app's explicit threads when the handle is Destroyed.
         But we could be in the overlay service thread accessing, say XrSession, when it is Destroyed. 
-
 
 
 Any RPC should check for Main Instance lost, return INSTANCE_LOST and Overlay convert to INITIALIZATION_FAILED

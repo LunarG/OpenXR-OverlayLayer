@@ -1308,51 +1308,58 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
     return result;
 }
 
-#if 0
-// XXX this is equivalent to the generated but generated is actually a little better - was I expecting to do hand-coding here?
-XrResult OverlaysLayerCreateSwapchain(XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain)
+XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
 {
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    auto it = gOverlaysLayerXrSessionToHandleInfo.find(session);
-    if(it == gOverlaysLayerXrSessionToHandleInfo.end()) {
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
-            OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = it->second;
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
 
-    bool isProxied = sessionInfo->isProxied;
-    XrResult result;
-    if(isProxied) {
+    XrResult result = sessionInfo->downchain->CreateReferenceSpace(sessionInfo->actualHandle, createInfo, space);
 
-        result = OverlaysLayerCreateSwapchainOverlay(sessionInfo->parentInstance, session, createInfo, swapchain);
-
-    } else {
-
-        result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfo, swapchain);
-
-        XrSwapchain actualHandle = *swapchain;
-        XrSwapchain localHandle = (XrSwapchain)GetNextLocalHandle();
-        *swapchain = localHandle;
-
-        {
-            std::unique_lock<std::recursive_mutex> lock(gActualXrSwapchainToLocalHandleMutex);
-            gActualXrSwapchainToLocalHandle[actualHandle] = localHandle;
-        }
-
-        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-        OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
-        gOverlaysLayerXrSwapchainToHandleInfo[*swapchain] = swapchainInfo;
-        swapchainInfo->actualHandle = actualHandle;
-
+    if(!XR_SUCCEEDED(result)) {
+        return result;
     }
 
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-    sessionInfo->childSwapchains.insert(gOverlaysLayerXrSwapchainToHandleInfo[*swapchain]);
+    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+    { 
+        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSpaceToHandleInfoMutex);
+        gOverlaysLayerXrSpaceToHandleInfo[*space] = spaceInfo;
+    }
 
     return result;
 }
-#endif
+
+XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[session];
+
+    XrResult result = RPCCallCreateReferenceSpace(instance, sessionInfo->actualHandle, createInfo, space);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    XrSpace actualHandle = *space;
+    XrSpace localHandle = (XrSpace)GetNextLocalHandle();
+    *space = localHandle;
+
+    {
+        std::unique_lock<std::recursive_mutex> lock(gActualXrSpaceToLocalHandleMutex);
+        gActualXrSpaceToLocalHandle[actualHandle] = localHandle;
+    }
+
+    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+
+    spaceInfo->actualHandle = actualHandle;
+    spaceInfo->isProxied = true;
+
+    { 
+        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSpaceToHandleInfoMutex);
+        gOverlaysLayerXrSpaceToHandleInfo[*space] = spaceInfo;
+    }
+
+    return result;
+}
 
 XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
