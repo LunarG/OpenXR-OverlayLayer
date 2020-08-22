@@ -924,81 +924,6 @@ std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
 
 # Generate functions for RPC; RPCCallXyz, RPCServeXyz, Serialize, Copyout ----
 
-def rpc_command_name_to_enum(name):
-    return "RPC_XR_" + "_".join([s.upper() for s in re.split("([A-Z][^A-Z]*)", name) if s])
-
-def rpc_arg_to_cdecl(arg) :
-    if arg.get("is_const", False):
-        const_part = "const "
-    else:
-        const_part = ""
-
-    if arg["type"] == "POD": 
-        return f"{const_part}{arg['pod_type']} {arg['name']}"
-    elif arg["type"] == "xr_simple_struct": 
-        return f"{const_part}{arg['struct_type']} {arg['name']}"
-    elif arg["type"] == "pointer_to_pod":
-        return f"{const_part}{arg['pod_type']} *{arg['name']}"
-    elif arg["type"] == "fixed_array":
-        return f"{const_part}{arg['base_type']} *{arg['name']}"
-    elif arg["type"] == "xr_struct_pointer":
-        return f"{const_part}{arg['struct_type']} *{arg['name']}"
-    else:
-        return f"XXX unknown type {arg['type']}\n"
-
-def rpc_arg_to_serialize(arg):
-    if arg["type"] == "POD": 
-        return f"    dst->{arg['name']} = src->{arg['name']};\n"
-    elif arg["type"] == "pointer_to_pod":
-        return f"""
-    dst->{arg["name"]} = IPCSerializeNoCopy(ipcbuf, header, src->{arg["name"]});
-    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
-"""
-    elif arg["type"] == "fixed_array":
-        return f"""
-    dst->{arg['name']} = IPCSerializeNoCopy(ipcbuf, header, src->{arg['name']}, src->{arg['input_size']});
-    header->addOffsetToPointer(ipcbuf.base, &dst->{arg['name']});
-"""
-    elif arg["type"] == "xr_struct_pointer":
-        copy_type = {True: "COPY_EVERYTHING", False: "COPY_ONLY_TYPE_NEXT"}[arg["is_const"]]
-        return f"""
-dst->{arg["name"]} = reinterpret_cast<{arg["struct_type"]}*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->{arg["name"]}), {copy_type}));
-    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
-"""
-    else:
-        return f"#error    XXX unimplemented rpc argument type {arg['type']}\n"
-
-def rpc_arg_to_copyout(arg):
-    if arg["type"] == "POD": 
-        return "" # input only
-    elif arg["type"] == "pointer_to_pod":
-        if arg["is_const"]:
-            return "" # input only
-        else:
-            return f"    IPCCopyOut(dst->{arg['name']}, src->{arg['name']});\n"
-    elif arg["type"] == "fixed_array":
-        if arg["is_const"]:
-            return "" # input only
-        else:
-            return f"""
-    if (src->{arg["name"]}) {{
-        IPCCopyOut(dst->{arg["name"]}, src->{arg["name"]}, *src->{arg["output_size"]});
-    }}
-"""
-    elif arg["type"] == "xr_struct_pointer":
-        if arg["is_const"]:
-            return "" # input only
-        else:
-            return f"""
-    IPCCopyOut(
-        reinterpret_cast<XrBaseOutStructure*>(dst->{arg["name"]}),
-        reinterpret_cast<const XrBaseOutStructure*>(src->{arg["name"]})
-        );
-"""
-    else:
-        return f"#error XXX unknown type {arg['type']}"
-
-
 CreateSessionRPC = {
     "command_name" : "CreateSession",
     "args" : (
@@ -1101,13 +1026,112 @@ CreateSwapchainRPC = {
     ),
     "function" : "OverlaysLayerCreateSwapchainMainAsOverlay"
 }
+CreateReferenceSpaceRPC = {
+    "command_name" : "CreateReferenceSpace",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "createInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrReferenceSpaceCreateInfo",
+            "is_const" : True
+        },
+        {
+            "name" : "space",
+            "type" : "pointer_to_pod",
+            "pod_type" : "XrSpace",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerCreateReferenceSpaceMainAsOverlay"
+}
 
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
     CreateSwapchainRPC,
+    CreateReferenceSpaceRPC,
 )
+
+def rpc_command_name_to_enum(name):
+    return "RPC_XR_" + "_".join([s.upper() for s in re.split("([A-Z][^A-Z]*)", name) if s])
+
+def rpc_arg_to_cdecl(arg) :
+    if arg.get("is_const", False):
+        const_part = "const "
+    else:
+        const_part = ""
+
+    if arg["type"] == "POD": 
+        return f"{const_part}{arg['pod_type']} {arg['name']}"
+    elif arg["type"] == "xr_simple_struct": 
+        return f"{const_part}{arg['struct_type']} {arg['name']}"
+    elif arg["type"] == "pointer_to_pod":
+        return f"{const_part}{arg['pod_type']} *{arg['name']}"
+    elif arg["type"] == "fixed_array":
+        return f"{const_part}{arg['base_type']} *{arg['name']}"
+    elif arg["type"] == "xr_struct_pointer":
+        return f"{const_part}{arg['struct_type']} *{arg['name']}"
+    else:
+        return f"XXX unknown type {arg['type']}\n"
+
+def rpc_arg_to_serialize(arg):
+    if arg["type"] == "POD": 
+        return f"    dst->{arg['name']} = src->{arg['name']};\n"
+    elif arg["type"] == "pointer_to_pod":
+        return f"""
+    dst->{arg["name"]} = IPCSerializeNoCopy(ipcbuf, header, src->{arg["name"]});
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
+"""
+    elif arg["type"] == "fixed_array":
+        return f"""
+    dst->{arg['name']} = IPCSerializeNoCopy(ipcbuf, header, src->{arg['name']}, src->{arg['input_size']});
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg['name']});
+"""
+    elif arg["type"] == "xr_struct_pointer":
+        copy_type = {True: "COPY_EVERYTHING", False: "COPY_ONLY_TYPE_NEXT"}[arg["is_const"]]
+        return f"""
+dst->{arg["name"]} = reinterpret_cast<{arg["struct_type"]}*>(IPCSerialize(instance, ipcbuf, header, reinterpret_cast<const XrBaseInStructure*>(src->{arg["name"]}), {copy_type}));
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
+"""
+    else:
+        return f"#error    XXX unimplemented rpc argument type {arg['type']}\n"
+
+def rpc_arg_to_copyout(arg):
+    if arg["type"] == "POD": 
+        return "" # input only
+    elif arg["type"] == "pointer_to_pod":
+        if arg["is_const"]:
+            return "" # input only
+        else:
+            return f"    IPCCopyOut(dst->{arg['name']}, src->{arg['name']});\n"
+    elif arg["type"] == "fixed_array":
+        if arg["is_const"]:
+            return "" # input only
+        else:
+            return f"""
+    if (src->{arg["name"]}) {{
+        IPCCopyOut(dst->{arg["name"]}, src->{arg["name"]}, *src->{arg["output_size"]});
+    }}
+"""
+    elif arg["type"] == "xr_struct_pointer":
+        if arg["is_const"]:
+            return "" # input only
+        else:
+            return f"""
+    IPCCopyOut(
+        reinterpret_cast<XrBaseOutStructure*>(dst->{arg["name"]}),
+        reinterpret_cast<const XrBaseOutStructure*>(src->{arg["name"]})
+        );
+"""
+    else:
+        return f"#error XXX unknown type {arg['type']}"
+
 
 for rpc in rpcs:
     rpc["command_enum"] = rpc_command_name_to_enum(rpc["command_name"])
@@ -1286,7 +1310,6 @@ stub_em = (
     "WaitSwapchainImage",
     "ReleaseSwapchainImage",
     "EnumerateReferenceSpaces",
-    "CreateReferenceSpace",
     "GetReferenceSpaceBoundsRect",
     "CreateActionSpace",
     "BeginSession",
@@ -1323,7 +1346,7 @@ for stub in stub_em:
     header_text += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameter_cdecls});\n"
 
     source_text += f"{command_type} {layer_command}Overlay(XrInstance instance, {parameter_cdecls})\n"
-    source_text += "{ return XR_ERROR_VALIDATION_FAILURE; } // not implemented yet\n"
+    source_text += "{ DebugBreak(); return XR_ERROR_VALIDATION_FAILURE; } // not implemented yet\n"
 
 
 # deep copy, free, substitute and restore handles functions ------------------
