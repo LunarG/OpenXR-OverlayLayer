@@ -147,6 +147,76 @@ bool OverlaySwapchain::CreateTextures(XrInstance instance, ID3D11Device *d3d11, 
     return true;
 }
 
+OptionalSessionStateChange SessionStateTracker::GetAndDoPendingStateChange(MainSessionSessionState *mainState)
+{
+    if((sessionState != XR_SESSION_STATE_LOSS_PENDING) &&
+        ((mainState->GetLossState() == LOST) ||
+        (mainState->GetLossState() == LOSS_PENDING))) {
+
+        return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_LOSS_PENDING };
+    }
+
+    switch(sessionState) {
+        case XR_SESSION_STATE_UNKNOWN:
+            if(mainState->sessionState != XR_SESSION_STATE_UNKNOWN) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_IDLE };
+            }
+            break;
+
+        case XR_SESSION_STATE_IDLE:
+            if(exitRequested || (mainState->sessionState == XR_SESSION_STATE_EXITING)) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_EXITING };
+            } else if(mainState->isRunning && mainState->hasCalledWaitFrame) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_READY };
+            }
+            break;
+
+        case XR_SESSION_STATE_READY:
+            if(isRunning) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_SYNCHRONIZED };
+            } 
+            break;
+
+        case XR_SESSION_STATE_SYNCHRONIZED:
+            if(exitRequested || !mainState->isRunning || (mainState->sessionState == XR_SESSION_STATE_STOPPING)) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_STOPPING };
+            } else if((mainState->sessionState == XR_SESSION_STATE_VISIBLE) || (mainState->sessionState == XR_SESSION_STATE_FOCUSED)) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_VISIBLE };
+            } 
+            break;
+
+        case XR_SESSION_STATE_VISIBLE:
+            if(exitRequested || !mainState->isRunning || (mainState->sessionState == XR_SESSION_STATE_STOPPING)) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_SYNCHRONIZED };
+            } else if(mainState->sessionState == XR_SESSION_STATE_SYNCHRONIZED) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_SYNCHRONIZED };
+            } else if(mainState->sessionState == XR_SESSION_STATE_FOCUSED) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_FOCUSED };
+            }
+            break;
+
+        case XR_SESSION_STATE_FOCUSED:
+            if(exitRequested || !mainState->isRunning || (mainState->sessionState == XR_SESSION_STATE_STOPPING)) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_VISIBLE };
+            } else if((mainState->sessionState == XR_SESSION_STATE_VISIBLE) || (mainState->sessionState == XR_SESSION_STATE_SYNCHRONIZED)) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_VISIBLE };
+            }
+            break;
+
+        case XR_SESSION_STATE_STOPPING:
+            if(!isRunning) {
+                return OptionalSessionStateChange { true, sessionState = XR_SESSION_STATE_IDLE };
+            }
+            break;
+
+        default:
+            // No other combination of states requires an Overlay SessionStateChange
+            break;
+    }
+
+    return OptionalSessionStateChange { false, XR_SESSION_STATE_UNKNOWN };
+}
+
 
 SwapchainCachedData::~SwapchainCachedData()
 {
@@ -395,7 +465,7 @@ NegotiationChannels gNegotiationChannels;
 
 bool gAppHasAMainSession = false;
 XrInstance gMainSessionInstance;
-XrSession gMainSession;
+MainSessionContext::Ptr gMainSessionContext;
 DWORD gMainProcessId;   // Set by Overlay to check for main process unexpected exit
 HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
 
@@ -558,7 +628,6 @@ XrBaseInStructure* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeade
 
 // CopyOut XR structs -------------------------------------------------------
 
-template <>
 void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
 {
     bool skipped = true;
@@ -682,10 +751,9 @@ OverlaysLayerRPCCreateSession* IPCSerialize(IPCBuffer& ipcbuf, IPCHeader* header
     return dst;
 }
 
-template <>
 void IPCCopyOut(OverlaysLayerRPCCreateSession* dst, const OverlaysLayerRPCCreateSession* src)
 {
-    IPCCopyOut(dst->session, src->session);
+    dst->session = src->session;
 }
 
 
@@ -697,6 +765,7 @@ const T* FindStructInChain(const void *head, XrStructureType type)
         if(p->type == type) {
             return reinterpret_cast<const T*>(p);
         }
+		p = p->next;
     }
     return nullptr;
 }
@@ -713,8 +782,10 @@ bool FindExtensionInList(const char* extension, uint32_t extensionsCount, const 
 
 XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, XrSession *session)
 {
+    auto mainSession = gMainSessionContext;
+    auto l = mainSession->GetLock();
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[mainSession->session];
 
     if(createInfo->createFlags != sessionInfo->createInfo->createFlags) {
         OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
@@ -762,8 +833,6 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
                 break;
             }
         }
-
-        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
     }
 
     // Verify that main session didn't have any unexpected structures that the overlay didn't have
@@ -785,7 +854,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
     XrFormFactor mainSessionFormFactor;
     {
         std::unique_lock<std::recursive_mutex> m(gOverlaysLayerXrSessionToHandleInfoMutex);
-        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[gMainSession];
+        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[mainSession->session];
         XrSystemId systemId = sessionInfo->createInfo->systemId;
 
         std::unique_lock<std::recursive_mutex> m2(gOverlaysLayerSystemIdToAtomInfoMutex);
@@ -824,7 +893,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
 
     // XXX should gMainSession be the downchain session so MainAsOverlay can use it directly?
     // Then looking it up in ...ToHandleInfo requires mapping backward to the local handle
-    *session = gMainSession;
+    *session = mainSession->session;
 
     return XR_SUCCESS;
 }
@@ -968,7 +1037,7 @@ void MainNegotiateThreadBody()
 bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSession)
 {
     gMainSessionInstance = instance;
-    gMainSession = hostingSession;
+    gMainSessionContext = std::make_shared<MainSessionContext>(hostingSession);
     if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
             OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create overlays negotiation channels\n").c_str());
@@ -1093,7 +1162,6 @@ bool ConnectToMain(XrInstance instance)
 }
 
 
-// Can this be generated?
 XrResult OverlaysLayerCreateSessionOverlay(
     XrInstance                                  instance,
     const XrSessionCreateInfo*                  createInfo,
@@ -1114,6 +1182,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo[instance];
 
     XrFormFactor formFactor;
+
     {
         // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN SUBSTITUTE THAT IN THE OVERLAY BEFORE THE RPC.
         std::unique_lock<std::recursive_mutex> m(gOverlaysLayerSystemIdToAtomInfoMutex);
@@ -1124,6 +1193,22 @@ XrResult OverlaysLayerCreateSessionOverlay(
         // XrSystemId-related extensions
     }
 
+    auto instanceCreateInfo = instanceInfo->createInfo;
+
+    const char** extensionNamesMinusOverlay = new const char*[instanceCreateInfo->enabledExtensionCount];
+    uint32_t extensionCountMinusOverlay = 0;
+    for(uint32_t i = 0; i < instanceCreateInfo->enabledExtensionCount; i++) {
+        if(strncmp(instanceCreateInfo->enabledExtensionNames[i], XR_EXTX_OVERLAY_EXTENSION_NAME, strlen(XR_EXTX_OVERLAY_EXTENSION_NAME)) != 0) {
+            extensionNamesMinusOverlay[extensionCountMinusOverlay++] = instanceCreateInfo->enabledExtensionNames[i];
+        }
+    }
+
+    XrInstanceCreateInfo createInfoMinusOverlays = *instanceCreateInfo;
+    createInfoMinusOverlays.enabledExtensionNames = extensionNamesMinusOverlay;
+    createInfoMinusOverlays.enabledExtensionCount = extensionCountMinusOverlay;
+
+    result = RPCCallCreateSession(instance, formFactor, &createInfoMinusOverlays, createInfo, session);
+#if 0
     // Create a header for RPC to MainAsOverlay
     IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
     IPCHeader* header = new(ipcbuf) IPCHeader{RPC_XR_CREATE_SESSION};
@@ -1151,6 +1236,11 @@ XrResult OverlaysLayerCreateSessionOverlay(
 
     // Copy anything that were "output" parameters into the command arguments
     IPCCopyOut(&args, argsSerialized);
+#endif
+
+	if (!XR_SUCCEEDED(result)) {
+		return result;
+	}
 
     // Since Overlays are the parent object of a hierarchy of objects that the Main hosts on behalf of the Overlay,
     // make a unique local XrSession that notes that this is actually an overlay session and any command on this handle has to be proxied.
@@ -1172,7 +1262,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     gOverlaysLayerXrSessionToHandleInfo[localHandle] = info;
     mlock2.unlock();
 
-    return header->result;
+    return result;
 }
 
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
@@ -1455,6 +1545,174 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
     return XR_SUCCESS;
 }
 
+XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection, XrEventDataBuffer *eventData)
+{
+	XrResult result;
+
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+
+	MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+	mainSessionContext->GetLock();
+
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[mainSessionContext->session];
+
+    OptionalSessionStateChange pendingStateChange;
+
+    pendingStateChange = connection->ctx->sessionState.GetAndDoPendingStateChange(&mainSessionContext->sessionState);
+
+    if(pendingStateChange.first) {
+
+		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED, nullptr};
+		
+        auto* ssc = reinterpret_cast<XrEventDataSessionStateChanged*>(&event);
+        ssc->session = mainSessionContext->session;
+        ssc->state = pendingStateChange.second;
+        XrTime calculatedTime = 1; // XXX 
+        ssc->time = calculatedTime;
+        CopyEventChainIntoBuffer(gMainSessionInstance, reinterpret_cast<XrEventDataBaseHeader *>(&event), eventData);
+        result = XR_SUCCESS;
+
+    } else {
+
+		auto lock = connection->ctx->GetLock();
+
+		if(connection->ctx->eventsSaved.size() == 0) {
+
+			result = XR_EVENT_UNAVAILABLE;
+
+		} else {
+
+			EventDataBufferPtr event = connection->ctx->eventsSaved.front();
+			connection->ctx->eventsSaved.pop();
+			CopyEventChainIntoBuffer(gMainSessionInstance, reinterpret_cast<XrEventDataBaseHeader*>(event.get()), eventData);
+
+			result = XR_SUCCESS;
+		}
+	}
+
+    return result;
+}
+
+void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, MainAsOverlaySessionContext::Ptr overlay)
+{
+    auto lock = overlay->GetLock();
+
+    bool queueFull = (overlay->eventsSaved.size() == MainAsOverlaySessionContext::maxEventsSavedForOverlay);
+    bool queueOneShortOfFull = (overlay->eventsSaved.size() == MainAsOverlaySessionContext::maxEventsSavedForOverlay - 1);
+    bool backIsEventsLostEvent = (overlay->eventsSaved.size() > 0) && (overlay->eventsSaved.back()->type == XR_TYPE_EVENT_DATA_EVENTS_LOST);
+
+    bool alreadyLostSomeEvents = queueFull || (queueOneShortOfFull && backIsEventsLostEvent);
+
+    EventDataBufferPtr newEvent(new XrEventDataBuffer{XR_TYPE_EVENT_DATA_BUFFER});
+    CopyEventChainIntoBuffer(instance, const_cast<const XrEventDataBaseHeader*>(reinterpret_cast<XrEventDataBaseHeader*>(eventData)), newEvent.get());
+
+    if(newEvent.get()->type != XR_TYPE_EVENT_DATA_BUFFER) {
+        // We were able to find some known events in the event pointer chain
+
+        if(alreadyLostSomeEvents) {
+
+            auto* lost = reinterpret_cast<XrEventDataEventsLost*>(overlay->eventsSaved.back().get());
+            lost->lostEventCount ++;
+
+        } else if(queueOneShortOfFull) {
+
+            EventDataBufferPtr newEvent(new XrEventDataBuffer);
+            XrEventDataEventsLost* lost = reinterpret_cast<XrEventDataEventsLost*>(newEvent.get());
+            lost->type = XR_TYPE_EVENT_DATA_EVENTS_LOST;
+            lost->next = nullptr;
+            lost->lostEventCount = 1;
+            overlay->eventsSaved.push(newEvent);
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
+                OverlaysLayerNoObjectInfo, "WARNING: Enqueued a lost event.\n");
+
+        } else {
+
+            overlay->eventsSaved.push(newEvent);
+            
+        }
+    }
+}
+
+XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+    auto it = gOverlaysLayerXrInstanceToHandleInfo.find(instance);
+    if(it == gOverlaysLayerXrInstanceToHandleInfo.end()) {
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrPollEvent",
+            OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
+        return XR_ERROR_VALIDATION_FAILURE;
+    }
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = it->second;
+
+    XrResult result = instanceInfo->downchain->PollEvent(instance, eventData);
+
+    if(result == XR_EVENT_UNAVAILABLE) {
+
+        if(gConnectionToMain) {
+
+            /* See if the main process has any events for us */
+            result = RPCCallPollEvent(instance, eventData);
+            if(result == XR_SUCCESS) {
+                SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
+            }
+        }
+
+    } else if(result == XR_SUCCESS) {
+
+        SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
+
+        std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
+        if(!gConnectionsToOverlayByProcessId.empty()) {
+
+            if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+
+                // XXX ignores any chained event data
+                const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
+                MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+                mainSessionContext->GetLock();
+                mainSessionContext->sessionState.DoStateChange(ssc->state, ssc->time);
+                if(ssc->next) {
+                    char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+					auto* p = reinterpret_cast<const XrBaseOutStructure*>(ssc->next);
+                    XrResult r = instanceInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
+                    if(r != XR_SUCCESS) {
+                        sprintf(structureTypeName, "(type %08X)", p->type);
+                    }
+
+                    OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
+                        OverlaysLayerNoObjectInfo, fmt("WARNING: xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
+                }
+
+            } else {
+
+                if(eventData->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+
+                    for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
+                        auto conn = overlayconn.second;
+                        auto lock = conn->GetLock();
+                        if(conn->ctx) {
+                            EnqueueEventToOverlay(instance, eventData, conn->ctx);
+                        }
+                    }
+
+                } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
+
+                    // XXX further processing
+                    for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
+                        auto conn = overlayconn.second;
+                        auto lock = conn->GetLock();
+                        if(conn->ctx) {
+                            EnqueueEventToOverlay(instance, eventData, conn->ctx);
+                        }
+                    }
+                }
+
+            }
+        }
+    }
+
+    return result;
+}
 
 
 extern "C" {

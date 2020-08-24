@@ -6,6 +6,7 @@
 #include <new>
 #include <set>
 #include <unordered_map>
+#include <queue>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -252,7 +253,6 @@ struct NegotiationChannels
 
 extern bool gHaveMainSessionActive;
 extern XrInstance gMainSessionInstance;
-extern XrSession gMainSession;
 extern HANDLE gMainMutexHandle; // Held by Main for duration of operation as Main Session
 
 struct RPCChannels
@@ -361,6 +361,84 @@ bool OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle);
 
 bool OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle);
 
+enum OpenXRCommand {
+    BEGIN_SESSION,
+    WAIT_FRAME,
+    END_SESSION,
+    REQUEST_EXIT_SESSION,
+};
+
+enum SessionLossState {
+    NOT_LOST,
+    LOSS_PENDING,
+    LOST,
+};
+
+typedef std::pair<bool, XrSessionState> OptionalSessionStateChange;
+
+struct MainSessionSessionState;
+
+struct SessionStateTracker
+{
+    SessionLossState lossState = NOT_LOST;
+    XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
+    bool isRunning = false;
+    bool exitRequested = false;
+
+    SessionStateTracker()
+    {
+    }
+
+    void DoCommand(OpenXRCommand command)
+    {
+        if(command == BEGIN_SESSION) {
+            isRunning = true;
+        } else if (command == END_SESSION) {
+            isRunning = false;
+        } else if (command == REQUEST_EXIT_SESSION) {
+            exitRequested = true;
+        }
+    }
+
+    void DoSessionLost()
+    {
+        lossState = LOST;
+    }
+
+    SessionLossState GetLossState()
+    {
+        return lossState;
+    }
+
+    OptionalSessionStateChange GetAndDoPendingStateChange(MainSessionSessionState *mainSession);
+};
+
+struct MainSessionSessionState : public SessionStateTracker
+{
+    XrTime currentTime;
+	bool hasCalledWaitFrame = false;
+
+	MainSessionSessionState()
+    {
+    }
+
+    void DoStateChange(XrSessionState state, XrTime when)
+    {
+        sessionState = state;
+        currentTime = when;
+    }
+
+    void DoCommand(OpenXRCommand command)
+    {
+        if (command == WAIT_FRAME) {
+            // XXX saved predicted times updated separately
+        } else {
+            SessionStateTracker::DoCommand(command);
+        }
+    }
+
+};
+
 // Bookkeeping of SwapchainImages for copying remote SwapchainImages on ReleaseSwapchainImage
 struct SwapchainCachedData
 {
@@ -390,12 +468,36 @@ struct SwapchainCachedData
     typedef std::shared_ptr<SwapchainCachedData> Ptr;
 };
 
+struct MainSessionContext
+{
+    XrSession session;
+    MainSessionSessionState sessionState;
+
+    MainSessionContext(XrSession session) :
+        session(session)
+    {}
+
+    std::recursive_mutex mutex;
+    std::unique_lock<std::recursive_mutex> GetLock()
+    {
+        return std::unique_lock<std::recursive_mutex>(mutex);
+    }
+
+    typedef std::shared_ptr<MainSessionContext> Ptr;
+};
+
+typedef std::shared_ptr<XrEventDataBuffer> EventDataBufferPtr;
 
 struct MainAsOverlaySessionContext
 {
     // local handles so they can be looked up in our tracking maps
     std::set<XrSpace> localSpaces; // use swapchainMap? 
     std::set<XrSwapchain> localSwapchains;
+
+    SessionStateTracker sessionState;
+
+    constexpr static int maxEventsSavedForOverlay = 16;
+    std::queue<EventDataBufferPtr> eventsSaved;
 
     // This structure needs to be locked because Main could Destroy its
     // shared XrSession and all of its children and that would need to go
@@ -453,6 +555,9 @@ struct ConnectionToMain
     RPCChannels conn;
     typedef std::shared_ptr<ConnectionToMain> Ptr;
 };
+
+extern std::recursive_mutex gMainSessionContextMutex;
+extern MainSessionContext::Ptr gMainSessionContext;
 
 extern ConnectionToMain::Ptr gConnectionToMain;
 
@@ -560,29 +665,8 @@ T* IPCSerializeNoCopy(IPCBuffer& ipcbuf, IPCHeader* header, const T* p, size_t c
     return t;
 }
 
-// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
-template <typename T>
-void IPCCopyOut(T* dst, const T* src)
-{
-    if(!src)
-        return;
-
-    *dst = *src;
-}
-
-// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
-template <typename T>
-void IPCCopyOut(T* dst, const T* src, size_t count)
-{
-    if(!src)
-        return;
-
-    for(size_t i = 0; i < count; i++) {
-        dst[i] = src[i];
-    }
-}
-
 XrBaseInStructure* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const XrBaseInStructure* srcbase, CopyType copyType);
+
 
 // Serialization of XR structs ----------------------------------------------
 
@@ -613,5 +697,8 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(XrInstance instance, XrSwa
 
 XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space);
 XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space);
+
+XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection, XrEventDataBuffer* eventData);
+XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData);
 
 #endif /* _OVERLAYS_H_ */
