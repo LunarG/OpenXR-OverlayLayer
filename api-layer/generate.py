@@ -317,10 +317,13 @@ supported_structs = [
     "XrDebugUtilsMessengerCallbackDataEXT",
     "XrDebugUtilsMessengerCreateInfoEXT",
     "XrGraphicsRequirementsD3D11KHR",
+    "XrSessionCreateInfoOverlayEXTX",
+    "XrEventDataMainSessionVisibilityChangedEXTX",
 ]
 
 manually_implemented_commands = [
     "xrCreateSession",
+    "xrPollEvent",
 ]
 
 supported_commands = [
@@ -725,6 +728,28 @@ source_text = """
 
 std::unordered_map<XrPath, XrInteractionProfileSuggestedBinding*> gPathToSuggestedInteractionProfileBinding;
 
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+void IPCCopyOut(T* dst, const T* src)
+{
+    if(!src)
+        return;
+
+    *dst = *src;
+}
+
+// MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
+template <typename T>
+void IPCCopyOut(T* dst, const T* src, size_t count)
+{
+    if(!src)
+        return;
+
+    for(size_t i = 0; i < count; i++) {
+        dst[i] = src[i];
+    }
+}
+
 """
 
 header_text = """
@@ -898,8 +923,8 @@ struct {LayerName}{handle_type}HandleInfo
     {{
         if(valid) {{
             {in_destructor.get(handle_type, "")}
-            Destroy();
             {substitution_destroy}
+            Destroy();
         }}
     }}
 }};
@@ -1026,6 +1051,7 @@ CreateSwapchainRPC = {
     ),
     "function" : "OverlaysLayerCreateSwapchainMainAsOverlay"
 }
+
 CreateReferenceSpaceRPC = {
     "command_name" : "CreateReferenceSpace",
     "args" : (
@@ -1050,13 +1076,28 @@ CreateReferenceSpaceRPC = {
     "function" : "OverlaysLayerCreateReferenceSpaceMainAsOverlay"
 }
 
+PollEventRPC = {
+    "command_name" : "PollEvent",
+    "args" : (
+        {
+            "name" : "eventData",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrEventDataBuffer",
+            "is_const" : False,
+        },
+    ),
+    "function" : "OverlaysLayerPollEventMainAsOverlay"
+}
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
     CreateSwapchainRPC,
     CreateReferenceSpaceRPC,
+    PollEventRPC,
 )
+
 
 def rpc_command_name_to_enum(name):
     return "RPC_XR_" + "_".join([s.upper() for s in re.split("([A-Z][^A-Z]*)", name) if s])
@@ -1085,7 +1126,7 @@ def rpc_arg_to_serialize(arg):
         return f"    dst->{arg['name']} = src->{arg['name']};\n"
     elif arg["type"] == "pointer_to_pod":
         return f"""
-    dst->{arg["name"]} = IPCSerializeNoCopy(ipcbuf, header, src->{arg["name"]});
+    dst->{arg["name"]} = IPCSerializeNoCopy(ipcbuf, header, src->{arg["name"]}); // pointer_to_pod
     header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
 """
     elif arg["type"] == "fixed_array":
@@ -1711,10 +1752,14 @@ void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc
 #         copy_function += " is const"
 
 
-    copy_function += "    dst->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(src->next), copyType, alloc, addOffsetToPointer));\n"
-    copy_function += "    addOffsetToPointer(&dst->next);\n"
-    copy_function += "    return true;\n"
-    copy_function += "}\n\n"
+    copy_function += """
+    dst->next = reinterpret_cast<XrBaseInStructure*>(CopyXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(src->next), copyType, alloc, addOffsetToPointer));
+    if(dst->next) {
+        addOffsetToPointer(&dst->next);
+    }
+    return true;
+}
+"""
 
     free_function += "    FreeXrStructChain(instance, reinterpret_cast<const XrBaseInStructure*>(p->next), freefunc);\n"
     free_function += "}\n\n"

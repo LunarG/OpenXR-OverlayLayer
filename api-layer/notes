@@ -1,5 +1,10 @@
 8/21
 In the middle of PollEvent
+    Events that may pertain to the overlay session:
+        XrEventDataSessionStateChanged
+        XrEventDataReferenceSpaceChangePending
+        XrEventDataInteractionProfileChanged
+
 Add EnumerateReferenceSpaces to overlay_sample and implement it
 
 8/18
