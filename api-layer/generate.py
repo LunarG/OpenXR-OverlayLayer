@@ -1114,6 +1114,24 @@ PollEventRPC = {
     "function" : "OverlaysLayerPollEventMainAsOverlay"
 }
 
+BeginSessionRPC = {
+    "command_name" : "BeginSession",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "beginInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrSessionBeginInfo",
+            "is_const" : True
+        },
+    ),
+    "function" : "OverlaysLayerBeginSessionMainAsOverlay"
+}
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1121,6 +1139,7 @@ rpcs = (
     CreateSwapchainRPC,
     CreateReferenceSpaceRPC,
     PollEventRPC,
+    BeginSessionRPC,
 )
 
 
@@ -1385,7 +1404,6 @@ stub_em = (
     "EnumerateReferenceSpaces",
     "GetReferenceSpaceBoundsRect",
     "CreateActionSpace",
-    "BeginSession",
     "EndSession",
     "RequestExitSession",
     "WaitFrame",
