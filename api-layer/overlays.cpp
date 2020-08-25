@@ -458,9 +458,6 @@ XrResult OverlaysLayerXrDestroyInstance(XrInstance instance)
     return XR_SUCCESS;
 }
 
-std::recursive_mutex gActualSessionToLocalHandleMutex;
-std::unordered_map<XrSession, XrSession> gActualSessionToLocalHandle;
-
 NegotiationChannels gNegotiationChannels;
 
 bool gAppHasAMainSession = false;
@@ -1076,8 +1073,8 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     *session = localHandle;
 
     {
-        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
-        gActualSessionToLocalHandle[actualHandle] = localHandle;
+        std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
+        gActualXrSessionToLocalHandle[actualHandle] = localHandle;
     }
 
     OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
@@ -1250,8 +1247,8 @@ XrResult OverlaysLayerCreateSessionOverlay(
 	*session = localHandle;
 
     {
-        std::unique_lock<std::recursive_mutex> lock(gActualSessionToLocalHandleMutex);
-        gActualSessionToLocalHandle[actualHandle] = localHandle;
+        std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
+        gActualXrSessionToLocalHandle[actualHandle] = localHandle;
     }
  
     OverlaysLayerXrSessionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrSessionHandleInfo>(instance, instance, instanceInfo->downchain);
@@ -1547,12 +1544,12 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
 
 XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection, XrEventDataBuffer *eventData)
 {
-	XrResult result;
+    XrResult result;
 
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
 
-	MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
-	mainSessionContext->GetLock();
+    MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+    mainSessionContext->GetLock();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo[mainSessionContext->session];
 
@@ -1562,7 +1559,7 @@ XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection
 
     if(pendingStateChange.first) {
 
-		XrEventDataBuffer event{XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED, nullptr};
+        XrEventDataBuffer event{XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED, nullptr};
 		
         auto* ssc = reinterpret_cast<XrEventDataSessionStateChanged*>(&event);
         ssc->session = mainSessionContext->session;
@@ -1574,21 +1571,21 @@ XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection
 
     } else {
 
-		auto lock = connection->ctx->GetLock();
+        auto lock = connection->ctx->GetLock();
 
-		if(connection->ctx->eventsSaved.size() == 0) {
+        if(connection->ctx->eventsSaved.size() == 0) {
 
-			result = XR_EVENT_UNAVAILABLE;
+            result = XR_EVENT_UNAVAILABLE;
 
-		} else {
+        } else {
 
-			EventDataBufferPtr event = connection->ctx->eventsSaved.front();
-			connection->ctx->eventsSaved.pop();
-			CopyEventChainIntoBuffer(gMainSessionInstance, reinterpret_cast<XrEventDataBaseHeader*>(event.get()), eventData);
+            EventDataBufferPtr event = connection->ctx->eventsSaved.front();
+            connection->ctx->eventsSaved.pop();
+            CopyEventChainIntoBuffer(gMainSessionInstance, reinterpret_cast<XrEventDataBaseHeader*>(event.get()), eventData);
 
-			result = XR_SUCCESS;
-		}
-	}
+            result = XR_SUCCESS;
+        }
+    }
 
     return result;
 }
@@ -1661,29 +1658,30 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
 
         SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
 
-        std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
-        if(!gConnectionsToOverlayByProcessId.empty()) {
+        if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 
-            if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+            // XXX ignores any chained event data
+            const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
+            MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+            mainSessionContext->GetLock();
+            mainSessionContext->sessionState.DoStateChange(ssc->state, ssc->time);
 
-                // XXX ignores any chained event data
-                const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
-                MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
-                mainSessionContext->GetLock();
-                mainSessionContext->sessionState.DoStateChange(ssc->state, ssc->time);
-                if(ssc->next) {
-                    char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
-					auto* p = reinterpret_cast<const XrBaseOutStructure*>(ssc->next);
-                    XrResult r = instanceInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
-                    if(r != XR_SUCCESS) {
-                        sprintf(structureTypeName, "(type %08X)", p->type);
-                    }
-
-                    OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
-                        OverlaysLayerNoObjectInfo, fmt("WARNING: xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
+            if(ssc->next) {
+                char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                                    auto* p = reinterpret_cast<const XrBaseOutStructure*>(ssc->next);
+                XrResult r = instanceInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
+                if(r != XR_SUCCESS) {
+                    sprintf(structureTypeName, "(type %08X)", p->type);
                 }
 
-            } else {
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
+                    OverlaysLayerNoObjectInfo, fmt("WARNING: xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
+            }
+
+        } else {
+
+            std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
+            if(!gConnectionsToOverlayByProcessId.empty()) {
 
                 if(eventData->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
 
@@ -1698,6 +1696,7 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
                 } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
 
                     // XXX further processing
+                    // If occurred earlier than an Overlay connect, will need to synthesize this.
                     for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
                         auto conn = overlayconn.second;
                         auto lock = conn->GetLock();
