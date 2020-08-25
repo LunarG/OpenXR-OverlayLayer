@@ -526,10 +526,34 @@ add_to_handle_struct["XrSwapchain"] = {
 """,
 }
 
+after_downchain["xrBeginSession"] = """
+    auto mainSession = gMainSessionContext;
+    if(mainSession) {
+        auto l = mainSession->GetLock();
+        mainSession->sessionState.DoCommand(OpenXRCommand::BEGIN_SESSION);
+    }
+"""
+
+after_downchain["xrEndSession"] = """
+    auto mainSession = gMainSessionContext;
+    if(mainSession) {
+        auto l = mainSession->GetLock();
+        mainSession->sessionState.DoCommand(OpenXRCommand::END_SESSION);
+    }
+"""
+
+after_downchain["xrRequestExitSession"] = """
+    auto mainSession = gMainSessionContext;
+    if(mainSession) {
+        auto l = mainSession->GetLock();
+        mainSession->sessionState.DoCommand(OpenXRCommand::REQUEST_EXIT_SESSION);
+    }
+"""
+
 after_downchain["xrCreateSwapchain"] = """
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-        sessionInfo->childSwapchains.insert(gOverlaysLayerXrSwapchainToHandleInfo[*swapchain]);
+        sessionInfo->childSwapchains.insert(gOverlaysLayerXrSwapchainToHandleInfo.at(*swapchain));
     }
 """
 
@@ -543,11 +567,11 @@ add_to_handle_struct["XrDebugUtilsMessengerEXT"] = {
 
 in_destructor["XrDebugUtilsMessengerEXT"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
 
-after_downchain["xrCreateDebugUtilsMessengerEXT"] = """
-    gOverlaysLayerXrInstanceToHandleInfo[instance]->debugUtilsMessengers.insert(*messenger);
+after_downchain["xrCreateDebugUtilsMessengerEXT"] = f"""
+    gOverlaysLayerXrInstanceToHandleInfo.at(instance)->debugUtilsMessengers.insert(*messenger);
     OverlaysLayerXrDebugUtilsMessengerEXTHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrDebugUtilsMessengerEXTHandleInfo>(instance, instance, instanceInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfoMutex);
-    gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo[*messenger] = info;
+    gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.insert({{*messenger, info}});
     info->createInfo = reinterpret_cast<XrDebugUtilsMessengerCreateInfoEXT*>(CopyXrStructChainWithMalloc(instance, createInfo));
     mlock2.unlock();
 """
@@ -564,10 +588,10 @@ add_to_handle_struct["XrActionSet"] = {
 
 in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
 
-after_downchain["xrCreateActionSet"] = """
+after_downchain["xrCreateActionSet"] = f"""
     OverlaysLayerXrActionSetHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionSetHandleInfo>(instance, instance, instanceInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
-    gOverlaysLayerXrActionSetToHandleInfo[*actionSet] = info;
+    gOverlaysLayerXrActionSetToHandleInfo.insert({{*actionSet, info}});
     info->createInfo = reinterpret_cast<XrActionSetCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
     mlock2.unlock();
 """
@@ -582,10 +606,10 @@ add_to_handle_struct["XrAction"] = {
 """,
 }
 
-after_downchain["xrCreateAction"] = """
+after_downchain["xrCreateAction"] = f"""
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionToHandleInfoMutex);
-    gOverlaysLayerXrActionToHandleInfo[*action] = info;
+    gOverlaysLayerXrActionToHandleInfo.insert({{*action, info}});
     info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
     mlock2.unlock();
 
@@ -599,14 +623,14 @@ in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(pare
 after_downchain["xrCreateReferenceSpace"] = """
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        sessionInfo->childSpaces.insert(gOverlaysLayerXrSpaceToHandleInfo[*space]);
+        sessionInfo->childSpaces.insert(gOverlaysLayerXrSpaceToHandleInfo.at(*space));
     }
 """
 
 after_downchain["xrCreateActionSpace"] = """
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        sessionInfo->childSpaces.insert(gOverlaysLayerXrSpaceToHandleInfo[*space]);
+        sessionInfo->childSpaces.insert(gOverlaysLayerXrSpaceToHandleInfo.at(*space));
     }
 """
 
@@ -693,7 +717,7 @@ after_downchain["xrLocateViews"] = """
 before_downchain["xrLocateSpace"] = """
     {
         std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        baseSpace = gOverlaysLayerXrSpaceToHandleInfo[baseSpace]->actualHandle;
+        baseSpace = gOverlaysLayerXrSpaceToHandleInfo.at(baseSpace)->actualHandle;
     }
 """
 
@@ -749,6 +773,7 @@ void IPCCopyOut(T* dst, const T* src, size_t count)
         dst[i] = src[i];
     }
 }
+
 
 """
 
@@ -1164,11 +1189,16 @@ def rpc_arg_to_copyout(arg):
         if arg["is_const"]:
             return "" # input only
         else:
-            return f"""
+            if arg["struct_type"] == "XrEventDataBuffer":
+                return f"""
+    CopyEventChainIntoBuffer(XR_NULL_HANDLE, const_cast<const XrEventDataBaseHeader*>(reinterpret_cast<XrEventDataBaseHeader*>(src->{arg["name"]})), dst->{arg["name"]});
+"""
+            else:
+                return f"""
     IPCCopyOut(
         reinterpret_cast<XrBaseOutStructure*>(dst->{arg["name"]}),
         reinterpret_cast<const XrBaseOutStructure*>(src->{arg["name"]})
-        );
+        ); // {arg["struct_type"]}
 """
     else:
         return f"#error XXX unknown type {arg['type']}"
@@ -1271,7 +1301,9 @@ void IPCCopyOut(RPCXr{command_name}* dst, const RPCXr{command_name}* src)
     if ipc_copyout_function:
         rpc_call_function += f"""
     // Copy anything that were "output" parameters into the command arguments
-    IPCCopyOut(&args, argsSerialized);
+    if(header->result == XR_SUCCESS) {{ // XXX Some other codes may indicate qualified success, requiring CopyOut
+        IPCCopyOut(&args, argsSerialized);
+    }}
 """
 
     if "command_post" in rpc:
@@ -1509,7 +1541,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
             // array of {member["struct_type"]} for {name}
             for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
                 std::unique_lock<std::recursive_mutex> lock(gActual{member["struct_type"]}ToLocalHandleMutex);
-                {accessor_prefix}{member["name"]} = gActual{member["struct_type"]}ToLocalHandle[{accessor_prefix}{member["name"]}];
+                {accessor_prefix}{member["name"]} = gActual{member["struct_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]});
             }}
 """
         else:
@@ -1528,7 +1560,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
             return f"""
                 {{
                     std::unique_lock<std::recursive_mutex> lock(gActual{member["pod_type"]}ToLocalHandleMutex);
-                    {accessor_prefix}{member["name"]} = gActual{member["pod_type"]}ToLocalHandle[{accessor_prefix}{member["name"]}];
+                    {accessor_prefix}{member["name"]} = gActual{member["pod_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]});
                 }}
 """
         else:
@@ -2001,14 +2033,14 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     {{
         std::unique_lock<std::recursive_mutex> lock(gActual{created_type}ToLocalHandleMutex);
-        gActual{created_type}ToLocalHandle[actualHandle] = localHandle;
+        gActual{created_type}ToLocalHandle.insert({{actualHandle, localHandle}});
     }}
 
     std::unique_lock<std::recursive_mutex> mlock2(g{LayerName}{created_type}ToHandleInfoMutex);
 
     {LayerName}{created_type}HandleInfo::Ptr {created_name}Info = std::make_shared<{LayerName}{created_type}HandleInfo>({handle_name}, {instance_ctor_parameter}, {handle_name}Info->downchain);
 
-    g{LayerName}{created_type}ToHandleInfo[*{created_name}] = {created_name}Info;
+    g{LayerName}{created_type}ToHandleInfo.insert({{*{created_name}, {created_name}Info}});
     {store_actual_handle};
 """
     else:
@@ -2019,7 +2051,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 {command_type} {layer_command}Main(XrInstance parentInstance, {parameter_cdecls})
 {{
     std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
-    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info =  g{LayerName}{handle_type}ToHandleInfo[{handle_name}];
+    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo.at({handle_name});
     // restore the actual handle
     {handle_type} localHandleStore = {handle_name};
     {handle_name} = {handle_name}Info->actualHandle;
