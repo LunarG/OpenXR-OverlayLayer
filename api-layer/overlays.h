@@ -413,10 +413,15 @@ struct SessionStateTracker
     OptionalSessionStateChange GetAndDoPendingStateChange(MainSessionSessionState *mainSession);
 };
 
+
 struct MainSessionSessionState : public SessionStateTracker
 {
     XrTime currentTime;
 	bool hasCalledWaitFrame = false;
+    std::shared_ptr<XrFrameState> savedFrameState;
+            // [](size_t s){return malloc(s); },
+                // FreeXrStructChainWithFree(gMainSession->savedFrameState);
+// gMainSession->savedFrameState = reinterpret_cast<XrFrameState*>(CopyXrStructChainWithMalloc(state));
 
 	MainSessionSessionState()
     {
@@ -437,6 +442,13 @@ struct MainSessionSessionState : public SessionStateTracker
                 hasCalledWaitFrame = true; // XXX this is where hasCalledWaitFrame was updated in old layer :shrug:
             }
             SessionStateTracker::DoCommand(command);
+        }
+    }
+
+    void IncrementPredictedDisplayTime()
+    {
+        if(savedFrameState) {
+            savedFrameState->predictedDisplayTime += 1; // XXX This is legal, but not really what we want
         }
     }
 
@@ -711,5 +723,8 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
 
 XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session, const XrSessionBeginInfo* beginInfo);
 XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSessionBeginInfo* beginInfo);
+
+XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState);
+XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState);
 
 #endif /* _OVERLAYS_H_ */

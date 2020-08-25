@@ -550,6 +550,30 @@ after_downchain["xrRequestExitSession"] = """
     }
 """
 
+after_downchain["xrWaitFrame"] = """
+    auto mainSession = gMainSessionContext;
+    if(mainSession) {
+        auto l = mainSession->GetLock();
+
+        XrInstance instance = sessionInfo->parentInstance;
+        std::shared_ptr<XrFrameState> savedFrameState(reinterpret_cast<XrFrameState*>(CopyXrStructChainWithMalloc(instance, frameState)), [instance](XrFrameState*p){ FreeXrStructChainWithFree(instance, p);});
+        mainSession->sessionState.savedFrameState = savedFrameState;
+
+        mainSession->sessionState.DoCommand(OpenXRCommand::WAIT_FRAME);
+
+        std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
+        if(!gConnectionsToOverlayByProcessId.empty()) {
+            for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
+                auto conn = overlayconn.second;
+                auto lock = conn->GetLock();
+                if(conn->ctx) {
+                    // XXX if this overlay app's WaitFrameMainAsOverlay is waiting on WaitFrameMain, release it.
+                }
+            }
+        }
+}
+"""
+
 after_downchain["xrCreateSwapchain"] = """
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
@@ -1138,6 +1162,30 @@ BeginSessionRPC = {
     "function" : "OverlaysLayerBeginSessionMainAsOverlay"
 }
 
+WaitFrameRPC = {
+    "command_name" : "WaitFrame",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "frameWaitInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrFrameWaitInfo",
+            "is_const" : True
+        },
+        {
+            "name" : "frameState",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrFrameState",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerWaitFrameMainAsOverlay"
+}
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1146,6 +1194,7 @@ rpcs = (
     CreateReferenceSpaceRPC,
     PollEventRPC,
     BeginSessionRPC,
+    WaitFrameRPC,
 )
 
 
@@ -1412,7 +1461,6 @@ stub_em = (
     "CreateActionSpace",
     "EndSession",
     "RequestExitSession",
-    "WaitFrame",
     "BeginFrame",
     "EndFrame",
     "LocateViews",
