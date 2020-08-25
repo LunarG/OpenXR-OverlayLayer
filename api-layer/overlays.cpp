@@ -1536,7 +1536,6 @@ XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection
         ssc->type = XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;
         ssc->next = nullptr;
         ssc->session = mainSessionContext->session;
-        printf("ssc->session = %llX\n", (uint64_t)ssc->session);
         ssc->state = pendingStateChange.second;
         XrTime calculatedTime = 1; // XXX 
         ssc->time = calculatedTime;
@@ -1624,10 +1623,8 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
 
             /* See if the main process has any events for us */
             result = RPCCallPollEvent(instance, eventData);
-            printf("eventData->type = %d\n", eventData->type);
             if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
                 const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
-                printf("    ->session = %llu\n", (uint64_t)ssc->session);
             }
             if(result == XR_SUCCESS) {
                 SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
@@ -1693,6 +1690,31 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
     return result;
 }
 
+XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSessionBeginInfo* beginInfo)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    auto l = connection->GetLock();
+
+    connection->ctx->sessionState.DoCommand(OpenXRCommand::BEGIN_SESSION);
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session, const XrSessionBeginInfo* beginInfo)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    XrResult result = RPCCallBeginSession(instance, sessionInfo->actualHandle, beginInfo);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
 
 extern "C" {
 
