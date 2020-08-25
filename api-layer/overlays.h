@@ -433,6 +433,9 @@ struct MainSessionSessionState : public SessionStateTracker
         if (command == WAIT_FRAME) {
             // XXX saved predicted times updated separately
         } else {
+            if(command == BEGIN_SESSION) {
+                hasCalledWaitFrame = true; // XXX this is where hasCalledWaitFrame was updated in old layer :shrug:
+            }
             SessionStateTracker::DoCommand(command);
         }
     }
