@@ -777,7 +777,7 @@ bool FindExtensionInList(const char* extension, uint32_t extensionsCount, const 
     return false;
 }
 
-XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, XrSession *session)
+XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, const XrSessionCreateInfoOverlayEXTX* createInfoOverlay, XrSession *session)
 {
     auto mainSession = gMainSessionContext;
     auto l = mainSession->GetLock();
@@ -884,7 +884,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
 
     {
         auto l = connection->GetLock();
-        connection->ctx = std::make_shared<MainAsOverlaySessionContext>();
+        connection->ctx = std::make_shared<MainAsOverlaySessionContext>(createInfoOverlay);
     }
     // XXX create stand in for Main managing all Overlay app's stuff (in case Overlay unexpectedly exits); OverlaySessionContext
 
@@ -1163,6 +1163,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     XrInstance                                  instance,
     const XrSessionCreateInfo*                  createInfo,
     XrSession*                                  session,
+    const XrSessionCreateInfoOverlayEXTX*       createInfoOverlay,
     ID3D11Device*   d3d11Device)
 {
     XrResult result = XR_SUCCESS;
@@ -1204,7 +1205,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     createInfoMinusOverlays.enabledExtensionNames = extensionNamesMinusOverlay;
     createInfoMinusOverlays.enabledExtensionCount = extensionCountMinusOverlay;
 
-    result = RPCCallCreateSession(instance, formFactor, &createInfoMinusOverlays, createInfo, session);
+    result = RPCCallCreateSession(instance, formFactor, &createInfoMinusOverlays, createInfo, createInfoOverlay, session);
 
     delete[] extensionNamesMinusOverlay;
 
@@ -1267,7 +1268,7 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
     if(!cio) {
         result = OverlaysLayerCreateSessionMain(instance, createInfo, session);
     } else {
-        result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session, d3dbinding->device);
+        result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session, cio, d3dbinding->device);
     }
 
     return result;

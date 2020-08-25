@@ -493,6 +493,7 @@ typedef std::shared_ptr<XrEventDataBuffer> EventDataBufferPtr;
 
 struct MainAsOverlaySessionContext
 {
+    bool relaxedDisplayTime;
     // local handles so they can be looked up in our tracking maps
     std::set<XrSpace> localSpaces; // use swapchainMap? 
     std::set<XrSwapchain> localSwapchains;
@@ -513,6 +514,10 @@ struct MainAsOverlaySessionContext
     {
         return std::unique_lock<std::recursive_mutex>(mutex);
     }
+
+    MainAsOverlaySessionContext(const XrSessionCreateInfoOverlayEXTX* createInfoOverlay) :
+        relaxedDisplayTime(createInfoOverlay->createFlags & XR_OVERLAY_SESSION_CREATE_RELAXED_DISPLAY_TIME_BIT_EXTX)
+    {}
 
     ~MainAsOverlaySessionContext()
     {
@@ -683,7 +688,7 @@ struct OverlaysLayerRPCCreateSession
 
 // Manually written functions -----------------------------------------------
 
-XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, XrSession *session); 
+XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, const XrSessionCreateInfoOverlayEXTX *createInfoOverlay, XrSession *session);
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session);
 
 XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount);

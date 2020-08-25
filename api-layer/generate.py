@@ -995,6 +995,12 @@ CreateSessionRPC = {
             "is_const" : True
         },
         {
+            "name" : "createInfoOverlay",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrSessionCreateInfoOverlayEXTX",
+            "is_const" : True
+        },
+        {
             "name" : "session",
             "type" : "pointer_to_pod",
             "pod_type" : "XrSession",
