@@ -886,10 +886,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
         auto l = connection->GetLock();
         connection->ctx = std::make_shared<MainAsOverlaySessionContext>(createInfoOverlay);
     }
-    // XXX create stand in for Main managing all Overlay app's stuff (in case Overlay unexpectedly exits); OverlaySessionContext
 
-    // XXX should gMainSession be the downchain session so MainAsOverlay can use it directly?
-    // Then looking it up in ...ToHandleInfo requires mapping backward to the local handle
     *session = mainSession->session;
 
     return XR_SUCCESS;
@@ -1709,6 +1706,36 @@ XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
 
     XrResult result = RPCCallBeginSession(instance, sessionInfo->actualHandle, beginInfo);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    auto l = connection->GetLock();
+    connection->ctx->sessionState.DoCommand(OpenXRCommand::WAIT_FRAME);
+
+    if(!connection->ctx->relaxedDisplayTime) {
+        // XXX tell main we are waiting by setting a variable in ctx and then wait on a semaphore
+    }
+
+    return XR_SUCCESS;
+}
+
+
+XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    XrResult result = RPCCallWaitFrame(instance, sessionInfo->actualHandle, frameWaitInfo, frameState);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
