@@ -171,3 +171,6 @@ if(WIN32)
     # )
         # set_target_properties(copy-api_dump-def-file PROPERTIES FOLDER ${HELPER_FOLDER})
 endif()
+
+set_property(TARGET xr_extx_overlay PROPERTY CXX_STANDARD 17)
+
