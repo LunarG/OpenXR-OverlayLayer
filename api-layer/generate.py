@@ -1186,6 +1186,24 @@ WaitFrameRPC = {
     "function" : "OverlaysLayerWaitFrameMainAsOverlay"
 }
 
+BeginFrameRPC = {
+    "command_name" : "BeginFrame",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "frameBeginInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrFrameBeginInfo",
+            "is_const" : True
+        },
+    ),
+    "function" : "OverlaysLayerBeginFrameMainAsOverlay"
+}
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1195,6 +1213,7 @@ rpcs = (
     PollEventRPC,
     BeginSessionRPC,
     WaitFrameRPC,
+    BeginFrameRPC,
 )
 
 
@@ -1461,7 +1480,6 @@ stub_em = (
     "CreateActionSpace",
     "EndSession",
     "RequestExitSession",
-    "BeginFrame",
     "EndFrame",
     "LocateViews",
     "AttachSessionActionSets",

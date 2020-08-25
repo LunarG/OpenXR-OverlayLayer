@@ -1744,6 +1744,33 @@ XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, c
     return result;
 }
 
+XrResult OverlaysLayerBeginFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameBeginInfo* frameBeginInfo)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    auto l = connection->GetLock();
+
+    // At this time xrBeginFrame has no inputs and returns nothing.
+
+    return XR_SUCCESS;
+}
+
+
+XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, const XrFrameBeginInfo* frameBeginInfo)
+{
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    XrResult result = RPCCallBeginFrame(instance, sessionInfo->actualHandle, frameBeginInfo);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
+
 extern "C" {
 
 // Function used to negotiate an interface betewen the loader and an API layer.  Each library exposing one or
