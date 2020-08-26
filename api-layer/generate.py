@@ -553,10 +553,11 @@ after_downchain["xrRequestExitSession"] = """
 
 after_downchain["xrWaitFrame"] = """
     auto mainSession = gMainSessionContext;
+    XrInstance instance = sessionInfo->parentInstance;
+    mlock.unlock(); // There's a race condition here with CreateSession unless this is unlocked before mainSession->GetLock();
     if(mainSession) {
         auto l = mainSession->GetLock();
 
-        XrInstance instance = sessionInfo->parentInstance;
         std::shared_ptr<XrFrameState> savedFrameState(reinterpret_cast<XrFrameState*>(CopyXrStructChainWithMalloc(instance, frameState)), [instance](XrFrameState*p){ FreeXrStructChainWithFree(instance, p);});
         mainSession->sessionState.savedFrameState = savedFrameState;
 
@@ -785,6 +786,113 @@ void IPCCopyOut(T* dst, const T* src, size_t count)
     }
 }
 
+// CopyOut XR structs -------------------------------------------------------
+template <>
+void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
+{
+    bool skipped = true;
+
+    do {
+        skipped = false;
+
+        if(!srcbase) {
+            return;
+        }
+
+        switch(dstbase->type) {
+            case XR_TYPE_SPACE_LOCATION: {
+                auto src = reinterpret_cast<const XrSpaceLocation*>(srcbase);
+                auto dst = reinterpret_cast<XrSpaceLocation*>(dstbase);
+                dst->locationFlags = src->locationFlags;
+                dst->pose = src->pose;
+                break;
+            }
+
+            case XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR: {
+                auto src = reinterpret_cast<const XrGraphicsRequirementsD3D11KHR*>(srcbase);
+                auto dst = reinterpret_cast<XrGraphicsRequirementsD3D11KHR*>(dstbase);
+                dst->adapterLuid = src->adapterLuid;
+                dst->minFeatureLevel = src->minFeatureLevel;
+                break;
+            }
+
+            case XR_TYPE_FRAME_STATE: {
+                auto src = reinterpret_cast<const XrFrameState*>(srcbase);
+                auto dst = reinterpret_cast<XrFrameState*>(dstbase);
+                dst->predictedDisplayTime = src->predictedDisplayTime;
+                dst->predictedDisplayPeriod = src->predictedDisplayPeriod;
+                dst->shouldRender = src->shouldRender;
+                break;
+            }
+
+            case XR_TYPE_INSTANCE_PROPERTIES: {
+                auto src = reinterpret_cast<const XrInstanceProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrInstanceProperties*>(dstbase);
+                dst->runtimeVersion = src->runtimeVersion;
+                strncpy_s(dst->runtimeName, src->runtimeName, XR_MAX_RUNTIME_NAME_SIZE);
+                break;
+            }
+
+            case XR_TYPE_EXTENSION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrExtensionProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrExtensionProperties*>(dstbase);
+                strncpy_s(dst->extensionName, src->extensionName, XR_MAX_EXTENSION_NAME_SIZE);
+                dst->extensionVersion = src->extensionVersion;
+                break;
+            }
+
+            case XR_TYPE_SYSTEM_PROPERTIES: {
+                auto src = reinterpret_cast<const XrSystemProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrSystemProperties*>(dstbase);
+                dst->systemId = src->systemId;
+                dst->vendorId = src->vendorId;
+                dst->graphicsProperties = src->graphicsProperties;
+                dst->trackingProperties = src->trackingProperties;
+                strncpy_s(dst->systemName, src->systemName, XR_MAX_SYSTEM_NAME_SIZE);
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_PROPERTIES: {
+                auto src = reinterpret_cast<const XrViewConfigurationProperties*>(srcbase);
+                auto dst = reinterpret_cast<XrViewConfigurationProperties*>(dstbase);
+                dst->viewConfigurationType = src->viewConfigurationType;
+                dst->fovMutable = src->fovMutable;
+                break;
+            }
+
+            case XR_TYPE_VIEW_CONFIGURATION_VIEW: {
+                auto src = reinterpret_cast<const XrViewConfigurationView*>(srcbase);
+                auto dst = reinterpret_cast<XrViewConfigurationView*>(dstbase);
+                dst->recommendedImageRectWidth = src->recommendedImageRectWidth;
+                dst->maxImageRectWidth = src->maxImageRectWidth;
+                dst->recommendedImageRectHeight = src->recommendedImageRectHeight;
+                dst->maxImageRectHeight = src->maxImageRectHeight;
+                dst->recommendedSwapchainSampleCount = src->recommendedSwapchainSampleCount;
+                dst->maxSwapchainSampleCount = src->maxSwapchainSampleCount;
+                break;
+            }
+
+            default: {
+                // I don't know what this is, drop it and keep going
+                OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
+                    OverlaysLayerNoObjectInfo, fmt("WARNING: IPCCopyOut called to copy out to %p of unknown type %d - skipped.\\n", dstbase, dstbase->type).c_str());
+
+                dstbase = dstbase->next;
+                skipped = true;
+
+                // Don't increment srcbase.  Unknown structs were
+                // dropped during serialization, so keep going until we
+                // see a type we know and then we'll have caught up with
+                // what was serialized.
+                //
+                break;
+            }
+        }
+    } while(skipped);
+
+    IPCCopyOut(dstbase->next, srcbase->next);
+}
+
 
 """
 
@@ -963,10 +1071,19 @@ struct {LayerName}{handle_type}HandleInfo
             Destroy();
         }}
     }}
+
+    std::recursive_mutex mutex;
+    std::unique_lock<std::recursive_mutex> GetLock()
+    {{
+        return std::unique_lock<std::recursive_mutex>(mutex);
+    }}
+
 }};
 
 extern std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;
 extern std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
+
+{LayerName}{handle_type}HandleInfo::Ptr {LayerName}GetHandleInfoFrom{handle_type}({handle_type} handle);
 {substitution_header_text}
 """
 
@@ -974,6 +1091,15 @@ extern std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
 
 std::unordered_map<{handle_type}, {LayerName}{handle_type}HandleInfo::Ptr> g{LayerName}{handle_type}ToHandleInfo;
 std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
+
+// could throw if handle not in the map
+{LayerName}{handle_type}HandleInfo::Ptr {LayerName}GetHandleInfoFrom{handle_type}({handle_type} handle)
+{{
+    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
+    {LayerName}{handle_type}HandleInfo::Ptr info = g{LayerName}{handle_type}ToHandleInfo.at(handle);
+    return info;
+}}
+
 {substitution_source_text}
 """
 
