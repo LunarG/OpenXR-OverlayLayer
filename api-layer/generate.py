@@ -324,6 +324,7 @@ supported_structs = [
 manually_implemented_commands = [
     "xrCreateSession",
     "xrPollEvent",
+    "xrEndFrame",
 ]
 
 supported_commands = [
@@ -521,7 +522,7 @@ in_destroy["XrSession"] = """
 add_to_handle_struct["XrSwapchain"] = {
     "members" : """
     OverlaySwapchain::Ptr overlaySwapchain;             // Swapchain data on Overlay side
-    SwapchainCachedData::Ptr mainCachedSwapchainData;   // Swapchain data on Main side
+    SwapchainCachedData::Ptr mainAsOverlaySwapchain;   // Swapchain data on Main side
 
 """,
 }
@@ -693,20 +694,6 @@ after_downchain["xrSuggestInteractionProfileBindings"] = """
 
 
 # Additional special handling in functions
-
-before_downchain["xrEndFrame"] = """
-    XrBaseInStructure *newFrameEndInfo = CopyXrStructChainWithMalloc(sessionInfo->parentInstance, frameEndInfo);
-    if(!RestoreActualHandles(sessionInfo->parentInstance, newFrameEndInfo)) {
-        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    frameEndInfo = reinterpret_cast<XrFrameEndInfo*>(newFrameEndInfo);
-"""
-
-after_downchain["xrEndFrame"] = """
-    FreeXrStructChainWithFree(sessionInfo->parentInstance, newFrameEndInfo);
-"""
 
 
 before_downchain["xrLocateViews"] = """
@@ -1204,6 +1191,94 @@ BeginFrameRPC = {
     "function" : "OverlaysLayerBeginFrameMainAsOverlay"
 }
 
+EndFrameRPC = {
+    "command_name" : "EndFrame",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "frameEndInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrFrameEndInfo",
+            "is_const" : True
+        },
+    ),
+    "function" : "OverlaysLayerEndFrameMainAsOverlay"
+}
+
+AcquireSwapchainImageRPC = {
+    "command_name" : "AcquireSwapchainImage",
+    "args" : (
+        {
+            "name" : "swapchain",
+            "type" : "POD",
+            "pod_type" : "XrSwapchain",
+        },
+        {
+            "name" : "acquireInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrSwapchainImageAcquireInfo",
+            "is_const" : True
+        },
+        {
+            "name" : "index",
+            "type" : "pointer_to_pod",
+            "pod_type" : "uint32_t",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerAcquireSwapchainImageMainAsOverlay"
+}
+
+WaitSwapchainImageRPC = {
+    "command_name" : "WaitSwapchainImage",
+    "args" : (
+        {
+            "name" : "swapchain",
+            "type" : "POD",
+            "pod_type" : "XrSwapchain",
+        },
+        {
+            "name" : "acquireInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrSwapchainImageWaitInfo",
+            "is_const" : True
+        },
+        {
+            "name" : "sharedResourceHandle",
+            "type" : "POD",
+            "pod_type" : "HANDLE",
+        },
+    ),
+    "function" : "OverlaysLayerWaitSwapchainImageMainAsOverlay"
+}
+
+ReleaseSwapchainImageRPC = {
+    "command_name" : "ReleaseSwapchainImage",
+    "args" : (
+        {
+            "name" : "swapchain",
+            "type" : "POD",
+            "pod_type" : "XrSwapchain",
+        },
+        {
+            "name" : "acquireInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrSwapchainImageReleaseInfo",
+            "is_const" : True
+        },
+        {
+            "name" : "sharedResourceHandle",
+            "type" : "POD",
+            "pod_type" : "HANDLE",
+        },
+    ),
+    "function" : "OverlaysLayerReleaseSwapchainImageMainAsOverlay"
+}
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1214,6 +1289,10 @@ rpcs = (
     BeginSessionRPC,
     WaitFrameRPC,
     BeginFrameRPC,
+    EndFrameRPC,
+    AcquireSwapchainImageRPC,
+    WaitSwapchainImageRPC,
+    ReleaseSwapchainImageRPC,
 )
 
 
@@ -1472,15 +1551,11 @@ stub_em = (
     "LocateSpace",
     "DestroySpace",
     "DestroySwapchain",
-    "AcquireSwapchainImage",
-    "WaitSwapchainImage",
-    "ReleaseSwapchainImage",
     "EnumerateReferenceSpaces",
     "GetReferenceSpaceBoundsRect",
     "CreateActionSpace",
     "EndSession",
     "RequestExitSession",
-    "EndFrame",
     "LocateViews",
     "AttachSessionActionSets",
     "GetCurrentInteractionProfile",

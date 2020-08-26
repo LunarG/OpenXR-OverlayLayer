@@ -417,13 +417,10 @@ struct SessionStateTracker
 struct MainSessionSessionState : public SessionStateTracker
 {
     XrTime currentTime;
-	bool hasCalledWaitFrame = false;
+    bool hasCalledWaitFrame = false;
     std::shared_ptr<XrFrameState> savedFrameState;
-            // [](size_t s){return malloc(s); },
-                // FreeXrStructChainWithFree(gMainSession->savedFrameState);
-// gMainSession->savedFrameState = reinterpret_cast<XrFrameState*>(CopyXrStructChainWithMalloc(state));
 
-	MainSessionSessionState()
+    MainSessionSessionState()
     {
     }
 
@@ -483,10 +480,13 @@ struct SwapchainCachedData
     typedef std::shared_ptr<SwapchainCachedData> Ptr;
 };
 
+struct OverlaysLayerXrSwapchainHandleInfo;
+
 struct MainSessionContext
 {
     XrSession session;
     MainSessionSessionState sessionState;
+    std::set<std::shared_ptr<OverlaysLayerXrSwapchainHandleInfo>> swapchainsInFlight;
 
     MainSessionContext(XrSession session) :
         session(session)
@@ -514,6 +514,9 @@ struct MainAsOverlaySessionContext
 
     constexpr static int maxEventsSavedForOverlay = 16;
     std::queue<EventDataBufferPtr> eventsSaved;
+
+    constexpr static int maxOverlayCompositionLayers = 16;
+    std::vector<std::shared_ptr<const XrCompositionLayerBaseHeader>> overlayLayers;
 
     // This structure needs to be locked because Main could Destroy its
     // shared XrSession and all of its children and that would need to go
@@ -729,5 +732,17 @@ XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection
 
 XrResult OverlaysLayerBeginFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameBeginInfo* frameBeginInfo);
 XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, const XrFrameBeginInfo* frameBeginInfo);
+
+XrResult OverlaysLayerAcquireSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquireInfo, uint32_t *index);
+XrResult OverlaysLayerAcquireSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquireInfo, uint32_t *index);
+
+XrResult OverlaysLayerWaitSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageWaitInfo* waitInfo, HANDLE sourceImage);
+XrResult OverlaysLayerWaitSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageWaitInfo* waitInfo);
+
+XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* waitInfo, HANDLE sourceImage);
+XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* waitInfo);
+
+XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameEndInfo* frameEndInfo);
+XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo);
 
 #endif /* _OVERLAYS_H_ */
