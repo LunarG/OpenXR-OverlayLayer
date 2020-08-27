@@ -1679,10 +1679,11 @@ stub_em = (
     "DestroySwapchain",
     "EnumerateReferenceSpaces",
     "GetReferenceSpaceBoundsRect",
-    "CreateActionSpace",
     "EndSession",
     "RequestExitSession",
     "LocateViews",
+
+    "CreateActionSpace",
     "AttachSessionActionSets",
     "GetCurrentInteractionProfile",
     "GetActionStateBoolean",
@@ -1694,6 +1695,7 @@ stub_em = (
     "GetInputSourceLocalizedName",
     "ApplyHapticFeedback",
     "StopHapticFeedback",
+
     "SessionBeginDebugUtilsLabelRegionEXT",
     "SessionEndDebugUtilsLabelRegionEXT",
     "SessionInsertDebugUtilsLabelEXT",
