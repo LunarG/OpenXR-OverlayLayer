@@ -1863,6 +1863,19 @@ XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
     return result;
 }
 
+template <typename T> 
+std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
+{
+    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
+    if(!RestoreActualHandles(instance, chainCopy)) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
+            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
+        return nullptr;
+    }
+    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p); printf("freed nicely\n");});
+    return chainPtr;
+}
+
 XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* releaseInfo)
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
@@ -1892,6 +1905,8 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 
     HANDLE sourceImage = overlaySwapchain->swapchainHandles[beingReleased];
 
+#if 0
+
     XrBaseInStructure *newReleaseInfo = CopyXrStructChainWithMalloc(instance, releaseInfo);
     if(!RestoreActualHandles(instance, newReleaseInfo)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrReleaseSwapchainImage",
@@ -1902,6 +1917,13 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
     XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageReleaseInfo*>(newReleaseInfo), sourceImage);
 
     FreeXrStructChainWithFree(instance, newReleaseInfo);
+
+#else
+
+    auto copy = GetCopyHandlesRestored(instance, "xrReleaseSwapchainImage", releaseInfo);
+    XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, copy.get(), sourceImage);
+
+#endif
 
     if(!XR_SUCCEEDED(result)) {
         return result;
