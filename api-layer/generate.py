@@ -1650,26 +1650,34 @@ XrResult RPCServe{command_name}(
 
 
 header_text += "bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr);\n"
-source_text += """
+source_text += f"""
 bool ProcessOverlayRequestOrReturnConnectionLost(ConnectionToOverlay::Ptr connection, IPCBuffer &ipcbuf, IPCHeader *hdr)
-{
-    switch(hdr->requestType) {
+{{
+    try{{
+        switch(hdr->requestType) {{
 """
 
 source_text += rpc_case_bodies
 
-source_text += """
+source_text += f"""
 
-        default: {
-            // XXX use log message func
-            OutputDebugStringA("unknown request type in IPC");
-            return false;
-            break;
-        }
-    }
+            default: {{
+                // XXX use log message func
+                OutputDebugStringA("unknown request type in IPC");
+                OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+                    OverlaysLayerNoObjectInfo, fmt("Unknown request type %08X in RPC\\n", hdr->requestType).c_str());
+                break;
+            }}
+        }}
 
-    return true;
-}
+        return true;
+
+    }} catch (const OverlaysLayerXrException exc) {{
+
+        hdr->result = exc.result();
+        return true;
+    }}
+}}
 """
 
 # XXX temporary stubs
@@ -2343,13 +2351,15 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
         command_for_main_side = f"""
 {command_type} {layer_command}Main(XrInstance parentInstance, {parameter_cdecls})
 {{
+    XrResult result = XR_SUCCESS;
+
     std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
     {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = g{LayerName}{handle_type}ToHandleInfo.at({handle_name});
     // restore the actual handle
     {handle_type} localHandleStore = {handle_name};
     {handle_name} = {handle_name}Info->actualHandle;
 
-    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});
+    result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});
 
     // put the local handle back
     {handle_name} = localHandleStore;
@@ -2396,24 +2406,31 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     api_layer_proc = f"""
 {command_type} {layer_command}({parameter_cdecls})
 {{
-    std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
-    auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});
-    if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, \"{command_name}\",
-            OverlaysLayerNoObjectInfo, \"FATAL: invalid handle couldn't be found in tracking map.\\n\");
-        return XR_ERROR_VALIDATION_FAILURE;
+    try {{
+
+        std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
+        auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});
+        if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{
+            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, \"{command_name}\",
+                OverlaysLayerNoObjectInfo, \"FATAL: invalid handle couldn't be found in tracking map.\\n\");
+            return XR_ERROR_VALIDATION_FAILURE;
+        }}
+        {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = it->second;
+
+        {before_downchain.get(command_name, "")}
+
+        {call_actual_command}
+
+        {special_case_postscript}
+
+        {after_downchain_if_success}
+
+        return result;
+
+    }} catch (const OverlaysLayerXrException exc) {{
+
+        return exc.result();
     }}
-    {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = it->second;
-
-    {before_downchain.get(command_name, "")}
-
-    {call_actual_command}
-
-    {special_case_postscript}
-
-    {after_downchain_if_success}
-
-    return result;
 }}
 """
 
