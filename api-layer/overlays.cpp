@@ -72,6 +72,19 @@ uint64_t GetNextLocalHandle()
     return nextHandle++;
 }
 
+template <typename T> 
+std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
+{
+    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
+    if(!RestoreActualHandles(instance, chainCopy)) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
+            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
+        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+    }
+    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p); printf("freed nicely\n");});
+    return chainPtr;
+}
+
 void LogWindowsLastError(const char *xrfunc, const char* what, const char *file, int line)
 {
     DWORD lastError = GetLastError();
@@ -1153,9 +1166,9 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    // XXX missing RestoreHandles here on createInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
-    XrResult result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfo, swapchain);
+    XrResult result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfoCopy.get(), swapchain);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1209,9 +1222,9 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
 
     uint32_t swapchainCount;
 
-    // XXX missing RestoreHandles here on createInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
-    XrResult result = RPCCallCreateSwapchain(instance, sessionInfo->actualHandle, createInfo, swapchain, &swapchainCount);
+    XrResult result = RPCCallCreateSwapchain(instance, sessionInfo->actualHandle, createInfoCopy.get(), swapchain, &swapchainCount);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1254,9 +1267,9 @@ XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
 
-    // XXX missing RestoreHandles here on createInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
-    XrResult result = sessionInfo->downchain->CreateReferenceSpace(sessionInfo->actualHandle, createInfo, space);
+    XrResult result = sessionInfo->downchain->CreateReferenceSpace(sessionInfo->actualHandle, createInfoCopy.get(), space);
 
     XrSpace actualHandle = *space;
     XrSpace localHandle = (XrSpace)GetNextLocalHandle();
@@ -1281,9 +1294,9 @@ XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    // XXX missing RestoreHandles here on createInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
-    XrResult result = RPCCallCreateReferenceSpace(instance, sessionInfo->actualHandle, createInfo, space);
+    XrResult result = RPCCallCreateReferenceSpace(instance, sessionInfo->actualHandle, createInfoCopy.get(), space);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1582,7 +1595,7 @@ XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connect
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
-    // XXX missing RestoreHandles here on createInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    // auto beginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", beginInfo);
 
     connection->ctx->sessionState.DoCommand(OpenXRCommand::BEGIN_SESSION);
 
@@ -1593,9 +1606,9 @@ XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    // XXX missing RestoreHandles here on createInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto beginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginSession", beginInfo);
 
-    XrResult result = RPCCallBeginSession(instance, sessionInfo->actualHandle, beginInfo);
+    XrResult result = RPCCallBeginSession(instance, sessionInfo->actualHandle, beginInfoCopy.get());
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1628,9 +1641,9 @@ XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, c
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    // XXX missing RestoreHandles here on frameWaitInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto frameWaitInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrWaitFrame", frameWaitInfo);
 
-    XrResult result = RPCCallWaitFrame(instance, sessionInfo->actualHandle, frameWaitInfo, frameState);
+    XrResult result = RPCCallWaitFrame(instance, sessionInfo->actualHandle, frameWaitInfoCopy.get(), frameState);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1646,6 +1659,7 @@ XrResult OverlaysLayerBeginFrameMainAsOverlay(ConnectionToOverlay::Ptr connectio
     auto l = connection->GetLock();
 
     // At this time xrBeginFrame has no inputs and returns nothing.
+    //auto beginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", beginInfo);
 
     return XR_SUCCESS;
 }
@@ -1654,9 +1668,9 @@ XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, 
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    // XXX missing RestoreHandles here on frameBeginInfo but we just happen to know there are no handles in there, but should just in case next != nullptr
+    auto frameBeginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", frameBeginInfo);
 
-    XrResult result = RPCCallBeginFrame(instance, sessionInfo->actualHandle, frameBeginInfo);
+    XrResult result = RPCCallBeginFrame(instance, sessionInfo->actualHandle, frameBeginInfoCopy.get());
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1669,16 +1683,9 @@ XrResult OverlaysLayerAcquireSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
-    auto *newAcquireInfo = CopyXrStructChainWithMalloc(swapchainInfo->parentInstance, acquireInfo);
-    if(!RestoreActualHandles(swapchainInfo->parentInstance, newAcquireInfo)) {
-        OverlaysLayerLogMessage(swapchainInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAcquireSwapchainImage",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto acquireInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
 
-    XrResult result = swapchainInfo->downchain->AcquireSwapchainImage(swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageAcquireInfo*>(newAcquireInfo), index);
-
-    FreeXrStructChainWithFree(swapchainInfo->parentInstance, newAcquireInfo);
+    XrResult result = swapchainInfo->downchain->AcquireSwapchainImage(swapchainInfo->actualHandle, acquireInfoCopy.get(), index);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1693,16 +1700,9 @@ XrResult OverlaysLayerAcquireSwapchainImageOverlay(XrInstance instance, XrSwapch
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
-    XrBaseInStructure *newAcquireInfo = CopyXrStructChainWithMalloc(instance, acquireInfo);
-    if(!RestoreActualHandles(instance, newAcquireInfo)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAcquireSwapchainImage",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto acquireInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
 
-    XrResult result = RPCCallAcquireSwapchainImage(instance, swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageAcquireInfo*>(newAcquireInfo), index);
-
-    FreeXrStructChainWithFree(instance, newAcquireInfo);
+    XrResult result = RPCCallAcquireSwapchainImage(instance, swapchainInfo->actualHandle, acquireInfoCopy.get(), index);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1717,17 +1717,9 @@ XrResult OverlaysLayerWaitSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr c
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
-    XrBaseInStructure *newWaitInfo = CopyXrStructChainWithMalloc(swapchainInfo->parentInstance, waitInfo);
-    if(!RestoreActualHandles(swapchainInfo->parentInstance, newWaitInfo)) {
-        OverlaysLayerLogMessage(swapchainInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrWaitSwapchainImage",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto waitInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
 
-
-    XrResult result = swapchainInfo->downchain->WaitSwapchainImage(swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageWaitInfo*>(newWaitInfo));
-
-    FreeXrStructChainWithFree(swapchainInfo->parentInstance, newWaitInfo);
+    XrResult result = swapchainInfo->downchain->WaitSwapchainImage(swapchainInfo->actualHandle, waitInfoCopy.get());
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1775,16 +1767,9 @@ XrResult OverlaysLayerWaitSwapchainImageOverlay(XrInstance instance, XrSwapchain
     uint32_t wasWaited = overlaySwapchain->acquired[0];
     HANDLE sourceImage = overlaySwapchain->swapchainHandles[wasWaited];
 
-    XrBaseInStructure *newWaitInfo = CopyXrStructChainWithMalloc(instance, waitInfo);
-    if(!RestoreActualHandles(instance, newWaitInfo)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrWaitSwapchainImage",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto waitInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
 
-    XrResult result = RPCCallWaitSwapchainImage(instance, swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageWaitInfo*>(newWaitInfo), sourceImage);
-
-    FreeXrStructChainWithFree(instance, newWaitInfo);
+    XrResult result = RPCCallWaitSwapchainImage(instance, swapchainInfo->actualHandle, waitInfoCopy.get(), sourceImage);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1849,31 +1834,11 @@ XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
     d3dDevice->GetImmediateContext(&d3dContext);
     d3dContext->CopyResource(mainAsOverlaySwapchain->swapchainImages[which], sharedTexture);
 
-    XrBaseInStructure *newReleaseInfo = CopyXrStructChainWithMalloc(swapchainInfo->parentInstance, releaseInfo);
-    if(!RestoreActualHandles(swapchainInfo->parentInstance, newReleaseInfo)) {
-        OverlaysLayerLogMessage(swapchainInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrReleaseSwapchainImage",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto releaseInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrReleaseSwapchainImage", releaseInfo);
 
-    XrResult result = swapchainInfo->downchain->ReleaseSwapchainImage(swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageReleaseInfo*>(newReleaseInfo));
-
-    FreeXrStructChainWithFree(swapchainInfo->parentInstance, newReleaseInfo);
+    XrResult result = swapchainInfo->downchain->ReleaseSwapchainImage(swapchainInfo->actualHandle, releaseInfoCopy.get());
 
     return result;
-}
-
-template <typename T> 
-std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
-{
-    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
-    if(!RestoreActualHandles(instance, chainCopy)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return nullptr;
-    }
-    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p); printf("freed nicely\n");});
-    return chainPtr;
 }
 
 XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* releaseInfo)
@@ -1905,25 +1870,8 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 
     HANDLE sourceImage = overlaySwapchain->swapchainHandles[beingReleased];
 
-#if 0
-
-    XrBaseInStructure *newReleaseInfo = CopyXrStructChainWithMalloc(instance, releaseInfo);
-    if(!RestoreActualHandles(instance, newReleaseInfo)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrReleaseSwapchainImage",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-
-    XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, reinterpret_cast<XrSwapchainImageReleaseInfo*>(newReleaseInfo), sourceImage);
-
-    FreeXrStructChainWithFree(instance, newReleaseInfo);
-
-#else
-
-    auto copy = GetCopyHandlesRestored(instance, "xrReleaseSwapchainImage", releaseInfo);
-    XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, copy.get(), sourceImage);
-
-#endif
+    auto releaseInfoCopy = GetCopyHandlesRestored(instance, "xrReleaseSwapchainImage", releaseInfo);
+    XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, releaseInfoCopy.get(), sourceImage);
 
     if(!XR_SUCCEEDED(result)) {
         return result;
@@ -1979,16 +1927,9 @@ XrResult OverlaysLayerEndFrameOverlay(XrInstance instance, XrSession session, co
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    XrBaseInStructure *newFrameEndInfo = CopyXrStructChainWithMalloc(instance, frameEndInfo);
-    if(!RestoreActualHandles(instance, newFrameEndInfo)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto frameEndInfoCopy = GetCopyHandlesRestored(instance, "xrEndFrame", frameEndInfo);
 
-    XrResult result = RPCCallEndFrame(instance, sessionInfo->actualHandle, reinterpret_cast<XrFrameEndInfo*>(newFrameEndInfo));
-
-    FreeXrStructChainWithFree(instance, newFrameEndInfo);
+    XrResult result = RPCCallEndFrame(instance, sessionInfo->actualHandle, frameEndInfoCopy.get());
 
     return result;
 }
@@ -2095,16 +2036,10 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 
     }
 
-    if(!RestoreActualHandles(parentInstance, reinterpret_cast<XrBaseInStructure*>(frameEndInfoMerged))) {
-        OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    auto frameEndInfoMergedCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrEndFrame", frameEndInfoMerged);
 
     auto sessLock = sessionInfo->GetLock();
-    XrResult result = sessionInfo->downchain->EndFrame(sessionInfo->actualHandle, frameEndInfoMerged);
-
-    FreeXrStructChainWithFree(parentInstance, frameEndInfoMerged);
+    XrResult result = sessionInfo->downchain->EndFrame(sessionInfo->actualHandle, frameEndInfoMergedCopy.get());
 
     return result;
 }

@@ -12,6 +12,21 @@
 #include <thread>
 #include <atomic>
 
+struct OverlaysLayerXrException
+{
+    OverlaysLayerXrException(XrResult result) :
+        mresult(result)
+    {}
+
+    XrResult result() const
+    {
+        return mresult;
+    }
+
+private:
+    XrResult mresult;
+};
+
 enum CopyType {
     COPY_EVERYTHING,       // XR command will consume (aka input)
     COPY_ONLY_TYPE_NEXT,   // XR command will fill (aka output)
