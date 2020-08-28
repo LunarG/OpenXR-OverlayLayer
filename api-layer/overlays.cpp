@@ -1347,6 +1347,45 @@ XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, Xr
     return RPCCallGetReferenceSpaceBoundsRect(instance, sessionInfo->actualHandle, referenceSpaceType, bounds);
 }
 
+XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto viewLocateInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
+
+    XrResult result = sessionInfo->downchain->LocateViews(sessionInfo->actualHandle, viewLocateInfoCopy.get(), viewState, viewCapacityInput, viewCountOutput, views);
+
+    if(result == XR_SUCCESS) {
+        SubstituteLocalHandles(sessionInfo->parentInstance, (XrBaseOutStructure *)viewState);
+        if(views != nullptr) {
+            for(uint32_t i = 0; i < *viewCountOutput; i++) {
+                SubstituteLocalHandles(sessionInfo->parentInstance, (XrBaseOutStructure *)&views[i]);
+            }
+        }
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerLocateViewsOverlay(XrInstance instance, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto viewLocateInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
+
+    XrResult result = RPCCallLocateViews(instance, sessionInfo->actualHandle, viewLocateInfoCopy.get(), viewState, viewCapacityInput, viewCountOutput, views);
+
+    if(result == XR_SUCCESS) {
+        SubstituteLocalHandles(instance, (XrBaseOutStructure *)viewState);
+        if(views != nullptr) {
+            for(uint32_t i = 0; i < *viewCountOutput; i++) {
+                SubstituteLocalHandles(instance, (XrBaseOutStructure *)&views[i]);
+            }
+        }
+    }
+    return result;
+}
+
 XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2047,8 +2086,8 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
     }
 
     // Malloc this struct and the layer pointers array and then deep copy "next" and the layer pointers.
-    // Then Free below will free all of it.
-    XrFrameEndInfo *frameEndInfoMerged = reinterpret_cast<XrFrameEndInfo*>(malloc(sizeof(XrFrameEndInfo)));
+    // unique_ptr will free the whole deep copy later with custom deleter.
+    std::shared_ptr<XrFrameEndInfo> frameEndInfoMerged(reinterpret_cast<XrFrameEndInfo*>(malloc(sizeof(XrFrameEndInfo))), [instance=sessionInfo->parentInstance](const XrFrameEndInfo* p){ FreeXrStructChainWithFree(instance, p);});
 
     frameEndInfoMerged->type = XR_TYPE_FRAME_END_INFO;
     frameEndInfoMerged->next = CopyXrStructChainWithMalloc(parentInstance, frameEndInfo->next);
@@ -2070,7 +2109,7 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 
     }
 
-    auto frameEndInfoMergedCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrEndFrame", frameEndInfoMerged);
+    auto frameEndInfoMergedCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrEndFrame", frameEndInfoMerged.get());
 
     auto sessLock = sessionInfo->GetLock();
     XrResult result = sessionInfo->downchain->EndFrame(sessionInfo->actualHandle, frameEndInfoMergedCopy.get());
