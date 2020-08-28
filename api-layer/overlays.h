@@ -41,7 +41,7 @@ XrBaseInStructure* CopyXrStructChainWithMalloc(XrInstance instance, const void* 
 void FreeXrStructChainWithFree(XrInstance instance, const void* xrstruct);
 
 bool RestoreActualHandles(XrInstance instance, XrBaseInStructure *xrstruct);
-bool SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct);
+void SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct);
 
 typedef std::pair<uint64_t, XrObjectType> HandleTypePair;
 
@@ -759,5 +759,18 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 
 XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameEndInfo* frameEndInfo);
 XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo);
+
+template <typename T> 
+std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
+{
+    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
+    if(!RestoreActualHandles(instance, chainCopy)) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
+            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
+        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+    }
+    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p);});
+    return chainPtr;
+}
 
 #endif /* _OVERLAYS_H_ */
