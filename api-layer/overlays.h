@@ -760,6 +760,9 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameEndInfo* frameEndInfo);
 XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo);
 
+XrResult OverlaysLayerEnumerateReferenceSpacesMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t spaceCapacityInput, uint32_t* spaceCountOutput, XrReferenceSpaceType* spaces);
+XrResult OverlaysLayerEnumerateReferenceSpacesOverlay(XrInstance instance, XrSession session, uint32_t spaceCapacityInput, uint32_t* spaceCountOutput, XrReferenceSpaceType* spaces);
+
 template <typename T> 
 std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
 {

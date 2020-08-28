@@ -1391,12 +1391,45 @@ ReleaseSwapchainImageRPC = {
     "function" : "OverlaysLayerReleaseSwapchainImageMainAsOverlay"
 }
 
+EnumerateReferenceSpacesRPC = {
+    "command_name" : "EnumerateReferenceSpaces",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "spaceCapacityInput",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "spaceCountOutput",
+            "type" : "pointer_to_pod",
+            "pod_type" : "uint32_t",
+            "is_const" : False
+        },
+        {
+            "name" : "spaces",
+            "type" : "fixed_array",
+            "base_type" : "XrReferenceSpaceType",
+            "input_size" : "spaceCapacityInput",
+            "output_size" : "spaceCountOutput",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerEnumerateReferenceSpacesMainAsOverlay"
+}
+
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
     CreateSwapchainRPC,
     CreateReferenceSpaceRPC,
+    EnumerateReferenceSpacesRPC,
     PollEventRPC,
     BeginSessionRPC,
     WaitFrameRPC,
@@ -1677,7 +1710,6 @@ stub_em = (
     "LocateSpace",
     "DestroySpace",
     "DestroySwapchain",
-    "EnumerateReferenceSpaces",
     "GetReferenceSpaceBoundsRect",
     "EndSession",
     "RequestExitSession",
