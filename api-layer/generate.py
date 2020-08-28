@@ -1422,14 +1422,37 @@ EnumerateReferenceSpacesRPC = {
     "function" : "OverlaysLayerEnumerateReferenceSpacesMainAsOverlay"
 }
 
+GetReferenceSpaceBoundsRectRPC = {
+    "command_name" : "GetReferenceSpaceBoundsRect",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "referenceSpaceType",
+            "type" : "POD",
+            "pod_type" : "XrReferenceSpaceType",
+        },
+        {
+            "name" : "bounds",
+            "type" : "pointer_to_pod",
+            "pod_type" : "XrExtent2Df",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerGetReferenceSpaceBoundsRectMainAsOverlay"
+}
 
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
     CreateSwapchainRPC,
-    CreateReferenceSpaceRPC,
     EnumerateReferenceSpacesRPC,
+    GetReferenceSpaceBoundsRectRPC,
+    CreateReferenceSpaceRPC,
     PollEventRPC,
     BeginSessionRPC,
     WaitFrameRPC,
@@ -1710,7 +1733,6 @@ stub_em = (
     "LocateSpace",
     "DestroySpace",
     "DestroySwapchain",
-    "GetReferenceSpaceBoundsRect",
     "EndSession",
     "RequestExitSession",
     "LocateViews",
