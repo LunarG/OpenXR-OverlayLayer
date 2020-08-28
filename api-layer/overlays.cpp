@@ -1334,6 +1334,19 @@ XrResult OverlaysLayerEnumerateReferenceSpacesOverlay(XrInstance instance, XrSes
     return RPCCallEnumerateReferenceSpaces(instance, sessionInfo->actualHandle, spaceCapacityInput, spaceCountOutput, spaces);
 }
 
+XrResult OverlaysLayerGetReferenceSpaceBoundsRectMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, XrReferenceSpaceType referenceSpaceType, XrExtent2Df* bounds)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    return sessionInfo->downchain->GetReferenceSpaceBoundsRect(sessionInfo->actualHandle, referenceSpaceType, bounds);
+}
+
+XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, XrSession session, XrReferenceSpaceType referenceSpaceType, XrExtent2Df* bounds)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    return RPCCallGetReferenceSpaceBoundsRect(instance, sessionInfo->actualHandle, referenceSpaceType, bounds);
+}
+
 XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
