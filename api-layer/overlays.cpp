@@ -72,19 +72,6 @@ uint64_t GetNextLocalHandle()
     return nextHandle++;
 }
 
-template <typename T> 
-std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
-{
-    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
-    if(!RestoreActualHandles(instance, chainCopy)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
-    }
-    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p); printf("freed nicely\n");});
-    return chainPtr;
-}
-
 void LogWindowsLastError(const char *xrfunc, const char* what, const char *file, int line)
 {
     DWORD lastError = GetLastError();
@@ -1126,40 +1113,50 @@ XrResult OverlaysLayerCreateSessionOverlay(
 
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
-    XrResult result;
+    try{
+        XrResult result;
 
-    const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
-    const XrSessionCreateInfoOverlayEXTX* cio = nullptr;
-    const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
-    while(p) {
-        if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX) {
-            cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXTX*>(p);
+        const XrBaseInStructure* p = reinterpret_cast<const XrBaseInStructure*>(createInfo->next);
+        const XrSessionCreateInfoOverlayEXTX* cio = nullptr;
+        const XrGraphicsBindingD3D11KHR* d3dbinding = nullptr;
+        while(p) {
+            if(p->type == XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX) {
+                cio = reinterpret_cast<const XrSessionCreateInfoOverlayEXTX*>(p);
+            }
+            // XXX save off requested API in Overlay, match against Main API
+            // XXX save off requested API in Main, match against Overlay API
+            if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XCB_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WAYLAND_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR) ||
+                (p->type == XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR)) {
+                return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+            }
+            if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
+                d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
+            }
+            p = reinterpret_cast<const XrBaseInStructure*>(p->next);
         }
-        // XXX save off requested API in Overlay, match against Main API
-        // XXX save off requested API in Main, match against Overlay API
-        if( (p->type == XR_TYPE_GRAPHICS_BINDING_D3D12_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XCB_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_WAYLAND_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR) ||
-            (p->type == XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR)) {
-            return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+
+        if(!cio) {
+            result = OverlaysLayerCreateSessionMain(instance, createInfo, session, d3dbinding->device);
+        } else {
+            result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session, cio, d3dbinding->device);
         }
-        if(p->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
-            d3dbinding = reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(p);
-        }
-        p = reinterpret_cast<const XrBaseInStructure*>(p->next);
+
+        return result;
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
     }
-
-    if(!cio) {
-        result = OverlaysLayerCreateSessionMain(instance, createInfo, session, d3dbinding->device);
-    } else {
-        result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session, cio, d3dbinding->device);
-    }
-
-    return result;
 }
 
 XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount)
@@ -1506,88 +1503,99 @@ void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, Ma
 
 XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData)
 {
-    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-    auto it = gOverlaysLayerXrInstanceToHandleInfo.find(instance);
-    if(it == gOverlaysLayerXrInstanceToHandleInfo.end()) {
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrPollEvent",
-            OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = it->second;
+    try {
+        std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
+        auto it = gOverlaysLayerXrInstanceToHandleInfo.find(instance);
+        if(it == gOverlaysLayerXrInstanceToHandleInfo.end()) {
+            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrPollEvent",
+                OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
+            return XR_ERROR_VALIDATION_FAILURE;
+        }
+        OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = it->second;
 
-    XrResult result = instanceInfo->downchain->PollEvent(instance, eventData);
+        XrResult result = instanceInfo->downchain->PollEvent(instance, eventData);
 
-    if(result == XR_EVENT_UNAVAILABLE) {
+        if(result == XR_EVENT_UNAVAILABLE) {
 
-        if(gConnectionToMain) {
+            if(gConnectionToMain) {
 
-            /* See if the main process has any events for us */
-            result = RPCCallPollEvent(instance, eventData);
+                /* See if the main process has any events for us */
+                result = RPCCallPollEvent(instance, eventData);
+                if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+                    const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
+                }
+                if(result == XR_SUCCESS) {
+                    SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
+                }
+            }
+
+        } else if(result == XR_SUCCESS) {
+
+            SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
+
             if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+
+                // XXX ignores any chained event data
                 const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
-            }
-            if(result == XR_SUCCESS) {
-                SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
-            }
-        }
+                MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+                auto l = mainSessionContext->GetLock();
+                mainSessionContext->sessionState.DoStateChange(ssc->state, ssc->time);
 
-    } else if(result == XR_SUCCESS) {
+                if(ssc->next) {
+                    char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+                                        auto* p = reinterpret_cast<const XrBaseOutStructure*>(ssc->next);
+                    XrResult r = instanceInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
+                    if(r != XR_SUCCESS) {
+                        sprintf(structureTypeName, "(type %08X)", p->type);
+                    }
 
-        SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
-
-        if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
-
-            // XXX ignores any chained event data
-            const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
-            MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
-            auto l = mainSessionContext->GetLock();
-            mainSessionContext->sessionState.DoStateChange(ssc->state, ssc->time);
-
-            if(ssc->next) {
-                char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
-                                    auto* p = reinterpret_cast<const XrBaseOutStructure*>(ssc->next);
-                XrResult r = instanceInfo->downchain->StructureTypeToString(gMainSessionInstance, p->type, structureTypeName);
-                if(r != XR_SUCCESS) {
-                    sprintf(structureTypeName, "(type %08X)", p->type);
+                    OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
+                        OverlaysLayerNoObjectInfo, fmt("WARNING: xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
                 }
 
-                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
-                    OverlaysLayerNoObjectInfo, fmt("WARNING: xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
-            }
+            } else {
 
-        } else {
+                std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
+                if(!gConnectionsToOverlayByProcessId.empty()) {
 
-            std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
-            if(!gConnectionsToOverlayByProcessId.empty()) {
+                    if(eventData->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
 
-                if(eventData->type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+                        for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
+                            auto conn = overlayconn.second;
+                            auto lock = conn->GetLock();
+                            if(conn->ctx) {
+                                EnqueueEventToOverlay(instance, eventData, conn->ctx);
+                            }
+                        }
 
-                    for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
-                        auto conn = overlayconn.second;
-                        auto lock = conn->GetLock();
-                        if(conn->ctx) {
-                            EnqueueEventToOverlay(instance, eventData, conn->ctx);
+                    } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
+
+                        // XXX further processing
+                        // If occurred earlier than an Overlay connect, will need to synthesize this.
+                        for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
+                            auto conn = overlayconn.second;
+                            auto lock = conn->GetLock();
+                            if(conn->ctx) {
+                                EnqueueEventToOverlay(instance, eventData, conn->ctx);
+                            }
                         }
                     }
 
-                } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
-
-                    // XXX further processing
-                    // If occurred earlier than an Overlay connect, will need to synthesize this.
-                    for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
-                        auto conn = overlayconn.second;
-                        auto lock = conn->GetLock();
-                        if(conn->ctx) {
-                            EnqueueEventToOverlay(instance, eventData, conn->ctx);
-                        }
-                    }
                 }
-
             }
         }
+
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
     }
-
-    return result;
 }
 
 XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSessionBeginInfo* beginInfo)
@@ -2046,24 +2054,34 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 
 XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
-    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    auto it = gOverlaysLayerXrSessionToHandleInfo.find(session);
-    if(it == gOverlaysLayerXrSessionToHandleInfo.end()) {
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
-            OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = it->second;
-    
-    bool isProxied = sessionInfo->isProxied;
-    XrResult result;
-    if(isProxied) {
-        result = OverlaysLayerEndFrameOverlay(sessionInfo->parentInstance, session, frameEndInfo);
-    } else {
-        result = OverlaysLayerEndFrameMain(sessionInfo->parentInstance, session, frameEndInfo);
-    }
+    try { 
+        std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+        auto it = gOverlaysLayerXrSessionToHandleInfo.find(session);
+        if(it == gOverlaysLayerXrSessionToHandleInfo.end()) {
+            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
+                OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
+            return XR_ERROR_VALIDATION_FAILURE;
+        }
+        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = it->second;
+        
+        bool isProxied = sessionInfo->isProxied;
+        XrResult result;
+        if(isProxied) {
+            result = OverlaysLayerEndFrameOverlay(sessionInfo->parentInstance, session, frameEndInfo);
+        } else {
+            result = OverlaysLayerEndFrameMain(sessionInfo->parentInstance, session, frameEndInfo);
+        }
 
-    return result;
+        return result;
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+    }
 }
 
 

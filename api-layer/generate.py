@@ -554,7 +554,6 @@ after_downchain["xrRequestExitSession"] = """
 after_downchain["xrWaitFrame"] = """
     auto mainSession = gMainSessionContext;
     XrInstance instance = sessionInfo->parentInstance;
-    mlock.unlock(); // There's a race condition here with CreateSession unless this is unlocked before mainSession->GetLock();
     if(mainSession) {
         auto l = mainSession->GetLock();
 
@@ -698,29 +697,15 @@ after_downchain["xrSuggestInteractionProfileBindings"] = """
 
 
 before_downchain["xrLocateViews"] = """
-    XrBaseInStructure *newViewLocateInfo = CopyXrStructChainWithMalloc(sessionInfo->parentInstance, viewLocateInfo);
-    if(!RestoreActualHandles(sessionInfo->parentInstance, newViewLocateInfo)) {
-        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateViews",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
-    viewLocateInfo = reinterpret_cast<XrViewLocateInfo*>(newViewLocateInfo);
+    auto viewLocateInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
+    viewLocateInfo = viewLocateInfoCopy.get();
 """
 
 after_downchain["xrLocateViews"] = """
-    FreeXrStructChainWithFree(sessionInfo->parentInstance, newViewLocateInfo);
-    if(!SubstituteLocalHandles(sessionInfo->parentInstance, reinterpret_cast<XrBaseOutStructure*>(viewState))) {
-        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateViews",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be substituted.\\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    SubstituteLocalHandles(sessionInfo->parentInstance, reinterpret_cast<XrBaseOutStructure*>(viewState));
     if(views) {
         for(uint32_t i = 0; i < *viewCountOutput; i++) {
-            if(!SubstituteLocalHandles(sessionInfo->parentInstance, reinterpret_cast<XrBaseOutStructure*>(&views[i]))) {
-                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateViews",
-                    OverlaysLayerNoObjectInfo, "FATAL: handles could not be substituted.\\n");
-                return XR_ERROR_VALIDATION_FAILURE;
-            }
+            SubstituteLocalHandles(sessionInfo->parentInstance, reinterpret_cast<XrBaseOutStructure*>(&views[i]));
         }
     }
 """
@@ -734,11 +719,7 @@ before_downchain["xrLocateSpace"] = """
 """
 
 after_downchain["xrLocateSpace"] = """
-    if(!SubstituteLocalHandles(spaceInfo->parentInstance, reinterpret_cast<XrBaseOutStructure*>(location))) {
-        OverlaysLayerLogMessage(spaceInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be substituted.\\n");
-        return XR_ERROR_VALIDATION_FAILURE;
-    }
+    SubstituteLocalHandles(spaceInfo->parentInstance, reinterpret_cast<XrBaseOutStructure*>(location));
 """
 
 
@@ -1096,8 +1077,13 @@ std::recursive_mutex g{LayerName}{handle_type}ToHandleInfoMutex;
 {LayerName}{handle_type}HandleInfo::Ptr {LayerName}GetHandleInfoFrom{handle_type}({handle_type} handle)
 {{
     std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
-    {LayerName}{handle_type}HandleInfo::Ptr info = g{LayerName}{handle_type}ToHandleInfo.at(handle);
-    return info;
+    auto it = g{LayerName}{handle_type}ToHandleInfo.find(handle);
+    if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+            OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX\\n", handle).c_str());
+        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+    }}
+    return it->second;
 }}
 
 {substitution_source_text}
@@ -1663,7 +1649,6 @@ source_text += f"""
 
             default: {{
                 // XXX use log message func
-                OutputDebugStringA("unknown request type in IPC");
                 OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
                     OverlaysLayerNoObjectInfo, fmt("Unknown request type %08X in RPC\\n", hdr->requestType).c_str());
                 break;
@@ -1672,10 +1657,17 @@ source_text += f"""
 
         return true;
 
-    }} catch (const OverlaysLayerXrException exc) {{
+    }} catch (const OverlaysLayerXrException& e) {{
 
-        hdr->result = exc.result();
+        hdr->result = e.result();
         return true;
+
+    }} catch (const std::bad_alloc& e) {{
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        hdr->result = XR_ERROR_OUT_OF_MEMORY;
+        return true;
+
     }}
 }}
 """
@@ -1752,17 +1744,9 @@ def get_code_to_restore_handle(member, instance_string, accessor_prefix):
     elif member["type"] == "pointer_to_atom_or_handle":
         if member["struct_type"] in handles_needing_substitution:
             return f"""
-            // array of {member["struct_type"]} for {name}  fooblargle
+            // array of {member["struct_type"]} for {name}
             for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
-                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayer{member["struct_type"]}ToHandleInfoMutex);
-                auto it = gOverlaysLayer{member["struct_type"]}ToHandleInfo.find({accessor_prefix}{member["name"]});
-                if(it == gOverlaysLayer{member["struct_type"]}ToHandleInfo.end()) {{
-                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "unknown",
-                        OverlaysLayerNoObjectInfo, "FATAL: {member["struct_type"]} handle couldn't be found in tracking map.\\n");
-                    return false;
-                }}
-
-                OverlaysLayer{member["struct_type"]}HandleInfo::Ptr info = it->second;
+                auto info = {LayerName}GetHandleInfoFrom{member["struct_type"]}({accessor_prefix}{member["name"]});
                 {accessor_prefix}{member["name"]} = info->actualHandle;
             }}
 """
@@ -1781,15 +1765,7 @@ def get_code_to_restore_handle(member, instance_string, accessor_prefix):
         if member["pod_type"] in handles_needing_substitution:
             return f"""
                 {{
-                    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayer{member["pod_type"]}ToHandleInfoMutex);
-                    auto it = gOverlaysLayer{member["pod_type"]}ToHandleInfo.find({accessor_prefix}{member["name"]});
-                    if(it == gOverlaysLayer{member["pod_type"]}ToHandleInfo.end()) {{
-                        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "unknown",
-                            OverlaysLayerNoObjectInfo, "FATAL: {member["pod_type"]} handle couldn't be found in tracking map.\\n");
-                        return false;
-                    }}
-
-                    OverlaysLayer{member["pod_type"]}HandleInfo::Ptr info = it->second;
+                    auto info = {LayerName}GetHandleInfoFrom{member["pod_type"]}({accessor_prefix}{member["name"]});
                     {accessor_prefix}{member["name"]} = info->actualHandle;
                 }}
 """
@@ -1829,9 +1805,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
         return f"""
             // array of pointers to XR structs for {name}
             for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
-                if(!SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *){accessor_prefix}{member["name"]}[i])) {{
-                    return false;
-                }}
+                SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *){accessor_prefix}{member["name"]}[i]);
             }}
 """
     elif member["type"] == "pointer_to_struct":
@@ -1842,6 +1816,12 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
             // array of {member["struct_type"]} for {name}
             for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
                 std::unique_lock<std::recursive_mutex> lock(gActual{member["struct_type"]}ToLocalHandleMutex);
+                auto it = gActual{member["struct_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]});
+                if(it == gActual{member["struct_type"]}ToLocalHandle.end()) {{
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+                        OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["struct_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
+                    throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+                }}
                 {accessor_prefix}{member["name"]} = gActual{member["struct_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]});
             }}
 """
@@ -1861,6 +1841,12 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
             return f"""
                 {{
                     std::unique_lock<std::recursive_mutex> lock(gActual{member["pod_type"]}ToLocalHandleMutex);
+                    auto it = gActual{member["pod_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]});
+                    if(it == gActual{member["pod_type"]}ToLocalHandle.end()) {{
+                        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+                            OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["pod_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
+                        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+                    }}
                     {accessor_prefix}{member["name"]} = gActual{member["pod_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]});
                 }}
 """
@@ -1869,17 +1855,13 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
     elif member["type"] == "xr_simple_struct":
         return f"""
             // Expect this to find function with signature by type
-            if(!SubstituteLocalHandles({instance_string}, &{accessor_prefix}{member["name"]})) {{
-                return false;
-            }}
+            SubstituteLocalHandles({instance_string}, &{accessor_prefix}{member["name"]});
 """
     elif member["type"] == "pointer_to_xr_struct_array":
         return f"""
             // pointer to XR structs for {name}
             for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
-                if(!SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *)&{accessor_prefix}{member["name"]}[i])) {{
-                    return false;
-                }}
+                SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *)&{accessor_prefix}{member["name"]}[i]);
             }}
 """
 
@@ -1912,7 +1894,7 @@ for name in xr_simple_structs:
 }}
 """
 
-    substitute_handles_function_prototype = f"bool SubstituteLocalHandles(XrInstance instance, {name} *xrstruct)"
+    substitute_handles_function_prototype = f"void SubstituteLocalHandles(XrInstance instance, {name} *xrstruct)"
     substitute_handles_function_header = f"{substitute_handles_function_prototype};\n"
     substitute_handles_function_source = f"""
 {substitute_handles_function_prototype}
@@ -1921,7 +1903,6 @@ for name in xr_simple_structs:
     for member in struct[3]:
         substitute_handles_function_source += get_code_to_substitute_handle(member, "instance", "xrstruct->")
     substitute_handles_function_source += f"""
-    return true;
 }}
 """
 
@@ -2261,7 +2242,7 @@ source_text += """
     return true;
 }
 
-bool SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct)
+void SubstituteLocalHandles(XrInstance instance, XrBaseOutStructure *xrstruct)
 {
     while(xrstruct) {
         switch(xrstruct->type)
@@ -2286,7 +2267,6 @@ source_text += """
         }
         xrstruct = (XrBaseOutStructure*)xrstruct->next; /* We allocated this copy ourselves, so just cast ugly */
     }
-    return true;
 }
 """
 
@@ -2408,14 +2388,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 {{
     try {{
 
-        std::unique_lock<std::recursive_mutex> mlock(g{LayerName}{handle_type}ToHandleInfoMutex);
-        auto it = g{LayerName}{handle_type}ToHandleInfo.find({handle_name});
-        if(it == g{LayerName}{handle_type}ToHandleInfo.end()) {{
-            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, \"{command_name}\",
-                OverlaysLayerNoObjectInfo, \"FATAL: invalid handle couldn't be found in tracking map.\\n\");
-            return XR_ERROR_VALIDATION_FAILURE;
-        }}
-        {LayerName}{handle_type}HandleInfo::Ptr {handle_name}Info = it->second;
+        auto {handle_name}Info = {LayerName}GetHandleInfoFrom{handle_type}({handle_name});
 
         {before_downchain.get(command_name, "")}
 
@@ -2430,6 +2403,12 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     }} catch (const OverlaysLayerXrException exc) {{
 
         return exc.result();
+
+    }} catch (const std::bad_alloc& e) {{
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
     }}
 }}
 """
