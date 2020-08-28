@@ -1,15 +1,5 @@
-8/21
-In the middle of PollEvent
-    Events that may pertain to the overlay session:
-        XrEventDataSessionStateChanged
-        XrEventDataReferenceSpaceChangePending
-        XrEventDataInteractionProfileChanged
-
-Add EnumerateReferenceSpaces to overlay_sample and implement it
-
-8/18
-ConnectionToMain should be handed to all Overlay functions
-LocalSwapchain ctor could throw.  Maybe "create" function should call D3D and log errors and return false on failure.
+8/27
+Don't do any restore or substitution in layer proc, only do before RPC and before downchain.
 
 8/17
 Items in IPCSerialize
