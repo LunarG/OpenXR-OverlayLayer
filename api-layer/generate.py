@@ -1065,6 +1065,7 @@ extern std::unordered_map<{handle_type}, {layer_name}{handle_type}HandleInfo::Pt
 extern std::recursive_mutex g{layer_name}{handle_type}ToHandleInfoMutex;
 
 {layer_name}{handle_type}HandleInfo::Ptr {layer_name}GetHandleInfoFrom{handle_type}({handle_type} handle);
+void {layer_name}Remove{handle_type}FromHandleInfoMap({handle_type} handle);
 {substitution_header_text}
 """
 
@@ -1084,6 +1085,18 @@ std::recursive_mutex g{layer_name}{handle_type}ToHandleInfoMutex;
         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
     }}
     return it->second;
+}}
+
+void {layer_name}Remove{handle_type}FromHandleInfoMap({handle_type} handle)
+{{
+    std::unique_lock<std::recursive_mutex> mlock(g{layer_name}{handle_type}ToHandleInfoMutex);
+    auto it = g{layer_name}{handle_type}ToHandleInfo.find(handle);
+    if(it == g{layer_name}{handle_type}ToHandleInfo.end()) {{
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+            OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX\\n", handle).c_str());
+        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+    }}
+    g{layer_name}{handle_type}ToHandleInfo.erase(it);
 }}
 
 {substitution_source_text}
@@ -1553,12 +1566,24 @@ DestroySpaceRPC = {
     "function" : "OverlaysLayerDestroySpaceMainAsOverlay"
 }
 
+DestroySwapchainRPC = {
+    "command_name" : "DestroySwapchain",
+    "args" : (
+        {
+            "name" : "space",
+            "type" : "POD",
+            "pod_type" : "XrSwapchain",
+        },
+    ),
+    "function" : "OverlaysLayerDestroySwapchainMainAsOverlay"
+}
 
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
     CreateSwapchainRPC,
+    DestroySwapchainRPC,
     EnumerateReferenceSpacesRPC,
     GetReferenceSpaceBoundsRectRPC,
     CreateReferenceSpaceRPC,
@@ -1868,8 +1893,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "DestroySwapchain",
-
     "CreateActionSpace",
     "AttachSessionActionSets",
     "GetCurrentInteractionProfile",
