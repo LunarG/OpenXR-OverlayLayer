@@ -794,4 +794,7 @@ XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connect
 XrResult OverlaysLayerRequestExitSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session);
 XrResult OverlaysLayerRequestExitSessionOverlay(XrInstance instance, XrSession session);
 
+XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session);
+XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session);
+
 #endif /* _OVERLAYS_H_ */
