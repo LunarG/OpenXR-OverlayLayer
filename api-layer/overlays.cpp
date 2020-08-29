@@ -1749,6 +1749,9 @@ XrResult OverlaysLayerRequestExitSessionMainAsOverlay(ConnectionToOverlay::Ptr c
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
+    if(!connection->ctx->sessionState.isRunning) {
+        return XR_ERROR_SESSION_NOT_RUNNING;
+    }
     connection->ctx->sessionState.DoCommand(OpenXRCommand::REQUEST_EXIT_SESSION);
 
     return XR_SUCCESS;
@@ -1759,6 +1762,32 @@ XrResult OverlaysLayerRequestExitSessionOverlay(XrInstance instance, XrSession s
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     XrResult result = RPCCallRequestExitSession(instance, sessionInfo->actualHandle);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto l = connection->GetLock();
+    if(connection->ctx->sessionState.sessionState != XR_SESSION_STATE_STOPPING) {
+        return XR_ERROR_SESSION_NOT_STOPPING;
+    }
+    connection->ctx->sessionState.DoCommand(OpenXRCommand::END_SESSION);
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    XrResult result = RPCCallEndSession(instance, sessionInfo->actualHandle);
 
     if(!XR_SUCCEEDED(result)) {
         return result;

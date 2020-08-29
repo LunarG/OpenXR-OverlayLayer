@@ -1273,6 +1273,18 @@ RequestExitSessionRPC = {
     "function" : "OverlaysLayerRequestExitSessionMainAsOverlay"
 }
 
+EndSessionRPC = {
+    "command_name" : "EndSession",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+    ),
+    "function" : "OverlaysLayerEndSessionMainAsOverlay"
+}
+
 WaitFrameRPC = {
     "command_name" : "WaitFrame",
     "args" : (
@@ -1556,6 +1568,7 @@ rpcs = (
     PollEventRPC,
     BeginSessionRPC,
     RequestExitSessionRPC,
+    EndSessionRPC,
     WaitFrameRPC,
     BeginFrameRPC,
     EndFrameRPC,
@@ -1856,7 +1869,6 @@ source_text += f"""
 # XXX temporary stubs
 stub_em = (
     "DestroySwapchain",
-    "EndSession",
 
     "CreateActionSpace",
     "AttachSessionActionSets",
