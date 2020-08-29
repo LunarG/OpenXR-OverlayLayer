@@ -1744,6 +1744,29 @@ XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session
     return result;
 }
 
+XrResult OverlaysLayerRequestExitSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto l = connection->GetLock();
+    connection->ctx->sessionState.DoCommand(OpenXRCommand::REQUEST_EXIT_SESSION);
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerRequestExitSessionOverlay(XrInstance instance, XrSession session)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    XrResult result = RPCCallRequestExitSession(instance, sessionInfo->actualHandle);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+    return result;
+}
+
 XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState)
 {
     auto l = connection->GetLock();
