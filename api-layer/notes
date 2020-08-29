@@ -1,6 +1,3 @@
-8/27
-Don't do any restore or substitution in layer proc, only do before RPC and before downchain.
-
 8/17
 Items in IPCSerialize
     auto dst = new(ipcbuf) IPCXrCommandName;
@@ -55,13 +52,9 @@ shared_ptr guarantees thread-safe control - deletion, copy, reset, etc.
         init-only const accessors for private members (need to put in ctor) - no locking
         otherwise return-by-value and set functions would lock in order to be atomic / exclusive
 
-8/12 You're in the middle of figuring out whether things have smart pointers or not (in particular ConnectionToOverlay and gConnectionsToOverlayByProcessId)
+8/12
 Make as many objects simple copies as possible (e.g. RPCConnections is just HANDLEs and DWORDs and void*s)
-Use std::thread to make sure to avoid conflict with Windows threads
-    do I need thread HANDLEs for anything?
-use std::mutex within a process
-    use CreateMutex only for cross-process synchronization and sparingly
-Identity any objects that may be accessed by multiple threads and why
+Identify any objects that may be accessed by multiple threads and why
     unordered_maps mapping handles to tracking state must be locked
         will be appended from negotiation thread
         may have elements removed by overlay service thread

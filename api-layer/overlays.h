@@ -372,9 +372,8 @@ struct RPCChannels
     }
 };
 
-bool OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle);
-
-bool OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle);
+void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle);
+void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle);
 
 enum OpenXRCommand {
     BEGIN_SESSION,
@@ -796,5 +795,8 @@ XrResult OverlaysLayerRequestExitSessionOverlay(XrInstance instance, XrSession s
 
 XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session);
 XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session);
+
+XrResult OverlaysLayerDestroySwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain);
+XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain swapchain);
 
 #endif /* _OVERLAYS_H_ */

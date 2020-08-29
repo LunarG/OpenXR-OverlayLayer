@@ -277,27 +277,27 @@ ID3D11Texture2D* SwapchainCachedData::getSharedTexture(ID3D11Device *d3d11Device
 
 
 // XXX could generate
-bool OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
+void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
 {
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-    auto it = gOverlaysLayerXrSpaceToHandleInfo.find(localHandle);
-    if(it == gOverlaysLayerXrSpaceToHandleInfo.end()) {
-        return false;
+    {
+        OverlaysLayerXrSpaceHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrSpace(localHandle);
+        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(info->parentHandle);
+        sessionInfo->childSpaces.erase(info);
     }
-    gOverlaysLayerXrSpaceToHandleInfo.erase(localHandle);
-    return true;
+
+    OverlaysLayerRemoveXrSpaceFromHandleInfoMap(localHandle);
 }
 
 // XXX could generate
-bool OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle)
+void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle)
 {
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-    auto it = gOverlaysLayerXrSwapchainToHandleInfo.find(localHandle);
-    if(it != gOverlaysLayerXrSwapchainToHandleInfo.end()) {
-        return false;
+    {
+        OverlaysLayerXrSwapchainHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrSwapchain(localHandle);
+        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(info->parentHandle);
+        sessionInfo->childSwapchains.erase(info);
     }
-    gOverlaysLayerXrSwapchainToHandleInfo.erase(localHandle);
-    return true;
+
+    OverlaysLayerRemoveXrSwapchainFromHandleInfoMap(localHandle);
 }
 
 void OverlaysLayerLogMessage(XrInstance instance,
@@ -1259,10 +1259,38 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
     return result;
 }
 
+XrResult OverlaysLayerDestroySwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain)
+{
+    OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
+
+    OverlaysLayerRemoveXrSwapchainHandleInfo(swapchain);
+
+    // XXX anything here?  Need to manage error returns as if this was a runtime?  invalid handle will be caught by GetHandleInfo...
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain swapchain)
+{
+    OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
+
+    XrResult result = RPCCallDestroySwapchain(swapchainInfo->parentInstance, swapchainInfo->actualHandle);
+
+    OverlaysLayerRemoveXrSwapchainHandleInfo(swapchain);
+
+    if(!XR_SUCCEEDED(result)) {
+        return result;
+    }
+
+	// XXX anything here?
+
+    return result;
+}
+
+
 XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
 {
-    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
@@ -1386,6 +1414,7 @@ XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connect
     // XXX This will need to be smart about ActionSpaces?
 
     XrResult result = spaceInfo->downchain->DestroySpace(spaceInfo->actualHandle);
+    OverlaysLayerRemoveXrSpaceHandleInfo(space);
 
     return result;
 }
@@ -1397,6 +1426,8 @@ XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
     // XXX This will need to be smart about ActionSpaces?
 
     XrResult result = RPCCallDestroySpace(instance, spaceInfo->actualHandle);
+
+    OverlaysLayerRemoveXrSpaceHandleInfo(space);
 
     return result;
 }
@@ -1779,6 +1810,7 @@ XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connectio
         return XR_ERROR_SESSION_NOT_STOPPING;
     }
     connection->ctx->sessionState.DoCommand(OpenXRCommand::END_SESSION);
+    connection->ctx->overlayLayers.clear();
 
     return XR_SUCCESS;
 }
