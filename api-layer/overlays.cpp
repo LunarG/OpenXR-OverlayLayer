@@ -1347,6 +1347,38 @@ XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, Xr
     return RPCCallGetReferenceSpaceBoundsRect(instance, sessionInfo->actualHandle, referenceSpaceType, bounds);
 }
 
+XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
+{
+    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+    OverlaysLayerXrSpaceHandleInfo::Ptr baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
+
+    // XXX This will need to be smart about ActionSpaces?
+
+    XrResult result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+
+    if(result == XR_SUCCESS) {
+        SubstituteLocalHandles(spaceInfo->parentInstance, (XrBaseOutStructure *)location);
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
+{
+    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+    OverlaysLayerXrSpaceHandleInfo::Ptr baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
+
+    // XXX This will need to be smart about ActionSpaces?
+
+    XrResult result = RPCCallLocateSpace(instance, spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+
+    if(result == XR_SUCCESS) {
+        SubstituteLocalHandles(spaceInfo->parentInstance, (XrBaseOutStructure *)location);
+    }
+
+    return result;
+}
+
 XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);

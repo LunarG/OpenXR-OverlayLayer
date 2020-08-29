@@ -1489,6 +1489,35 @@ LocateViewsRPC = {
     "function" : "OverlaysLayerLocateViewsMainAsOverlay"
 }
 
+LocateSpaceRPC = {
+    "command_name" : "LocateSpace",
+    "args" : (
+        {
+            "name" : "space",
+            "type" : "POD",
+            "pod_type" : "XrSpace",
+        },
+        {
+            "name" : "baseSpace",
+            "type" : "POD",
+            "pod_type" : "XrSpace",
+        },
+        {
+            "name" : "time",
+            "type" : "POD",
+            "pod_type" : "XrTime",
+        },
+        {
+            "name" : "XrSpaceLocation",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrSpaceLocation",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerLocateSpaceMainAsOverlay"
+}
+
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1498,6 +1527,7 @@ rpcs = (
     GetReferenceSpaceBoundsRectRPC,
     CreateReferenceSpaceRPC,
     LocateViewsRPC,
+    LocateSpaceRPC,
     PollEventRPC,
     BeginSessionRPC,
     WaitFrameRPC,
@@ -1799,7 +1829,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "LocateSpace",
     "DestroySpace",
     "DestroySwapchain",
     "EndSession",
