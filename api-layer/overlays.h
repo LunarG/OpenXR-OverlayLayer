@@ -718,6 +718,20 @@ struct OverlaysLayerRPCCreateSession
     XrSession*                                  session;
 };
 
+template <typename T> 
+std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
+{
+    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
+    if(!RestoreActualHandles(instance, chainCopy)) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
+            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
+        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
+    }
+    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p);});
+    return chainPtr;
+}
+
+
 // Manually written functions -----------------------------------------------
 
 XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, const XrSessionCreateInfoOverlayEXTX *createInfoOverlay, XrSession *session);
@@ -774,17 +788,7 @@ XrResult OverlaysLayerLocateViewsOverlay(XrInstance instance, XrSession session,
 XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location);
 XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location);
 
-template <typename T> 
-std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
-{
-    XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
-    if(!RestoreActualHandles(instance, chainCopy)) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, func,
-            OverlaysLayerNoObjectInfo, "FATAL: handles could not be restored.\n");
-        throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
-    }
-    std::shared_ptr<T> chainPtr(reinterpret_cast<T*>(chainCopy), [instance](const T *p){FreeXrStructChainWithFree(instance, p);});
-    return chainPtr;
-}
+XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space);
+XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space);
 
 #endif /* _OVERLAYS_H_ */

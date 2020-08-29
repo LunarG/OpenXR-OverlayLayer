@@ -1379,6 +1379,28 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
     return result;
 }
 
+XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space)
+{
+    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+
+    // XXX This will need to be smart about ActionSpaces?
+
+    XrResult result = spaceInfo->downchain->DestroySpace(spaceInfo->actualHandle);
+
+    return result;
+}
+
+XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
+{
+    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+
+    // XXX This will need to be smart about ActionSpaces?
+
+    XrResult result = RPCCallDestroySpace(instance, spaceInfo->actualHandle);
+
+    return result;
+}
+
 XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
