@@ -1,3 +1,33 @@
+8/31
+{"input_select_click", "input/select/click", XR_ACTION_TYPE_FLOAT_INPUT, {"/user/hand/left", "/user/hand/right"}}
+{"input_menu_click", squeeze_value", "input/squeeze/value", XR_ACTION_TYPE_FLOAT_INPUT, {"/user/hand/left", "/user/hand/right"}}
+{"squeeze_click", "input/squeeze/click", XR_ACTION_TYPE_FLOAT_INPUT, {"/user/hand/left", "/user/hand/right"}}
+{"khr/simple_controller", {
+    {"input_select_click", "input/select/click", XR_ACTION_TYPE_FLOAT_INPUT, {"user/hand/left", "user/hand/right"}}
+    {"input_menu_click", "input/menu/click", XR_ACTION_TYPE_BOOLEAN_INPUT, {"user/hand/left", "user/hand/right"}}
+    {"input_grip_pose", XR_ACTION_TYPE_POSE_INPUT, {"user/hand/left", "user/hand/right"}}
+    {"input_aim_pose", XR_ACTION_TYPE_POSE_INPUT, {"user/hand/left", "user/hand/right"}}
+    {"output_haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, {"user/hand/left", "user/hand/right"}}
+}
+        std::array<XrPath, Side::COUNT> selectPath;
+        std::array<XrPath, Side::COUNT> squeezeValuePath;
+        std::array<XrPath, Side::COUNT> squeezeClickPath;
+        std::array<XrPath, Side::COUNT> posePath;
+        std::array<XrPath, Side::COUNT> hapticPath;
+        std::array<XrPath, Side::COUNT> menuClickPath;
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &squeezeValuePath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &posePath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
+        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
+
 8/17
 Items in IPCSerialize
     auto dst = new(ipcbuf) IPCXrCommandName;
@@ -96,25 +126,104 @@ destroying instance that was used to create main session
         call same functions as destroy main session
     }
 
+/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_left/click
+    /interaction_profiles/microsoft/xbox_controller
+    /user/gamepad
+    .../input/thumbstick_left/click
 
 
-LocalActionSet
-    std::vector<LocalAction::Handle> actions;
-    std::string name;
-    std::string localizedName;
+LocalAction {
+    createInfo
+    XrResult getBoolean(XrActionStateBoolean *state)
+    {
+        if(createInfo->type != XR_ACTION_TYPE_BOOLEAN_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+        *state = booleanState;
+        return XR_SUCCESS;
+    }
+    // etc
+    union {
+        XrActionStateBoolean booleanState;
+        // etc;
+    };
+
+}
+
+OverlaysLayerXrActionSetHandleInfo, add:
+    std::vector<XrAction> actions;          // main side only
+    std::set<OverlaysLayerXrActionHandleInfo::Ptr> placeholderActions;  // main side only
+    std::set<OverlaysLayerLocalActionHandleInfo::Ptr> localActions;        // overlay side only
     bool mutable = true; // false after attach
-    typedef uint64_t Handle;
 
-LocalAction
-    std::string name[XR_MAX_ACTION_NAME_SIZE];
-    LocalActionSet::Handle actionSet;
+OverlaysLayerXrActionHandleInfo, add:
+    OverlaysLayerXrActionSetHandleInfo::Ptr parentActionHandle;
+
+typedef std::pair<std::string str, XrPath path> StringAndPath;
+enum WellKnownStringIndex {
+    USER_HAND_LEFT = 1,
+    INPUT_SQUEEZE_VALUE = 2,
+    USER_HAND_LEFT_INPUT_SQUEEZE_VALUE = 3,
+    KHR_SIMPLE_CONTROLLER = 4,
+    // etc
+}; // These will need to not change for subsequent versions for backward compatibility
+
+std::unordered_map<WellKnownStringIndex, StringAndPath> OverlaysLayerWellKnownStrings = {
+    {USER_HAND_LEFT, {"/user/hand/left"}},
+    {INPUT_SQUEEZE_VALUE, {"input/squeeze/value"}},
+    {USER_HAND_LEFT_INPUT_SQUEEZE_VALUE, {"/user/hand/left/input/squeeze/value"}},
+    {KHR_SIMPLE_CONTROLLER, {"/interaction_profiles/khr/simple_controller"}},
+    // etc
+};
+
+// construct maybe in createLayerInstance from OverlaysLayerWellKnownStringFromEnum
+std::unordered_map<std::string, WellKnownStringIndex> OverlaysLayerWellKnownStringToEnum; // ?
+std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerWellKnownPathToEnum; // ?
+
+struct PlaceholderActionBinding
+{
+    WellKnownStringIndex subActionString;
+    WellKnownStringIndex componentString;
+    XrPath subActionPath; 
+    XrPath bindingPath; // a Path with subaction and component concatenated
+};
+
+struct PlaceholderActionProfile
+{
+    WellKnownStringIndex interactionProfileString;
+    XrPath interactionProfilePath;
+    std::vector<PlaceholderActionBinding> bindings;
+};
+
+struct PlaceholderActionId {
+    std::string name; // "name of thingie here?"
     XrActionType type;
-    std::vector<std::string> subactionPaths;
-    std::string localizedName
-    typedef uint64_t Handle;
+    std::vector<PlaceHolderActionProfile> placeholderActionProfiles;
+};
 
-Session::
-    interaction profile bindings
+std::vector<PlaceholderActionId> PlaceholderActionIds = {
+    /* PlaceholderActionId: */ {
+        "/interaction_profiles/khr/simple_controller/user/hand/left/input/squeeze/value",
+        XR_ACTION_TYPE_FLOAT,
+        {
+            /* PlaceholderActionProfile: */ {
+                KHR_SIMPLE_CONTROLLER,
+                XR_NULL_PATH, // set at init time
+                {
+                    /* PlaceholderActionBinding: */ {
+                        USER_HAND_LEFT,
+                        INPUT_SQUEEZE_VALUE,
+                        XR_NULL_PATH, XR_NULL_PATH, // set at init time
+                    },
+                    ...
+                }
+            }
+        }
+    },
+};
+
+So we know that if the overlay suggested for "/interaction_profiles/khr/simple_controller/" binding an action to "/user/hand/left/input/squeeze/value", we can query the action we created and bound for those.
+
 
 hello_xr output:
     profile null_path
@@ -136,9 +245,6 @@ hello_xr output:
     bound "vibrate" to 2 sources...
         "/user/hand/left/output/haptic"("Left Hand Oculus Touch Vibration")
         "/user/hand/right/output/haptic"("Right Hand Oculus Touch Vibration")
-
-Actions have arbitrary names and arbitrary localizedNames
-    a runtime may not know how to figure out how to map a controller input to an Action
 
 Applications "may" suggest interaction profile bindings
     SuggestInteractionProfileBindings provides a tuple {interaction_profile path, binding path, action}
@@ -189,7 +295,6 @@ If the Overlay knows what main XrActions are bound to which paths at the moment 
         Is it safe to call twice?
     Overlay will need to read state of all XrActions at xrSyncActions and keep locally, otherwise a call by main to xrSyncActions would make subsequent xrGetActionState calls return inconsistent results.
 
-Main : GetSourcesFromAction(XrPath, 
 
 xrPollEvent
     Main
@@ -197,65 +302,96 @@ xrPollEvent
     Overlay
         translate profile changed event if possible
 ActionSet:
+struct PlaceholderActionBinding
+{
+    WellKnownStringIndex subActionString;
+    WellKnownStringIndex componentString;
+    XrPath subActionPath; 
+    XrPath bindingPath; // a Path with subaction and component concatenated
+};
+
+struct PlaceholderActionProfile
+{
+    WellKnownStringIndex interactionProfileString;
+    XrPath interactionProfilePath;
+    std::vector<PlaceholderActionBinding> bindings;
+};
+
+struct PlaceholderActionId {
+    std::string name; // "name of thingie here?"
+    XrActionType type;
+    std::vector<PlaceHolderActionProfile> placeholderActionProfiles;
+};
+
+XXX PRIORITY????
+XXX PRIORITY????
+XXX PRIORITY????
+XXX PRIORITY????
+
     xrCreateActionSet
-        Main - create normally
-        Overlay
-            make local container for action
-            save off name, localized name, priority
-        NO MainAsOverlay
+        downchain->Create
+        for(const& ph : PlaceholderActionIds) {
+            XrAction action;
+            XrActionCreateInfo createInfo = {...};
+            downchain->CreateAction(instance, &createInfo, action);
+            actionInfo = std::make_shared<OverlaysLayerCreateActionHandleInfo>(...)
+            actionsetInfo->placeholderActions.insert(actionInfo);
+        }
+        save createInfo
     xrDestroyActionSet
-        Main - destroy normally
-        Overlay - delete local container
+        placeholderActions.clear() so placeholder Actions are Destroy()ed
+        downchain->Destroy
 
 Action:
-    xrCreateAction
-        Main - create normally
-        Overlay - save local state
-            make local container for action
-            type, name, localized name, subaction paths
-            pretend to be runtime: If parent actionSet has been included in a call to xrAttachSessionActionSets, the implementation must return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
-        NO MainAsOverlay
+    create normally
+    save local state
+        make local container for action
+        pretend to be runtime: If parent actionSet has been included in a call to xrAttachSessionActionSets, the implementation must return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
     xrDestroyAction
-        Main - destroy normally
+        if BOUND_IN_OVERLAY:
+            delete from
+        Destroy
         Overlay - delete local container, delete handle from parent ActionSet
 
 xrSuggestInteractionProfileBindings
-    Main
-        execute normally
-        save bindings for comparison
-            only one set of bindings per interaction profile so replace old ones on profile with new ones on profile
-    Overlay
-        save bindings locally
-            only one set of bindings per interaction profile so replace old ones on profile with new ones on profile
-        pretend to be runtime
-            if any action is in attached action set, XR_ERROR_ACTIONSETS_ALREADY_ATTACHED
-            If interaction profile path does not follow structure defined in Interaction Profiles or suggested bindings contain paths that do not follow format defined in Device input subpaths, XR_ERROR_PATH_UNSUPPORTED
+    save bindings for comparison
+        only one set of bindings per interaction profile so replace old ones on profile with new ones on profile
+    pretend to be runtime if is attached localAction
+        if any action is attached localAction, XR_ERROR_ACTIONSETS_ALREADY_ATTACHED
+        If interaction profile path does not follow structure defined in Interaction Profiles or suggested bindings contain paths that do not follow format defined in Device input subpaths, XR_ERROR_PATH_UNSUPPORTED
 
 xrAttachSessionActionSets
     Overlay
-        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if already saved
-        per-session copy of sets and actions
+        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY 
+        note in Session; actionsets and actions
+        mark actionsets and actions bound to OVERLAY, mutable = false
     Main
         execute normally
-        keep track of attached actionsets -> actions -> paths
+        mark actionsets and actions bound to MAIN, mutable = false
 
 xrGetCurrentInteractionProfile
     Main
         execute normally - anything else?
     Overlay
-        IPC to main, get profile
-            Possible XR_ERROR_ACTIONSET_NOT_ATTACHED if main has not yet Attached
-                should overlay app block on AttachActionSets?
-        return profile to overlay if it matches any provided to SuggestInteractionProfile on overlay
-            otherwise NULL_PATH
+        if actionsets not attached, XR_ERROR_ACTIONSETS_NOT_ATTACHED
+        IPC to main to get path
+            return NULL_PATH if not yet actionsets attached
+            return profile string to overlay
+        if it matches any provided to SuggestInteractionProfile on overlay
+            return that one
+        else
+            if it matches one we know how to convert to KHR
+                return KHR
+            else
+                return NULL_PATH
     MainAsOverlay
-        return some kind of error if Main has not attached yet and returns XR_ERROR_ACTIONSET_NOT_ATTACHED
+        return result or NULL_PATH if not attached
 
 xrSyncActions
     Main
-        execute normally
+        copy all main action state into those actions
     Overlay
-        IPC Action names and suggestedprofile to MainAsOverlay
+        IPC binding paths to MainAsOverlay
     MainAsOverlay
         for all actions on overlay side
             name = suggestedbindings
