@@ -1,33 +1,3 @@
-8/31
-{"input_select_click", "input/select/click", XR_ACTION_TYPE_FLOAT_INPUT, {"/user/hand/left", "/user/hand/right"}}
-{"input_menu_click", squeeze_value", "input/squeeze/value", XR_ACTION_TYPE_FLOAT_INPUT, {"/user/hand/left", "/user/hand/right"}}
-{"squeeze_click", "input/squeeze/click", XR_ACTION_TYPE_FLOAT_INPUT, {"/user/hand/left", "/user/hand/right"}}
-{"khr/simple_controller", {
-    {"input_select_click", "input/select/click", XR_ACTION_TYPE_FLOAT_INPUT, {"user/hand/left", "user/hand/right"}}
-    {"input_menu_click", "input/menu/click", XR_ACTION_TYPE_BOOLEAN_INPUT, {"user/hand/left", "user/hand/right"}}
-    {"input_grip_pose", XR_ACTION_TYPE_POSE_INPUT, {"user/hand/left", "user/hand/right"}}
-    {"input_aim_pose", XR_ACTION_TYPE_POSE_INPUT, {"user/hand/left", "user/hand/right"}}
-    {"output_haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, {"user/hand/left", "user/hand/right"}}
-}
-        std::array<XrPath, Side::COUNT> selectPath;
-        std::array<XrPath, Side::COUNT> squeezeValuePath;
-        std::array<XrPath, Side::COUNT> squeezeClickPath;
-        std::array<XrPath, Side::COUNT> posePath;
-        std::array<XrPath, Side::COUNT> hapticPath;
-        std::array<XrPath, Side::COUNT> menuClickPath;
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/select/click", &selectPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/select/click", &selectPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/value", &squeezeValuePath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/value", &squeezeValuePath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/squeeze/click", &squeezeClickPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/squeeze/click", &squeezeClickPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/grip/pose", &posePath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/grip/pose", &posePath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/output/haptic", &hapticPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/output/haptic", &hapticPath[Side::RIGHT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/left/input/menu/click", &menuClickPath[Side::LEFT]));
-        CHECK_XRCMD(xrStringToPath(m_instance, "/user/hand/right/input/menu/click", &menuClickPath[Side::RIGHT]));
-
 8/17
 Items in IPCSerialize
     auto dst = new(ipcbuf) IPCXrCommandName;
@@ -96,23 +66,40 @@ Why not just lock every API layer call?
         But we could be in the overlay service thread accessing, say XrSession, when it is Destroyed. 
 
 
+possibly_IPC_commands = { Session and all child handle commands }
+in Python, if command_name in IPC_commands,
+    emit in CommandName:
+        check local handle to see if remote proxy
+        if(remote proxy)
+            CommandNameOverlay(params)
+        else
+            CommandNameMain(params)
+    emit CommandNameOverlay(params)
+        for each handle in parameters in XrSpace, XrSwapchain
+            substitute proxy handle
+        for each handle in parameters in XrAction, XrActionSet
+            if there is no proxy handle, create the proxy handle through main
+        for each atom in parameters in XrPath, XrSystemId
+            if there is no proxy atom, create the proxy atom through main
+        substitute proxy Handles and Paths in parameters to send
+        pack up commands, add pointers to list, make pointers relative, send over IPC
+        unpack results
+        deproxy Handles and Paths in returned parameters
+        if created XrSpace or XrSwapchain,
+            create unique id, return that
+    emit CommandNameMain(params)
+        call downchain normally with possible caching of create params
+    emit CommandNameMainAsOverlay(params)
+        take mutex
+        call downchain
+        return result
+    emit body of thread loop looking in shared mem for command name ID
+        make pointers absolute
+        call CommandNameMainAsOverlay
+        make pointers relative
+        return result
+
 Any RPC should check for Main Instance lost, return INSTANCE_LOST and Overlay convert to INITIALIZATION_FAILED
-
-CreateSession is an RPC Call
-    parameters are:
-        const XrInstanceCreateInfo*                 instanceCreateInfo;
-        const XrSessionCreateInfo*                  createInfo;
-        XrSession*                                  session;
-    sendRPC["instanceCreateInfo"] = "%(member)s = gOverlaysLayerXrInstanceToHandleInfo.at(*instance).createInfo;\n"
-    sendRPC["instanceCreateInfo"] = "%(member)s = gOverlaysLayerXrInstanceToHandleInfo.at(*instance).createInfo;\n"
-    if not annotated, parameters are from and then to command call
-    otherwise parameters annoted with "sendRPC" and "receiveRPC" for code to insert before RPC and after
-
-OverlaysLayerLogMessage
-    should key on instance, so that MainAsOverlay calls OverlaysLogMessage with remote instance and it is known to route there
-    should key on any proxy objects, so that if runtime encounters any issues, proxy debug messenger can send to overlay...?
-
-DestroySession
 
 destroying main session
     poison all overlay IPC using ConnectionToOverlay
@@ -126,13 +113,18 @@ destroying instance that was used to create main session
         call same functions as destroy main session
     }
 
+
+
 /interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_left/click
     /interaction_profiles/microsoft/xbox_controller
     /user/gamepad
     .../input/thumbstick_left/click
 
+VirtualActionSet {
+    createInfo
+}
 
-LocalAction {
+VirtualAction {
     createInfo
     XrResult getBoolean(XrActionStateBoolean *state)
     {
@@ -147,13 +139,15 @@ LocalAction {
         XrActionStateBoolean booleanState;
         // etc;
     };
-
 }
+
+XXX NO REAL ACTION OR ACTIONSET PASSED BACK TO MAIN OR TO OVERLAY
+
+Real ActionSet and Placeholder Actions created at Attach time
 
 OverlaysLayerXrActionSetHandleInfo, add:
     std::vector<XrAction> actions;          // main side only
-    std::set<OverlaysLayerXrActionHandleInfo::Ptr> placeholderActions;  // main side only
-    std::set<OverlaysLayerLocalActionHandleInfo::Ptr> localActions;        // overlay side only
+    std::set<OverlaysLayerVirtualActionHandleInfo::Ptr> localActions;        // overlay side only
     bool mutable = true; // false after attach
 
 OverlaysLayerXrActionHandleInfo, add:
@@ -175,6 +169,11 @@ std::unordered_map<WellKnownStringIndex, StringAndPath> OverlaysLayerWellKnownSt
     {KHR_SIMPLE_CONTROLLER, {"/interaction_profiles/khr/simple_controller"}},
     // etc
 };
+
+Session { // add:
+    std::set<VirtualActionSet> virtualActionSets;
+    std::set<OverlaysLayerXrActionHandleInfo::Ptr> placeholderActions;  // main side only
+}
 
 // construct maybe in createLayerInstance from OverlaysLayerWellKnownStringFromEnum
 std::unordered_map<std::string, WellKnownStringIndex> OverlaysLayerWellKnownStringToEnum; // ?
@@ -210,11 +209,7 @@ std::vector<PlaceholderActionId> PlaceholderActionIds = {
                 KHR_SIMPLE_CONTROLLER,
                 XR_NULL_PATH, // set at init time
                 {
-                    /* PlaceholderActionBinding: */ {
-                        USER_HAND_LEFT,
-                        INPUT_SQUEEZE_VALUE,
-                        XR_NULL_PATH, XR_NULL_PATH, // set at init time
-                    },
+                    /* PlaceholderActionBinding: */ { USER_HAND_LEFT, INPUT_SQUEEZE_VALUE, XR_NULL_PATH, XR_NULL_PATH } // set at init time
                     ...
                 }
             }
@@ -222,8 +217,8 @@ std::vector<PlaceholderActionId> PlaceholderActionIds = {
     },
 };
 
-So we know that if the overlay suggested for "/interaction_profiles/khr/simple_controller/" binding an action to "/user/hand/left/input/squeeze/value", we can query the action we created and bound for those.
 
+So we know that if the overlay suggested for "/interaction_profiles/khr/simple_controller/" binding an action to "/user/hand/left/input/squeeze/value", we can query the action we created and bound for those.
 
 hello_xr output:
     profile null_path
@@ -245,6 +240,16 @@ hello_xr output:
     bound "vibrate" to 2 sources...
         "/user/hand/left/output/haptic"("Left Hand Oculus Touch Vibration")
         "/user/hand/right/output/haptic"("Right Hand Oculus Touch Vibration")
+
+A solution must handle:
+    multiple suggested bindings
+    suggested profile by overlay app does not overlap profiles of main app
+    priority of actionsets
+    Actions are only valid after SyncActions 
+    Action state is fixed between SyncActions
+    ActionSet/Action is immutable after Attach
+    ActionState may be an aggregation of multiple input sources, e.g. XrBool32 is OR of all valid sources
+    behavior of main must not change appreciably
 
 Applications "may" suggest interaction profile bindings
     SuggestInteractionProfileBindings provides a tuple {interaction_profile path, binding path, action}
@@ -272,7 +277,7 @@ Applications "may" suggest interaction profile bindings
                 Just check all of them?
         further a subactionpath might disambiguate fully mapping an action to a binding
         if overlay suggests "select/click" for XrAction bar and main suggests "select/click" for XrAction foo, xrGetActionStateBoolean on bar could return the same as for foo.
-    However, an app may suggest only khr/simple_controller and not the others.
+    However, an app might suggest only khr/simple_controller and might not suggest any others
         what if overlay suggests "khr/simple_controller" "select/click" for XrAction bar, and main suggests "oculus/touch_controller" "squeeze/value" for XrAction foo.
             Should OverlaysLayer be responsible for converting input profiles?
                 xrGetCurrentInteractionProfile would need to translate from oculus/touch_controller to khr/simplecontroller
@@ -289,69 +294,24 @@ Applications "may" suggest interaction profile bindings
     XrAction -> look up in suggested interaction bindings, refine by current interaction profile, results in >= 0 profile paths
         need to catch profile changed event 
 
-If the Overlay knows what main XrActions are bound to which paths at the moment of xrGetActionState*, it can call xrGetActionState on the main XrAction.
-    this won't work until main calls xrSyncActions, or if main calls xrSyncActions... at all?
-        Overlay could have main call xrSyncActions if main hasn't called it already, and skip the next main xrSyncActions.
-        Is it safe to call twice?
-    Overlay will need to read state of all XrActions at xrSyncActions and keep locally, otherwise a call by main to xrSyncActions would make subsequent xrGetActionState calls return inconsistent results.
-
-
 xrPollEvent
     Main
         if profile changed event, save the current profile
     Overlay
         translate profile changed event if possible
 ActionSet:
-struct PlaceholderActionBinding
-{
-    WellKnownStringIndex subActionString;
-    WellKnownStringIndex componentString;
-    XrPath subActionPath; 
-    XrPath bindingPath; // a Path with subaction and component concatenated
-};
-
-struct PlaceholderActionProfile
-{
-    WellKnownStringIndex interactionProfileString;
-    XrPath interactionProfilePath;
-    std::vector<PlaceholderActionBinding> bindings;
-};
-
-struct PlaceholderActionId {
-    std::string name; // "name of thingie here?"
-    XrActionType type;
-    std::vector<PlaceHolderActionProfile> placeholderActionProfiles;
-};
-
-XXX PRIORITY????
-XXX PRIORITY????
-XXX PRIORITY????
-XXX PRIORITY????
-
     xrCreateActionSet
-        downchain->Create
-        for(const& ph : PlaceholderActionIds) {
-            XrAction action;
-            XrActionCreateInfo createInfo = {...};
-            downchain->CreateAction(instance, &createInfo, action);
-            actionInfo = std::make_shared<OverlaysLayerCreateActionHandleInfo>(...)
-            actionsetInfo->placeholderActions.insert(actionInfo);
-        }
         save createInfo
     xrDestroyActionSet
-        placeholderActions.clear() so placeholder Actions are Destroy()ed
         downchain->Destroy
 
 Action:
-    create normally
-    save local state
-        make local container for action
+    xrCreateAction
         pretend to be runtime: If parent actionSet has been included in a call to xrAttachSessionActionSets, the implementation must return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
+        save create state
+        make VirtualAction
     xrDestroyAction
-        if BOUND_IN_OVERLAY:
-            delete from
-        Destroy
-        Overlay - delete local container, delete handle from parent ActionSet
+        just delete VirtualAction
 
 xrSuggestInteractionProfileBindings
     save bindings for comparison
@@ -360,14 +320,24 @@ xrSuggestInteractionProfileBindings
         if any action is attached localAction, XR_ERROR_ACTIONSETS_ALREADY_ATTACHED
         If interaction profile path does not follow structure defined in Interaction Profiles or suggested bindings contain paths that do not follow format defined in Device input subpaths, XR_ERROR_PATH_UNSUPPORTED
 
+xrCreateSession in Main
+    for(const& ph : PlaceholderActionIds) {
+        XrAction action;
+        XrActionCreateInfo createInfo = {...};
+        downchain->CreateAction(instance, &createInfo, action);
+        actionInfo = std::make_shared<OverlaysLayerCreateActionHandleInfo>(...)
+        actionsetInfo->placeholderActions.insert(actionInfo);
+    }
+
 xrAttachSessionActionSets
     Overlay
         must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY 
-        note in Session; actionsets and actions
-        mark actionsets and actions bound to OVERLAY, mutable = false
+        note virtual actionsets and virtual actions in Session
+        mark virtual actionsets and virtual actions bound to OVERLAY, mutable = false
     Main
-        execute normally
-        mark actionsets and actions bound to MAIN, mutable = false
+        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY 
+        note virtual actionsets and virtual actions in Session
+        mark virtual actionsets and virtual actions bound to MAIN, mutable = false
 
 xrGetCurrentInteractionProfile
     Main
@@ -389,36 +359,28 @@ xrGetCurrentInteractionProfile
 
 xrSyncActions
     Main
-        copy all main action state into those actions
+        map actions to paths through suggested bindings
+        SyncActions for placeholders
+        fill state for all VirtualActions
     Overlay
-        IPC binding paths to MainAsOverlay
+        map actions to paths through suggested bindings
+        IPC to main and SyncActions for placeholders
+        fill state for all VirtualActions
     MainAsOverlay
-        for all actions on overlay side
-            name = suggestedbindings
-        xrEnumerateBoundSourcesForAction for all actions on Overlay side
-        call xrSyncActions on bound actionsets?
-        get all bound actions from Overlay and pass back
+        xrSyncActions on placeholders
 
 xrEnumerateBoundSourcesForAction
     (and xrGetInputSourceLocalizedName, less important)
+    later
 
-GetActionState
-    xrGetActionStateBoolean
-    xrGetActionStateFloat
-    xrGetActionStateVector2f
-    xrGetActionStatePose
-    Overlay
-        pretend to be runtime
-            if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
-            XR_ERROR_ACTIONSET_NOT_ATTACHED
+GetActionState, both sides
+    pretend to be runtime
+        if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
+        XR_ERROR_ACTIONSET_NOT_ATTACHED
+    get state from virtual action
         return values previously stored by xrSyncActions
-    MainAsOverlay
-        nothing?
-    Main
-        call normally
 
 HapticFeedback
-    xrStopHapticFeedback
     xrApplyHapticFeedback
         Overlay
             has to map local actions to remote actions
@@ -426,51 +388,14 @@ HapticFeedback
             call on Action matching the paths provided
         Main
             normal
+    xrStopHapticFeedback
 
 xrCreateActionSpace
+    NB the target Action must be a POSE action
     For xrCreateActionSpace, the action and a subpath are used to disambiguate which path may be used
         but still an action must be bound to a path through an interaction profile
     need to map overlay action to remote action somehow
-
-
-
-need to emit for XrPath, XrAction, XrActionSet, XrSystemId
-    Overlay side function to pack up a request to main to create one
-        XrPath -> string used on creation in Overlay
-        XrActionSet -> XrCreateActionSetInfo used on creation in Overlay
-        XrAction -> XrCreateActionInfo used on creation in Overlay
-    MainAsOverlay function to create those bits
-    need to carefully manage errors
-
-possibly_IPC_commands = { Session and all child handle commands }
-in Python, if command_name in IPC_commands,
-    emit in CommandName:
-        check local handle to see if remote proxy
-        if(remote proxy)
-            CommandNameOverlay(params)
-        else
-            CommandNameMain(params)
-    emit CommandNameOverlay(params)
-        for each handle in parameters in XrSpace, XrSwapchain
-            substitute proxy handle
-        for each handle in parameters in XrAction, XrActionSet
-            if there is no proxy handle, create the proxy handle through main
-        for each atom in parameters in XrPath, XrSystemId
-            if there is no proxy atom, create the proxy atom through main
-        substitute proxy Handles and Paths in parameters to send
-        pack up commands, add pointers to list, make pointers relative, send over IPC
-        unpack results
-        deproxy Handles and Paths in returned parameters
-        if created XrSpace or XrSwapchain,
-            create unique id, return that
-    emit CommandNameMain(params)
-        call downchain normally with possible caching of create params
-    emit CommandNameMainAsOverlay(params)
-        take mutex
-        call downchain
-        return result
-    emit body of thread loop looking in shared mem for command name ID
-        make pointers absolute
-        call CommandNameMainAsOverlay
-        make pointers relative
-        return result
+    space will be created against a particular action
+        just pick the first pose listed as a suggested binding
+    Main - create space against action matching first suggested binding
+    Overlay - RPC to Main to create space against action matching first suggested binding
