@@ -517,6 +517,8 @@ add_to_handle_struct["XrSession"] = {
     const XrSessionCreateInfo *createInfo = nullptr;
     std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
     std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
+    XrActionSet placeholderActionSet;
+    std::vector<XrAction> placeholderActions;
 """,
 }
 
