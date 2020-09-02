@@ -64,6 +64,263 @@
 
 const char *kOverlayLayerName = "xr_extx_overlay";
 
+
+enum WellKnownStringIndex {
+    INPUT_SQUEEZE_CLICK = 1,
+    INPUT_GRIP_POSE = 2,
+    INPUT_B_CLICK = 3,
+    INPUT_TRIGGER_TOUCH = 4,
+    INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER = 5,
+    INPUT_DPAD_DOWN_CLICK = 6,
+    INPUT_TRACKPAD_Y = 7,
+    INPUT_THUMBSTICK_Y = 8,
+    INPUT_THUMBSTICK_CLICK = 9,
+    INPUT_SQUEEZE_VALUE = 10,
+    INPUT_THUMBREST_TOUCH = 11,
+    INPUT_MUTE_MIC_CLICK = 12,
+    INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER = 13,
+    INPUT_DPAD_LEFT_CLICK = 14,
+    INPUT_VOLUME_UP_CLICK = 15,
+    INPUT_THUMBSTICK_LEFT_CLICK = 16,
+    INPUT_A_TOUCH = 17,
+    INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER = 18,
+    INPUT_DPAD_RIGHT_CLICK = 19,
+    USER_HAND_RIGHT = 20,
+    INTERACTION_PROFILES_HTC_VIVE_CONTROLLER = 21,
+    OUTPUT_HAPTIC_RIGHT = 22,
+    INPUT_THUMBSTICK_X = 23,
+    INPUT_THUMBSTICK_RIGHT_CLICK = 24,
+    INPUT_VIEW_CLICK = 25,
+    INPUT_TRACKPAD_TOUCH = 26,
+    INPUT_TRIGGER_LEFT_VALUE = 27,
+    INPUT_TRIGGER_CLICK = 28,
+    INPUT_AIM_POSE = 29,
+    INPUT_SHOULDER_LEFT_CLICK = 30,
+    INPUT_THUMBSTICK_RIGHT_Y = 31,
+    INPUT_TRIGGER_VALUE = 32,
+    INPUT_SYSTEM_TOUCH = 33,
+    INPUT_VOLUME_DOWN_CLICK = 34,
+    INPUT_B_TOUCH = 35,
+    USER_GAMEPAD = 36,
+    INPUT_THUMBSTICK_TOUCH = 37,
+    INPUT_SYSTEM_CLICK = 38,
+    INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER = 39,
+    OUTPUT_HAPTIC_RIGHT_TRIGGER = 40,
+    INPUT_MENU_CLICK = 41,
+    INPUT_TRACKPAD_X = 42,
+    INTERACTION_PROFILES_HTC_VIVE_PRO = 43,
+    USER_HEAD = 44,
+    INPUT_TRIGGER_RIGHT_VALUE = 45,
+    INPUT_DPAD_UP_CLICK = 46,
+    INTERACTION_PROFILES_OCULUS_GO_CONTROLLER = 47,
+    INPUT_SHOULDER_RIGHT_CLICK = 48,
+    OUTPUT_HAPTIC = 49,
+    INPUT_SQUEEZE_FORCE = 50,
+    OUTPUT_HAPTIC_LEFT_TRIGGER = 51,
+    INPUT_TRACKPAD_CLICK = 52,
+    INPUT_BACK_CLICK = 53,
+    INPUT_X_CLICK = 54,
+    INPUT_SELECT_CLICK = 55,
+    INPUT_TRACKPAD_FORCE = 56,
+    INPUT_A_CLICK = 57,
+    INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER = 58,
+    INPUT_THUMBSTICK_RIGHT_X = 59,
+    INPUT_THUMBSTICK_LEFT_X = 60,
+    INPUT_THUMBSTICK_LEFT_Y = 61,
+    INPUT_Y_CLICK = 62,
+    OUTPUT_HAPTIC_LEFT = 63,
+    USER_HAND_LEFT = 64,
+
+}; // These will need to not change for subsequent versions for backward compatibility
+
+std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStrings = {
+    {INPUT_SQUEEZE_CLICK, "/input/squeeze/click"},
+    {INPUT_GRIP_POSE, "/input/grip/pose"},
+    {INPUT_B_CLICK, "/input/b/click"},
+    {INPUT_TRIGGER_TOUCH, "/input/trigger/touch"},
+    {INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER, "/interaction_profiles/khr/simple_controller"},
+    {INPUT_DPAD_DOWN_CLICK, "/input/dpad_down/click"},
+    {INPUT_TRACKPAD_Y, "/input/trackpad/y"},
+    {INPUT_THUMBSTICK_Y, "/input/thumbstick/y"},
+    {INPUT_THUMBSTICK_CLICK, "/input/thumbstick/click"},
+    {INPUT_SQUEEZE_VALUE, "/input/squeeze/value"},
+    {INPUT_THUMBREST_TOUCH, "/input/thumbrest/touch"},
+    {INPUT_MUTE_MIC_CLICK, "/input/mute_mic/click"},
+    {INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, "/interaction_profiles/oculus/touch_controller"},
+    {INPUT_DPAD_LEFT_CLICK, "/input/dpad_left/click"},
+    {INPUT_VOLUME_UP_CLICK, "/input/volume_up/click"},
+    {INPUT_THUMBSTICK_LEFT_CLICK, "/input/thumbstick_left/click"},
+    {INPUT_A_TOUCH, "/input/a/touch"},
+    {INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, "/interaction_profiles/microsoft/motion_controller"},
+    {INPUT_DPAD_RIGHT_CLICK, "/input/dpad_right/click"},
+    {USER_HAND_RIGHT, "/user/hand/right"},
+    {INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, "/interaction_profiles/htc/vive_controller"},
+    {OUTPUT_HAPTIC_RIGHT, "/output/haptic_right"},
+    {INPUT_THUMBSTICK_X, "/input/thumbstick/x"},
+    {INPUT_THUMBSTICK_RIGHT_CLICK, "/input/thumbstick_right/click"},
+    {INPUT_VIEW_CLICK, "/input/view/click"},
+    {INPUT_TRACKPAD_TOUCH, "/input/trackpad/touch"},
+    {INPUT_TRIGGER_LEFT_VALUE, "/input/trigger_left/value"},
+    {INPUT_TRIGGER_CLICK, "/input/trigger/click"},
+    {INPUT_AIM_POSE, "/input/aim/pose"},
+    {INPUT_SHOULDER_LEFT_CLICK, "/input/shoulder_left/click"},
+    {INPUT_THUMBSTICK_RIGHT_Y, "/input/thumbstick_right/y"},
+    {INPUT_TRIGGER_VALUE, "/input/trigger/value"},
+    {INPUT_SYSTEM_TOUCH, "/input/system/touch"},
+    {INPUT_VOLUME_DOWN_CLICK, "/input/volume_down/click"},
+    {INPUT_B_TOUCH, "/input/b/touch"},
+    {USER_GAMEPAD, "/user/gamepad"},
+    {INPUT_THUMBSTICK_TOUCH, "/input/thumbstick/touch"},
+    {INPUT_SYSTEM_CLICK, "/input/system/click"},
+    {INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, "/interaction_profiles/valve/index_controller"},
+    {OUTPUT_HAPTIC_RIGHT_TRIGGER, "/output/haptic_right_trigger"},
+    {INPUT_MENU_CLICK, "/input/menu/click"},
+    {INPUT_TRACKPAD_X, "/input/trackpad/x"},
+    {INTERACTION_PROFILES_HTC_VIVE_PRO, "/interaction_profiles/htc/vive_pro"},
+    {USER_HEAD, "/user/head"},
+    {INPUT_TRIGGER_RIGHT_VALUE, "/input/trigger_right/value"},
+    {INPUT_DPAD_UP_CLICK, "/input/dpad_up/click"},
+    {INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, "/interaction_profiles/oculus/go_controller"},
+    {INPUT_SHOULDER_RIGHT_CLICK, "/input/shoulder_right/click"},
+    {OUTPUT_HAPTIC, "/output/haptic"},
+    {INPUT_SQUEEZE_FORCE, "/input/squeeze/force"},
+    {OUTPUT_HAPTIC_LEFT_TRIGGER, "/output/haptic_left_trigger"},
+    {INPUT_TRACKPAD_CLICK, "/input/trackpad/click"},
+    {INPUT_BACK_CLICK, "/input/back/click"},
+    {INPUT_X_CLICK, "/input/x/click"},
+    {INPUT_SELECT_CLICK, "/input/select/click"},
+    {INPUT_TRACKPAD_FORCE, "/input/trackpad/force"},
+    {INPUT_A_CLICK, "/input/a/click"},
+    {INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, "/interaction_profiles/microsoft/xbox_controller"},
+    {INPUT_THUMBSTICK_RIGHT_X, "/input/thumbstick_right/x"},
+    {INPUT_THUMBSTICK_LEFT_X, "/input/thumbstick_left/x"},
+    {INPUT_THUMBSTICK_LEFT_Y, "/input/thumbstick_left/y"},
+    {INPUT_Y_CLICK, "/input/y/click"},
+    {OUTPUT_HAPTIC_LEFT, "/output/haptic_left"},
+    {USER_HAND_LEFT, "/user/hand/left"},
+
+};
+
+std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
+std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
+
+
+struct PlaceholderActionId
+{
+    std::string name;
+    XrActionType type;
+    WellKnownStringIndex interactionProfileString;
+    WellKnownStringIndex subActionString;
+    WellKnownStringIndex componentString;
+};
+
+std::vector<PlaceholderActionId> PlaceholderActionIds =
+{
+    {"/interaction_profiles/khr/simple_controller/user/hand/right/input/select/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER, USER_HAND_RIGHT, INPUT_SELECT_CLICK},
+    {"/interaction_profiles/khr/simple_controller/user/hand/right/input/menu/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER, USER_HAND_RIGHT, INPUT_MENU_CLICK},
+    {"/interaction_profiles/khr/simple_controller/user/hand/right/input/grip/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER, USER_HAND_RIGHT, INPUT_GRIP_POSE},
+    {"/interaction_profiles/khr/simple_controller/user/hand/right/input/aim/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER, USER_HAND_RIGHT, INPUT_AIM_POSE},
+    {"/interaction_profiles/khr/simple_controller/user/hand/right/output/haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_KHR_SIMPLE_CONTROLLER, USER_HAND_RIGHT, OUTPUT_HAPTIC},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/system/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_SYSTEM_CLICK},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/squeeze/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_SQUEEZE_CLICK},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/menu/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_MENU_CLICK},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/trigger/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_CLICK},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/trigger/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_VALUE},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/trackpad/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_X},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/trackpad/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_Y},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/trackpad/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_CLICK},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/trackpad/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_TOUCH},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/grip/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_GRIP_POSE},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/input/aim/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, INPUT_AIM_POSE},
+    {"/interaction_profiles/htc/vive_controller/user/hand/right/output/haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_HTC_VIVE_CONTROLLER, USER_HAND_RIGHT, OUTPUT_HAPTIC},
+    {"/interaction_profiles/htc/vive_pro/user/head/input/system/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_PRO, USER_HEAD, INPUT_SYSTEM_CLICK},
+    {"/interaction_profiles/htc/vive_pro/user/head/input/volume_up/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_PRO, USER_HEAD, INPUT_VOLUME_UP_CLICK},
+    {"/interaction_profiles/htc/vive_pro/user/head/input/volume_down/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_PRO, USER_HEAD, INPUT_VOLUME_DOWN_CLICK},
+    {"/interaction_profiles/htc/vive_pro/user/head/input/mute_mic/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_HTC_VIVE_PRO, USER_HEAD, INPUT_MUTE_MIC_CLICK},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/menu/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_MENU_CLICK},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/squeeze/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_SQUEEZE_CLICK},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/trigger/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_VALUE},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/thumbstick/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_X},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/thumbstick/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_Y},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/thumbstick/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_CLICK},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/trackpad/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_X},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/trackpad/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_Y},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/trackpad/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_CLICK},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/trackpad/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_TOUCH},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/grip/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_GRIP_POSE},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/input/aim/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, INPUT_AIM_POSE},
+    {"/interaction_profiles/microsoft/motion_controller/user/hand/right/output/haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_MICROSOFT_MOTION_CONTROLLER, USER_HAND_RIGHT, OUTPUT_HAPTIC},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/menu/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_MENU_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/view/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_VIEW_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/a/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_A_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/b/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_B_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/x/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_X_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/y/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_Y_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/dpad_down/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_DPAD_DOWN_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/dpad_right/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_DPAD_RIGHT_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/dpad_up/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_DPAD_UP_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/dpad_left/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_DPAD_LEFT_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/shoulder_left/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_SHOULDER_LEFT_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/shoulder_right/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_SHOULDER_RIGHT_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_left/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_THUMBSTICK_LEFT_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_right/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_THUMBSTICK_RIGHT_CLICK},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/trigger_left/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_TRIGGER_LEFT_VALUE},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/trigger_right/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_TRIGGER_RIGHT_VALUE},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_left/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_THUMBSTICK_LEFT_X},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_left/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_THUMBSTICK_LEFT_Y},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_right/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_THUMBSTICK_RIGHT_X},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/input/thumbstick_right/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, INPUT_THUMBSTICK_RIGHT_Y},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/output/haptic_left", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, OUTPUT_HAPTIC_LEFT},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/output/haptic_right", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, OUTPUT_HAPTIC_RIGHT},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/output/haptic_left_trigger", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, OUTPUT_HAPTIC_LEFT_TRIGGER},
+    {"/interaction_profiles/microsoft/xbox_controller/user/gamepad/output/haptic_right_trigger", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_MICROSOFT_XBOX_CONTROLLER, USER_GAMEPAD, OUTPUT_HAPTIC_RIGHT_TRIGGER},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/system/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_SYSTEM_CLICK},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/trigger/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_CLICK},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/back/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_BACK_CLICK},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/trackpad/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_X},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/trackpad/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_Y},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/trackpad/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_CLICK},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/trackpad/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_TOUCH},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/grip/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_GRIP_POSE},
+    {"/interaction_profiles/oculus/go_controller/user/hand/right/input/aim/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_OCULUS_GO_CONTROLLER, USER_HAND_RIGHT, INPUT_AIM_POSE},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/squeeze/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_SQUEEZE_VALUE},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/trigger/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_VALUE},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/trigger/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_TOUCH},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/thumbstick/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_X},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/thumbstick/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_Y},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/thumbstick/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_CLICK},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/thumbstick/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_TOUCH},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/thumbrest/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBREST_TOUCH},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/grip/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_GRIP_POSE},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/input/aim/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, INPUT_AIM_POSE},
+    {"/interaction_profiles/oculus/touch_controller/user/hand/right/output/haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_OCULUS_TOUCH_CONTROLLER, USER_HAND_RIGHT, OUTPUT_HAPTIC},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/system/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_SYSTEM_CLICK},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/system/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_SYSTEM_TOUCH},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/a/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_A_CLICK},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/a/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_A_TOUCH},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/b/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_B_CLICK},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/b/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_B_TOUCH},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/squeeze/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_SQUEEZE_VALUE},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/squeeze/force", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_SQUEEZE_FORCE},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trigger/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_CLICK},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trigger/value", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_VALUE},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trigger/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRIGGER_TOUCH},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/thumbstick/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_X},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/thumbstick/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_Y},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/thumbstick/click", XR_ACTION_TYPE_BOOLEAN_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_CLICK},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/thumbstick/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_THUMBSTICK_TOUCH},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trackpad/x", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_X},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trackpad/y", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_Y},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trackpad/force", XR_ACTION_TYPE_FLOAT_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_FORCE},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/trackpad/touch", XR_ACTION_TYPE_VECTOR2F_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_TRACKPAD_TOUCH},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/grip/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_GRIP_POSE},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/input/aim/pose", XR_ACTION_TYPE_POSE_INPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, INPUT_AIM_POSE},
+    {"/interaction_profiles/valve/index_controller/user/hand/right/output/haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT, INTERACTION_PROFILES_VALVE_INDEX_CONTROLLER, USER_HAND_RIGHT, OUTPUT_HAPTIC},
+
+};
+
+
+
 const std::set<HandleTypePair> OverlaysLayerNoObjectInfo = {};
 
 uint64_t GetNextLocalHandle()
@@ -958,6 +1215,52 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     d3dMultithread->SetMultithreadProtected(TRUE);
     d3dMultithread->Release();
 
+    if(OverlaysLayerWellKnownStringToPath.size() == 0) { 
+        for(auto& w : OverlaysLayerWellKnownStrings) {
+            XrPath path;
+            XrResult result2 = instanceInfo->downchain->StringToPath(instance, w.second, &path);
+            if(result2 != XR_SUCCESS) {
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+                    OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create path from.\n", w.second).c_str());
+                return XR_ERROR_INITIALIZATION_FAILED;
+            }
+            OverlaysLayerWellKnownStringToPath.insert({w.first, path});
+			OverlaysLayerPathToWellKnownString.insert({path, w.first});
+        }
+    }
+
+
+
+    XrActionSetCreateInfo createActionSetInfo { XR_TYPE_ACTION_SET_CREATE_INFO, nullptr, "overlaysapilayer", "overlays API layer synthetic actionset", 1 };
+    XrResult result2 = instanceInfo->downchain->CreateActionSet(instance, &createActionSetInfo, &info->placeholderActionSet);
+    if(result2 != XR_SUCCESS) {
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create session placeholder ActionSet.\n").c_str());
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+    int i=1;
+    for(auto& id : PlaceholderActionIds) {
+        char placeholderNameString[64];
+        sprintf(placeholderNameString, "overlays%d", i++);
+        XrActionCreateInfo createActionInfo { XR_TYPE_ACTION_CREATE_INFO };
+        strcpy(createActionInfo.actionName, placeholderNameString);
+        strcpy(createActionInfo.localizedActionName, placeholderNameString);
+		createActionInfo.actionType = id.type;
+		createActionInfo.countSubactionPaths = 1;
+		XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
+        createActionInfo.subactionPaths = &subactionPath;
+        XrAction action;
+        XrResult result2 = instanceInfo->downchain->CreateAction(info->placeholderActionSet, &createActionInfo, &action);
+        if(result2 != XR_SUCCESS) {
+            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+                OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create session placeholder action for %s.\n", id.name).c_str());
+            return XR_ERROR_INITIALIZATION_FAILED;
+        }
+        info->placeholderActions.push_back(action);
+    }
+    // XXX still need to suggest bindings
+    // XXX still need to attach actionsets
+
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
     gOverlaysLayerXrSessionToHandleInfo.insert({localHandle, info});
     mlock2.unlock();
@@ -971,7 +1274,6 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
             OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the Main App listener thread.\n").c_str());
         return XR_ERROR_INITIALIZATION_FAILED;
     }
-
     return xrresult;
 }
 
