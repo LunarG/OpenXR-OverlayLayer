@@ -210,7 +210,7 @@ for reg_type in reg_types:
                     if size_and_len == "null-terminated":
                         member["type"] = "c_string"
                     else:
-                        if type_text in atoms or member_type in handles.keys():
+                        if type_text in atoms or type_text in handles:
                             member["type"] = "pointer_to_atom_or_handle"
                             member["size"] = size_and_len.split(",")[0].strip()
                         elif type_text in structs and structs[type_text][1]:
@@ -334,7 +334,7 @@ manually_implemented_commands = [
     # "xrGetActionStatePose",
     # "xrSyncActions",
     "xrSuggestInteractionProfileBindings",
-    # "xrAttachSessionActionSets",
+    "xrAttachSessionActionSets",
 ]
 
 supported_commands = [
@@ -490,6 +490,10 @@ def is_an_xr_type(type) :
 def is_an_xr_struct(type) :
     return is_an_xr_type and (type in structs)
 
+def is_an_xr_chained_struct(type) :
+    # argh baseheader!!
+    return (is_an_xr_struct and structs[type][2]) or (type in "XrSwapchainImageBaseHeader")
+
 def is_an_xr_handle(type) :
     return is_an_xr_type and (type in handles)
 
@@ -515,7 +519,7 @@ add_to_handle_struct["XrInstance"] = {
     "members" : """
     const XrInstanceCreateInfo *createInfo = nullptr;
     std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
-    std::unordered_map<XrPath, std::set<XrActionSuggestedBinding>> profilesToBindings;
+    std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> profilesToBindings;
 """,
 }
 
@@ -630,7 +634,6 @@ after_downchain_main["xrCreateDebugUtilsMessengerEXT"] = f"""
 add_to_handle_struct["XrActionSet"] = {
     "members" : """
     XrActionSetCreateInfo *createInfo = nullptr;
-    XrActionSet actualHandle;
     ActionBindLocation bindLocation = BIND_PENDING;
 """,
 }
@@ -651,7 +654,6 @@ after_downchain_main["xrCreateActionSet"] = f"""
 add_to_handle_struct["XrAction"] = {
     "members" : """
     XrActionCreateInfo *createInfo = nullptr;
-    XrAction actualHandle;
     ActionBindLocation bindLocation = BIND_PENDING;
 """,
 }
@@ -981,7 +983,7 @@ std::recursive_mutex g{layer_name}SystemIdToAtomInfoMutex;
 
 # All Handle types
 
-handles_needing_substitution = ['XrSession', 'XrSwapchain', 'XrSpace']
+handles_needing_substitution = ['XrSession', 'XrSwapchain', 'XrSpace', 'XrActionSet', 'XrAction']
 
 only_child_handles = [h for h in supported_handles if h != "XrInstance"]
 
@@ -1935,6 +1937,8 @@ stub_em = (
     "GetInputSourceLocalizedName",
     "ApplyHapticFeedback",
     "StopHapticFeedback",
+    "DestroyActionSet",
+    "DestroyAction",
 
     "SessionBeginDebugUtilsLabelRegionEXT",
     "SessionEndDebugUtilsLabelRegionEXT",
@@ -1958,7 +1962,7 @@ for stub in stub_em:
 # deep copy, free, substitute and restore handles functions ------------------
 
 xr_typed_structs = [name for name in supported_structs if structs[name][1]]
-xr_simple_structs = [name for name in supported_structs if not structs[name][1]]
+xr_simple_structs = [name for name in supported_structs if not structs[name][2]]
 
 # accessor_prefix could be e.g. "p->"
 # instance_string could be e.g. "instance" or e.g. "XR_NULL_HANDLE"
@@ -1973,7 +1977,7 @@ def get_code_to_restore_handle(member, instance_string, accessor_prefix):
 
         return f"""
             // array of pointers to XR structs for {name}
-            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+            for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
                 if(!RestoreActualHandles({instance_string}, (XrBaseInStructure *){accessor_prefix}{member["name"]}[i])) {{
                     return false;
                 }}
@@ -1985,16 +1989,25 @@ def get_code_to_restore_handle(member, instance_string, accessor_prefix):
         if member["struct_type"] in handles_needing_substitution:
             return f"""
             // array of {member["struct_type"]} for {name}
-            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
-                auto info = {layer_name}GetHandleInfoFrom{member["struct_type"]}({accessor_prefix}{member["name"]});
-                {accessor_prefix}{member["name"]} = info->actualHandle;
+            for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
+                auto info = {layer_name}GetHandleInfoFrom{member["struct_type"]}({accessor_prefix}{member["name"]}[i]);
+                (({member["struct_type"]}*){accessor_prefix}{member["name"]})[i] = info->actualHandle;
             }}
 """
         else:
             return ""
-
     elif member["type"] == "pointer_to_struct_array":
-        return ""
+        if member["struct_type"].startswith("Xr"):
+            return f"""
+                // pointer to XR structs for {name}
+                for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
+                    if(!RestoreActualHandles({instance_string}, ({member["struct_type"]}*)&{accessor_prefix}{member["name"]}[i])) {{
+                        return false;
+                    }}
+                }}
+"""
+        else:
+            return ""
     elif member["type"] == "pointer_to_opaque":
         return ""
     elif member["type"] == "void_pointer":
@@ -2021,7 +2034,7 @@ def get_code_to_restore_handle(member, instance_string, accessor_prefix):
     elif member["type"] == "pointer_to_xr_struct_array":
         return f"""
             // pointer to XR structs for {name}
-            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+            for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
                 if(!RestoreActualHandles({instance_string}, (XrBaseInStructure *)&{accessor_prefix}{member["name"]}[i])) {{
                     return false;
                 }}
@@ -2044,7 +2057,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
 
         return f"""
             // array of pointers to XR structs for {name}
-            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+            for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
                 SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *){accessor_prefix}{member["name"]}[i]);
             }}
 """
@@ -2054,22 +2067,30 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
         if member["struct_type"] in handles_needing_substitution:
             return f"""
             // array of {member["struct_type"]} for {name}
-            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+            for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
                 std::unique_lock<std::recursive_mutex> lock(gActual{member["struct_type"]}ToLocalHandleMutex);
-                auto it = gActual{member["struct_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]});
+                auto it = gActual{member["struct_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]}[i]);
                 if(it == gActual{member["struct_type"]}ToLocalHandle.end()) {{
                     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
                         OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["struct_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
                     throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
                 }}
-                {accessor_prefix}{member["name"]} = gActual{member["struct_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]});
+                (({member["struct_type"]}*){accessor_prefix}{member["name"]})[i] = gActual{member["struct_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]}[i]);
             }}
 """
         else:
             return ""
 
     elif member["type"] == "pointer_to_struct_array":
-        return ""
+        if member["struct_type"].startswith("Xr"):
+            return f"""
+                // pointer to XR structs for {name}
+                for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
+                    SubstituteLocalHandles({instance_string}, ({member["struct_type"]}*)&{accessor_prefix}{member["name"]}[i]);
+                }}
+"""
+        else:
+            return ""
     elif member["type"] == "pointer_to_opaque":
         return ""
     elif member["type"] == "void_pointer":
@@ -2100,7 +2121,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
     elif member["type"] == "pointer_to_xr_struct_array":
         return f"""
             // pointer to XR structs for {name}
-            for(uint32_t i = 0; i < p->{member["size"]}; i++) {{
+            for(uint32_t i = 0; i < {accessor_prefix}{member["size"]}; i++) {{
                 SubstituteLocalHandles({instance_string}, (XrBaseOutStructure *)&{accessor_prefix}{member["name"]}[i]);
             }}
 """
@@ -2177,7 +2198,7 @@ void FreeXrStructChain(XrInstance instance, const %(name)s* p, FreeFunc freefunc
 
     for member in struct[3]:
 
-        restore_handles_case_bodies += get_code_to_restore_handle(member, "instance", "p->");
+        restore_handles_case_bodies += f'/* {member["type"]} {member["name"]} */' + get_code_to_restore_handle(member, "instance", "p->")
 
         substitute_handles_case_bodies += get_code_to_substitute_handle(member, "instance", "p->");
 
@@ -2544,9 +2565,9 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
             created_types_parent_type = handles.get(created_type)[1]
         else:
             created_types_parent_type = ""
-        end_of_parameters = -2
-    else:
         end_of_parameters = -1
+    else:
+        end_of_parameters = len(command["parameters"])
 
     # If this is an XrDestroy... function, set a flag
     command_is_destroy = (command_name[2:9] == "Destroy")
@@ -2560,21 +2581,27 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
         parameter_name = param.find("name").text
         is_pointer = param.find("type").tail.strip()
         is_const = (param.text or "").strip() == "const"
-        # source_text += f"/* {command_name} PARAM {parameter_type} {parameter_name} {is_pointer} {is_const} ({param.text}) */\n"
+        source_text += f"/* {command_name} PARAM {parameter_type} {parameter_name} {is_pointer} {is_const} ({param.text}) */\n"
+# /* xrAcquireSwapchainImage PARAM XrSwapchainImageAcquireInfo acquireInfo * True (const ) */
         if is_an_xr_struct(parameter_type):
             if is_pointer:
                 if is_const:
                     restore_preamble += f"""
     auto {parameter_name}Save = {parameter_name};
-    auto {parameter_name}Copy = GetCopyHandlesRestored({handle_name}Info->parentInstance, "{command_name}", {parameter_name});
+    auto {parameter_name}Copy = GetSharedCopyHandlesRestored({handle_name}Info->parentInstance, "{command_name}", {parameter_name});
     {parameter_name} = {parameter_name}Copy.get();
 """
                     undo_restore_postscript += f"""
     {parameter_name} = {parameter_name}Save;
 """
                 else:
-                    substitute_postscript += f"""
+                    if is_an_xr_chained_struct(parameter_type):
+                        substitute_postscript += f"""
         SubstituteLocalHandles({handle_name}Info->parentInstance, reinterpret_cast<XrBaseOutStructure*>({parameter_name}));
+"""
+                    else:
+                        substitute_postscript += f"""
+        SubstituteLocalHandles({handle_name}Info->parentInstance, {parameter_name});
 """
             else:
                 pass # no struct parameters are passed by value at the time of writing
@@ -2588,7 +2615,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     {parameter_name} = {parameter_name}Save;
 """
             else:
-                pass # XXX for the moment
+                restore_preamble += f'#error oh no {parameter_name} {parameter_type}'
 
 
     if command_is_create:

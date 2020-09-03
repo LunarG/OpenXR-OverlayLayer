@@ -718,7 +718,7 @@ struct OverlaysLayerRPCCreateSession
 };
 
 template <typename T> 
-std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
+std::shared_ptr<T> GetSharedCopyHandlesRestored(XrInstance instance, const char *func, const T *obj)
 {
     XrBaseInStructure *chainCopy = CopyXrStructChainWithMalloc(instance, obj);
     if(!RestoreActualHandles(instance, chainCopy)) {
@@ -818,5 +818,7 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
 XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, const XrInteractionProfileSuggestedBinding* suggestedBindings);
 
 XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space);
+
+XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSessionActionSetsAttachInfo* attachInfo);
 
 #endif /* _OVERLAYS_H_ */
