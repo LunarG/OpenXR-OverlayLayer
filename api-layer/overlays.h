@@ -730,6 +730,19 @@ std::shared_ptr<T> GetCopyHandlesRestored(XrInstance instance, const char *func,
     return chainPtr;
 }
 
+enum ActionBindLocation
+{
+    BIND_PENDING,
+    BIND_MAIN,
+    BIND_OVERLAY,
+};
+
+enum SpaceType
+{
+    SPACE_REFERENCE,
+    SPACE_ACTION,
+};
+
 
 // Manually written functions -----------------------------------------------
 
@@ -798,5 +811,12 @@ XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session);
 
 XrResult OverlaysLayerDestroySwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain);
 XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain swapchain);
+
+XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCreateInfo* createInfo, XrActionSet* actionSet);
+XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateInfo* createInfo, XrAction* action);
+
+XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, const XrInteractionProfileSuggestedBinding* suggestedBindings);
+
+XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space);
 
 #endif /* _OVERLAYS_H_ */
