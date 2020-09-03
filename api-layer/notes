@@ -1,3 +1,10 @@
+9/2
+XrAction, XrActionSet handles will be only virtual, not backed by runtime handles.
+    can't call downchain on them, no "actualHandle"
+    actual XrActionSet, XrAction handles held by SessionInfo for purposes of Attach and Sync etc
+I was able to make more than 9800 XrPaths on Oculus' RT
+I was able to make 9998 XrActions on Oculus' RT
+
 8/17
 Items in IPCSerialize
     auto dst = new(ipcbuf) IPCXrCommandName;
@@ -153,70 +160,6 @@ OverlaysLayerXrActionSetHandleInfo, add:
 OverlaysLayerXrActionHandleInfo, add:
     OverlaysLayerXrActionSetHandleInfo::Ptr parentActionHandle;
 
-typedef std::pair<std::string str, XrPath path> StringAndPath;
-enum WellKnownStringIndex {
-    USER_HAND_LEFT = 1,
-    INPUT_SQUEEZE_VALUE = 2,
-    USER_HAND_LEFT_INPUT_SQUEEZE_VALUE = 3,
-    KHR_SIMPLE_CONTROLLER = 4,
-    // etc
-}; // These will need to not change for subsequent versions for backward compatibility
-
-std::unordered_map<WellKnownStringIndex, StringAndPath> OverlaysLayerWellKnownStrings = {
-    {USER_HAND_LEFT, {"/user/hand/left"}},
-    {INPUT_SQUEEZE_VALUE, {"input/squeeze/value"}},
-    {USER_HAND_LEFT_INPUT_SQUEEZE_VALUE, {"/user/hand/left/input/squeeze/value"}},
-    {KHR_SIMPLE_CONTROLLER, {"/interaction_profiles/khr/simple_controller"}},
-    // etc
-};
-
-Session { // add:
-    std::set<VirtualActionSet> virtualActionSets;
-    std::set<OverlaysLayerXrActionHandleInfo::Ptr> placeholderActions;  // main side only
-}
-
-// construct maybe in createLayerInstance from OverlaysLayerWellKnownStringFromEnum
-std::unordered_map<std::string, WellKnownStringIndex> OverlaysLayerWellKnownStringToEnum; // ?
-std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerWellKnownPathToEnum; // ?
-
-struct PlaceholderActionBinding
-{
-    WellKnownStringIndex subActionString;
-    WellKnownStringIndex componentString;
-    XrPath subActionPath; 
-    XrPath bindingPath; // a Path with subaction and component concatenated
-};
-
-struct PlaceholderActionProfile
-{
-    WellKnownStringIndex interactionProfileString;
-    XrPath interactionProfilePath;
-    std::vector<PlaceholderActionBinding> bindings;
-};
-
-struct PlaceholderActionId {
-    std::string name; // "name of thingie here?"
-    XrActionType type;
-    std::vector<PlaceHolderActionProfile> placeholderActionProfiles;
-};
-
-std::vector<PlaceholderActionId> PlaceholderActionIds = {
-    /* PlaceholderActionId: */ {
-        "/interaction_profiles/khr/simple_controller/user/hand/left/input/squeeze/value",
-        XR_ACTION_TYPE_FLOAT,
-        {
-            /* PlaceholderActionProfile: */ {
-                KHR_SIMPLE_CONTROLLER,
-                XR_NULL_PATH, // set at init time
-                {
-                    /* PlaceholderActionBinding: */ { USER_HAND_LEFT, INPUT_SQUEEZE_VALUE, XR_NULL_PATH, XR_NULL_PATH } // set at init time
-                    ...
-                }
-            }
-        }
-    },
-};
-
 
 So we know that if the overlay suggested for "/interaction_profiles/khr/simple_controller/" binding an action to "/user/hand/left/input/squeeze/value", we can query the action we created and bound for those.
 
@@ -294,16 +237,25 @@ Applications "may" suggest interaction profile bindings
     XrAction -> look up in suggested interaction bindings, refine by current interaction profile, results in >= 0 profile paths
         need to catch profile changed event 
 
+to get to something working for feasibility
+    CreateActionSet
+    CreateAction
+    CreateActionSpace
+    SyncActions
+    AttachSessionActionSets
+    GetActionState*
+
 xrPollEvent
     Main
         if profile changed event, save the current profile
     Overlay
         translate profile changed event if possible
+
 ActionSet:
     xrCreateActionSet
         save createInfo
+        createVirtualActionSet
     xrDestroyActionSet
-        downchain->Destroy
 
 Action:
     xrCreateAction
@@ -383,19 +335,27 @@ GetActionState, both sides
 HapticFeedback
     xrApplyHapticFeedback
         Overlay
-            has to map local actions to remote actions
+            map virtual action to real action, RPC
         MainAsOverlay
             call on Action matching the paths provided
         Main
-            normal
+            map virtual action to real action
     xrStopHapticFeedback
 
 xrCreateActionSpace
+    typedef struct XrActionSpaceCreateInfo {
+        XrStructureType type;
+        const void* next;
+        XrAction action;
+        XrPath subactionPath;
+        XrPosef poseInActionSpace;
+    } XrActionSpaceCreateInfo;
     NB the target Action must be a POSE action
-    For xrCreateActionSpace, the action and a subpath are used to disambiguate which path may be used
+    For xrCreateActionSpace, the action and a subactionPath are used to disambiguate which path may be used
         but still an action must be bound to a path through an interaction profile
-    need to map overlay action to remote action somehow
-    space will be created against a particular action
-        just pick the first pose listed as a suggested binding
+        need to map overlay action to remote action somehow
+        space will be created against a particular action
+            just pick the first pose listed as a suggested binding
+            Or do multiple spaces need to be created and pick the first active one at LocateSpace time?
     Main - create space against action matching first suggested binding
     Overlay - RPC to Main to create space against action matching first suggested binding

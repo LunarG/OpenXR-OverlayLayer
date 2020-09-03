@@ -148,15 +148,21 @@ for l in path_specs.splitlines():
         well_known_strings.add(profile)
         placeholder_profiles[profile] = {}
     elif l.startswith("* pathname:"):
-        top_level_path = l.split(":")[1]
-        # print("    top level path %s" % top_level_path)
-        well_known_strings.add(top_level_path)
-        placeholder_profiles[profile][top_level_path] = []
+        top_level = l.split(":")[1]
+        # print("    top level path %s" % top_level)
+        well_known_strings.add(top_level)
+        placeholder_profiles[profile][top_level] = set()
     elif l.startswith("* subpathname:"):
         component = l.split(":")[1]
         # print("        component %s" % component)
         well_known_strings.add(component)
-        placeholder_profiles[profile][top_level_path].append(component)
+        well_known_strings.add(top_level + component)
+        placeholder_profiles[profile][top_level].add(component)
+        if component.endswith("x") or component.endswith("y"):
+            well_known_strings.add(component[:-2])
+            well_known_strings.add(top_level + component[:-2])
+            # don't add upper component for vector2f here
+            # that's added below, once, for just .x
 
 def to_upper_snake(str) :
     return "_".join([s.upper() for s in str[1:].split("/")])
@@ -174,12 +180,10 @@ placeholder_ids = ""
 for (profile, top_levels) in placeholder_profiles.items():
     for (top_level, components) in top_levels.items():
         for component in components:
-            if component.endswith("value") or component.endswith("x") or component.endswith("y") or component.endswith("force"):
+            if component.endswith("value") or component.endswith("x") or component.endswith("y") or component.endswith("force") or component.endswith("touch"):
                 type = "XR_ACTION_TYPE_FLOAT_INPUT"
             elif component.endswith("click"):
                 type = "XR_ACTION_TYPE_BOOLEAN_INPUT"
-            elif component.endswith("touch"):
-                type = "XR_ACTION_TYPE_VECTOR2F_INPUT"
             elif component.endswith("pose"):
                 type = "XR_ACTION_TYPE_POSE_INPUT"
             elif component.endswith("haptic") or component.endswith("haptic_left") or component.endswith("haptic_right") or component.endswith("haptic_left_trigger") or component.endswith("haptic_right_trigger"):
@@ -187,7 +191,10 @@ for (profile, top_levels) in placeholder_profiles.items():
             else:
                 print("oh, crap: %s" % component)
                 sys.exit(1);
-            placeholder_ids += '    {"' + profile + top_level + component + '", ' + type + ', ' + to_upper_snake(profile) + ", " + to_upper_snake(top_level) + ", " + to_upper_snake(component) + "},\n"
+            placeholder_ids += '    {"' + profile + top_level + component + '", ' + type + ', ' + to_upper_snake(profile) + ", " + to_upper_snake(top_level) + ", " + to_upper_snake(component) + ", " + to_upper_snake(top_level + component) + "},\n"
+            if component.endswith("x"):
+                placeholder_ids += '    {"' + profile + top_level + component[:-2] + '", XR_ACTION_TYPE_VECTOR2F_INPUT, ' + to_upper_snake(profile) + ", " + to_upper_snake(top_level) + ", " + to_upper_snake(component[:-2]) + ", " + to_upper_snake(top_level + component[:-2]) + "},\n"
+
 
 well_known = f"""
 enum WellKnownStringIndex {{
@@ -212,6 +219,7 @@ struct PlaceholderActionId
     WellKnownStringIndex interactionProfileString;
     WellKnownStringIndex subActionString;
     WellKnownStringIndex componentString;
+    WellKnownStringIndex fullBindingString;
 }};
 
 std::vector<PlaceholderActionId> PlaceholderActionIds =

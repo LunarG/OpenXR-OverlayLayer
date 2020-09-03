@@ -325,6 +325,16 @@ manually_implemented_commands = [
     "xrCreateSession",
     "xrPollEvent",
     "xrEndFrame",
+    "xrCreateActionSet",
+    "xrCreateAction",
+    "xrCreateActionSpace",
+    # "xrGetActionStateBoolean",
+    # "xrGetActionStateFloat",
+    # "xrGetActionStateVector2f",
+    # "xrGetActionStatePose",
+    # "xrSyncActions",
+    "xrSuggestInteractionProfileBindings",
+    # "xrAttachSessionActionSets",
 ]
 
 supported_commands = [
@@ -505,6 +515,7 @@ add_to_handle_struct["XrInstance"] = {
     "members" : """
     const XrInstanceCreateInfo *createInfo = nullptr;
     std::set<XrDebugUtilsMessengerEXT> debugUtilsMessengers;
+    std::unordered_map<XrPath, std::set<XrActionSuggestedBinding>> profilesToBindings;
 """,
 }
 
@@ -518,7 +529,8 @@ add_to_handle_struct["XrSession"] = {
     std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
     std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
     XrActionSet placeholderActionSet;
-    std::vector<XrAction> placeholderActions;
+    std::unordered_map<XrPath, XrAction> placeholderActions;
+    std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
 """,
 }
 
@@ -618,7 +630,8 @@ after_downchain_main["xrCreateDebugUtilsMessengerEXT"] = f"""
 add_to_handle_struct["XrActionSet"] = {
     "members" : """
     XrActionSetCreateInfo *createInfo = nullptr;
-    std::unordered_map<uint64_t, uint64_t> remoteActionSetByLocalSession;
+    XrActionSet actualHandle;
+    ActionBindLocation bindLocation = BIND_PENDING;
 """,
 }
 
@@ -638,9 +651,11 @@ after_downchain_main["xrCreateActionSet"] = f"""
 add_to_handle_struct["XrAction"] = {
     "members" : """
     XrActionCreateInfo *createInfo = nullptr;
-    std::unordered_map<uint64_t, uint64_t> remoteActionByLocalSession;
+    XrAction actualHandle;
+    ActionBindLocation bindLocation = BIND_PENDING;
 """,
 }
+
 
 after_downchain_main["xrCreateAction"] = f"""
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
@@ -656,6 +671,14 @@ in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(pare
 
 # XrSpace
 
+add_to_handle_struct["XrSpace"] = {
+    "members" : """
+    SpaceType spaceType;
+    XrAction action = XR_NULL_HANDLE;
+    std::shared_ptr<const XrActionSpaceCreateInfo> actionSpaceCreateInfo;
+""",
+}
+
 after_downchain_main["xrCreateReferenceSpace"] = """
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
@@ -664,6 +687,11 @@ after_downchain_main["xrCreateReferenceSpace"] = """
 """
 
 after_downchain_main["xrCreateActionSpace"] = """
+    {
+        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
+        gOverlaysLayerXrSpaceToHandleInfo[*space].spaceType = SPACE_REFERENCE;
+        mlock2.unlock();
+    }
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
         sessionInfo->childSpaces.insert(gOverlaysLayerXrSpaceToHandleInfo.at(*space));
@@ -989,7 +1017,7 @@ for handle_type in supported_handles:
     # to track and manage the local handles and actual handles
     if handle_type in handles_needing_substitution:
         substitution_members = f"""
-{handle_type} actualHandle;
+    {handle_type} actualHandle;
     bool isProxied = false; // The handle is only valid in the Main XrInstance (i.e. in the Main Process)
 """
         substitution_dtor = f"""
@@ -1009,6 +1037,7 @@ std::recursive_mutex gActual{handle_type}ToLocalHandleMutex;
 std::unordered_map<{handle_type}, {handle_type}> gActual{handle_type}ToLocalHandle;
 """
     else:
+        substitution_members = ""
         substitution_dtor = ""
         substitution_destroy = ""
         substitution_header_text = ""
@@ -1895,7 +1924,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "CreateActionSpace",
     "AttachSessionActionSets",
     "GetCurrentInteractionProfile",
     "GetActionStateBoolean",
