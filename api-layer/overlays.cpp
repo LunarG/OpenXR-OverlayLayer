@@ -1610,7 +1610,7 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
+    auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
     XrResult result = sessionInfo->downchain->CreateSwapchain(sessionInfo->actualHandle, createInfoCopy.get(), swapchain);
 
@@ -1666,7 +1666,7 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
 
     uint32_t swapchainCount;
 
-    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
+    auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
     XrResult result = RPCCallCreateSwapchain(instance, sessionInfo->actualHandle, createInfoCopy.get(), swapchain, &swapchainCount);
 
@@ -1739,7 +1739,7 @@ XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
+    auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
     XrResult result = sessionInfo->downchain->CreateReferenceSpace(sessionInfo->actualHandle, createInfoCopy.get(), space);
 
@@ -1767,7 +1767,7 @@ XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto createInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
+    auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
 
     XrResult result = RPCCallCreateReferenceSpace(instance, sessionInfo->actualHandle, createInfoCopy.get(), space);
 
@@ -1910,7 +1910,7 @@ XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connecti
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto viewLocateInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
+    auto viewLocateInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
 
     XrResult result = sessionInfo->downchain->LocateViews(sessionInfo->actualHandle, viewLocateInfoCopy.get(), viewState, viewCapacityInput, viewCountOutput, views);
 
@@ -1930,7 +1930,7 @@ XrResult OverlaysLayerLocateViewsOverlay(XrInstance instance, XrSession session,
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto viewLocateInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
+    auto viewLocateInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
 
     XrResult result = RPCCallLocateViews(instance, sessionInfo->actualHandle, viewLocateInfoCopy.get(), viewState, viewCapacityInput, viewCountOutput, views);
 
@@ -2227,7 +2227,7 @@ XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connect
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
-    // auto beginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", beginInfo);
+    // auto beginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", beginInfo);
 
     connection->ctx->sessionState.DoCommand(OpenXRCommand::BEGIN_SESSION);
 
@@ -2238,7 +2238,7 @@ XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto beginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginSession", beginInfo);
+    auto beginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginSession", beginInfo);
 
     XrResult result = RPCCallBeginSession(instance, sessionInfo->actualHandle, beginInfoCopy.get());
 
@@ -2326,7 +2326,7 @@ XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, c
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto frameWaitInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrWaitFrame", frameWaitInfo);
+    auto frameWaitInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrWaitFrame", frameWaitInfo);
 
     XrResult result = RPCCallWaitFrame(instance, sessionInfo->actualHandle, frameWaitInfoCopy.get(), frameState);
 
@@ -2344,7 +2344,7 @@ XrResult OverlaysLayerBeginFrameMainAsOverlay(ConnectionToOverlay::Ptr connectio
     auto l = connection->GetLock();
 
     // At this time xrBeginFrame has no inputs and returns nothing.
-    //auto beginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", beginInfo);
+    //auto beginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", beginInfo);
 
     return XR_SUCCESS;
 }
@@ -2353,7 +2353,7 @@ XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, 
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto frameBeginInfoCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", frameBeginInfo);
+    auto frameBeginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", frameBeginInfo);
 
     XrResult result = RPCCallBeginFrame(instance, sessionInfo->actualHandle, frameBeginInfoCopy.get());
 
@@ -2368,7 +2368,7 @@ XrResult OverlaysLayerAcquireSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
-    auto acquireInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
+    auto acquireInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
 
     XrResult result = swapchainInfo->downchain->AcquireSwapchainImage(swapchainInfo->actualHandle, acquireInfoCopy.get(), index);
 
@@ -2385,7 +2385,7 @@ XrResult OverlaysLayerAcquireSwapchainImageOverlay(XrInstance instance, XrSwapch
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
-    auto acquireInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
+    auto acquireInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
 
     XrResult result = RPCCallAcquireSwapchainImage(instance, swapchainInfo->actualHandle, acquireInfoCopy.get(), index);
 
@@ -2402,7 +2402,7 @@ XrResult OverlaysLayerWaitSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr c
 {
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
-    auto waitInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
+    auto waitInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
 
     XrResult result = swapchainInfo->downchain->WaitSwapchainImage(swapchainInfo->actualHandle, waitInfoCopy.get());
 
@@ -2452,7 +2452,7 @@ XrResult OverlaysLayerWaitSwapchainImageOverlay(XrInstance instance, XrSwapchain
     uint32_t wasWaited = overlaySwapchain->acquired[0];
     HANDLE sourceImage = overlaySwapchain->swapchainHandles[wasWaited];
 
-    auto waitInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
+    auto waitInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
 
     XrResult result = RPCCallWaitSwapchainImage(instance, swapchainInfo->actualHandle, waitInfoCopy.get(), sourceImage);
 
@@ -2519,7 +2519,7 @@ XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
     d3dDevice->GetImmediateContext(&d3dContext);
     d3dContext->CopyResource(mainAsOverlaySwapchain->swapchainImages[which], sharedTexture);
 
-    auto releaseInfoCopy = GetCopyHandlesRestored(swapchainInfo->parentInstance, "xrReleaseSwapchainImage", releaseInfo);
+    auto releaseInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrReleaseSwapchainImage", releaseInfo);
 
     XrResult result = swapchainInfo->downchain->ReleaseSwapchainImage(swapchainInfo->actualHandle, releaseInfoCopy.get());
 
@@ -2555,7 +2555,7 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 
     HANDLE sourceImage = overlaySwapchain->swapchainHandles[beingReleased];
 
-    auto releaseInfoCopy = GetCopyHandlesRestored(instance, "xrReleaseSwapchainImage", releaseInfo);
+    auto releaseInfoCopy = GetSharedCopyHandlesRestored(instance, "xrReleaseSwapchainImage", releaseInfo);
     XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, releaseInfoCopy.get(), sourceImage);
 
     if(!XR_SUCCEEDED(result)) {
@@ -2612,7 +2612,7 @@ XrResult OverlaysLayerEndFrameOverlay(XrInstance instance, XrSession session, co
 {
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
-    auto frameEndInfoCopy = GetCopyHandlesRestored(instance, "xrEndFrame", frameEndInfo);
+    auto frameEndInfoCopy = GetSharedCopyHandlesRestored(instance, "xrEndFrame", frameEndInfo);
 
     XrResult result = RPCCallEndFrame(instance, sessionInfo->actualHandle, frameEndInfoCopy.get());
 
@@ -2721,7 +2721,7 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 
     }
 
-    auto frameEndInfoMergedCopy = GetCopyHandlesRestored(sessionInfo->parentInstance, "xrEndFrame", frameEndInfoMerged.get());
+    auto frameEndInfoMergedCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrEndFrame", frameEndInfoMerged.get());
 
     auto sessLock = sessionInfo->GetLock();
     XrResult result = sessionInfo->downchain->EndFrame(sessionInfo->actualHandle, frameEndInfoMergedCopy.get());
@@ -2774,11 +2774,11 @@ XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCrea
 
         if(result == XR_SUCCESS) {
             OverlaysLayerXrActionSetHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionSetHandleInfo>(instance, instance, instanceInfo->downchain);
-            std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
             info->createInfo = reinterpret_cast<XrActionSetCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
             info->actualHandle = *actionSet;
             *actionSet = (XrActionSet)GetNextLocalHandle();
-            gOverlaysLayerXrActionSetToHandleInfo.insert({*actionSet, info});
+			std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
+			gOverlaysLayerXrActionSetToHandleInfo.insert({*actionSet, info});
         }
 
         return result;
@@ -2852,8 +2852,9 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
 
         auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
+        // XXX This does not take into account any extension structs like the one Valve suggested
         instanceInfo->profilesToBindings[suggestedBindings->interactionProfile] = 
-            std::set<XrActionSuggestedBinding>(suggestedBindings->suggestedBindings, suggestedBindings->suggestedBindings + suggestedBindings->countSuggestedBindings);
+            std::vector<XrActionSuggestedBinding>(suggestedBindings->suggestedBindings, suggestedBindings->suggestedBindings + suggestedBindings->countSuggestedBindings);
 
         return XR_SUCCESS;
 
@@ -2966,6 +2967,76 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
 
     }
 }
+
+XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
+{
+    XrResult result = XR_SUCCESS;
+
+    // Submit main app's suggestions and our own placeholder suggestions
+
+    // XXX check and return ALREADY_ATTACHED, don't call Suggest
+
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(parentInstance);
+    for(auto profileAndBindings : instanceInfo->profilesToBindings) {
+        XrPath interactionProfile = profileAndBindings.first;
+        auto bindings = profileAndBindings.second;
+
+        XrInteractionProfileSuggestedBinding suggestedBindings { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+        suggestedBindings.interactionProfile = interactionProfile;
+
+        // merge main app's suggested bindings and our suggested bindings
+        std::vector newBindings(bindings);
+
+
+        auto suggestedBindingsCopy = GetSharedCopyHandlesRestored(parentInstance, "xrAttachSessionActionSets", &suggestedBindings);
+
+        result = instanceInfo->downchain->SuggestInteractionProfileBindings(parentInstance, suggestedBindingsCopy.get());
+
+        if(result != XR_SUCCESS) {
+            OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
+                OverlaysLayerNoObjectInfo,
+                fmt("Couldn't apply deferred suggested interaction profile bindings, SuggestInteractionProfileBindings returned %08llX", result).c_str());
+            return XR_ERROR_HANDLE_INVALID;
+        }
+    }
+
+    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
+
+    auto attachInfoCopy = GetSharedCopyHandlesRestored(parentInstance, "xrAttachSessionActionSets", attachInfo);
+    result = sessionInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
+
+    return result;
+}
+
+XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
+{
+    try {
+
+        auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+        bool isProxied = sessionInfo->isProxied;
+        XrResult result;
+        if(isProxied) {
+            result = OverlaysLayerAttachSessionActionSetsOverlay(sessionInfo->parentInstance, session, attachInfo);
+        } else {
+            result = OverlaysLayerAttachSessionActionSetsMain(sessionInfo->parentInstance, session, attachInfo);
+        }
+
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
 
 // CreateActionSpace
 // SyncActions

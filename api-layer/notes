@@ -1,7 +1,4 @@
 9/2
-XrAction, XrActionSet handles will be only virtual, not backed by runtime handles.
-    can't call downchain on them, no "actualHandle"
-    actual XrActionSet, XrAction handles held by SessionInfo for purposes of Attach and Sync etc
 I was able to make more than 9800 XrPaths on Oculus' RT
 I was able to make 9998 XrActions on Oculus' RT
 
@@ -251,46 +248,51 @@ xrPollEvent
     Overlay
         translate profile changed event if possible
 
-ActionSet:
-    xrCreateActionSet
-        save createInfo
-        createVirtualActionSet
-    xrDestroyActionSet
-
-Action:
-    xrCreateAction
-        pretend to be runtime: If parent actionSet has been included in a call to xrAttachSessionActionSets, the implementation must return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED.
-        save create state
-        make VirtualAction
-    xrDestroyAction
-        just delete VirtualAction
-
-xrSuggestInteractionProfileBindings
-    save bindings for comparison
-        only one set of bindings per interaction profile so replace old ones on profile with new ones on profile
-    pretend to be runtime if is attached localAction
+CreateActionSet
+    main: downchain->CreateActionSet
+    overlay: create virtual actionset
+CreateAction
+    main: downchain->CreateAction
+    overlay: create virtual action
+SuggestInteractionProfileBindings
+    main: save off bindings
+    overlay: save off bindgs, use to map from Action to input source
         if any action is attached localAction, XR_ERROR_ACTIONSETS_ALREADY_ATTACHED
-        If interaction profile path does not follow structure defined in Interaction Profiles or suggested bindings contain paths that do not follow format defined in Device input subpaths, XR_ERROR_PATH_UNSUPPORTED
-
-xrCreateSession in Main
-    for(const& ph : PlaceholderActionIds) {
-        XrAction action;
-        XrActionCreateInfo createInfo = {...};
-        downchain->CreateAction(instance, &createInfo, action);
-        actionInfo = std::make_shared<OverlaysLayerCreateActionHandleInfo>(...)
-        actionsetInfo->placeholderActions.insert(actionInfo);
-    }
-
-xrAttachSessionActionSets
-    Overlay
-        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY 
+        If interaction profile path does not follow structure defined
+          in Interaction Profiles or suggested bindings contain paths
+          that do not follow format defined in Device input subpaths,
+          XR_ERROR_PATH_UNSUPPORTED
+AttachSessionActionSets
+    main: call downchain->SuggestInteractionProfileBindings
+    overlay: virtual, so register and that's it
+        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY and already attached
         note virtual actionsets and virtual actions in Session
         mark virtual actionsets and virtual actions bound to OVERLAY, mutable = false
-    Main
-        must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY 
-        note virtual actionsets and virtual actions in Session
-        mark virtual actionsets and virtual actions bound to MAIN, mutable = false
-
+CreateActionSpace
+    NB the target Action must be a POSE action
+    main: downchain->CreateActionSpace
+    overlay: store request, actually create at Attach when I'll know what the bindings are
+        so LocateSpace until Attach should pretend and return inactive 
+        space will be created against a particular action
+            just pick the first pose listed as a suggested binding
+            Or do multiple spaces need to be created and pick the first active one at LocateSpace time?
+SyncActions
+    main: get all state for active actionsets, store, set remaining inactive.
+    overlay: RPC to get all state for active actionsets, store, set remaining inactive.
+GetActionState*
+    if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
+    XR_ERROR_ACTIONSET_NOT_ATTACHED
+    get cached value
+    XXX need to store values inactive on initialization
+ApplyHapticFeedback
+    main: map local to actual, downchain->ApplyHapticFeedback
+    overlay: map local to placeholder, RPC to Apply in main
+xrEnumerateBoundSourcesForAction
+    main: downchain->EnumerateBoundSourcesForAction
+    overlay: ??
+xrGetInputSourceLocalizedName
+    main: downchain->GetInputSourceLocalizedName
+    overlay: ??
 xrGetCurrentInteractionProfile
     Main
         execute normally - anything else?
@@ -309,53 +311,3 @@ xrGetCurrentInteractionProfile
     MainAsOverlay
         return result or NULL_PATH if not attached
 
-xrSyncActions
-    Main
-        map actions to paths through suggested bindings
-        SyncActions for placeholders
-        fill state for all VirtualActions
-    Overlay
-        map actions to paths through suggested bindings
-        IPC to main and SyncActions for placeholders
-        fill state for all VirtualActions
-    MainAsOverlay
-        xrSyncActions on placeholders
-
-xrEnumerateBoundSourcesForAction
-    (and xrGetInputSourceLocalizedName, less important)
-    later
-
-GetActionState, both sides
-    pretend to be runtime
-        if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
-        XR_ERROR_ACTIONSET_NOT_ATTACHED
-    get state from virtual action
-        return values previously stored by xrSyncActions
-
-HapticFeedback
-    xrApplyHapticFeedback
-        Overlay
-            map virtual action to real action, RPC
-        MainAsOverlay
-            call on Action matching the paths provided
-        Main
-            map virtual action to real action
-    xrStopHapticFeedback
-
-xrCreateActionSpace
-    typedef struct XrActionSpaceCreateInfo {
-        XrStructureType type;
-        const void* next;
-        XrAction action;
-        XrPath subactionPath;
-        XrPosef poseInActionSpace;
-    } XrActionSpaceCreateInfo;
-    NB the target Action must be a POSE action
-    For xrCreateActionSpace, the action and a subactionPath are used to disambiguate which path may be used
-        but still an action must be bound to a path through an interaction profile
-        need to map overlay action to remote action somehow
-        space will be created against a particular action
-            just pick the first pose listed as a suggested binding
-            Or do multiple spaces need to be created and pick the first active one at LocateSpace time?
-    Main - create space against action matching first suggested binding
-    Overlay - RPC to Main to create space against action matching first suggested binding
