@@ -534,6 +534,7 @@ add_to_handle_struct["XrSession"] = {
     std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
     XrActionSet placeholderActionSet;
     std::unordered_map<XrPath, XrAction> placeholderActions;
+    std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> bindingsByProfile;
     std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
 """,
 }
