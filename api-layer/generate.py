@@ -508,6 +508,8 @@ after_downchain_main = {}
 
 in_destructor = {}
 
+in_constructor = {}
+
 in_destroy = {}
 
 add_to_handle_struct = {}
@@ -656,9 +658,85 @@ add_to_handle_struct["XrAction"] = {
     "members" : """
     XrActionCreateInfo *createInfo = nullptr;
     ActionBindLocation bindLocation = BIND_PENDING;
+    union {
+        XrActionStateBoolean booleanState;
+        XrActionStateFloat floatState;
+        XrActionStateVector2f vector2fState;
+        XrActionStatePose poseState;
+    };
 """,
+    "methods" : """
+    XrResult getBoolean(XrActionStateBoolean *state)
+    {
+        if(createInfo->type != XR_ACTION_TYPE_BOOLEAN_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+        *state = booleanState;
+        return XR_SUCCESS;
+    }
+    XrResult getFloat(XrActionStateFloat *state)
+    {
+        if(createInfo->type != XR_ACTION_TYPE_FLOAT_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+        *state = floatState;
+        return XR_SUCCESS;
+    }
+    XrResult getVector2f(XrActionStateVector2f *state)
+    {
+        if(createInfo->type != XR_ACTION_TYPE_VECTOR2F_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+        *state = vector2fState;
+        return XR_SUCCESS;
+    }
+    XrResult getPose(XrActionStatePose *state)
+    {
+        if(createInfo->type != XR_ACTION_TYPE_POSE_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+        *state = poseState;
+        return XR_SUCCESS;
+    }
+    void Clear(XrActionType type) {
+        switch(type) {
+            case XR_ACTION_TYPE_BOOLEAN_INPUT: {
+                booleanState.type = XR_TYPE_ACTION_STATE_BOOLEAN;
+                booleanState.next = nullptr;
+                booleanState.currentState = XR_FALSE;
+                booleanState.changedSinceLastSync = XR_FALSE;
+                booleanState.lastChangeTime = 0;
+                booleanState.isActive = XR_FALSE;
+                break;
+            }
+            case XR_ACTION_TYPE_FLOAT_INPUT: {
+                floatState.type = XR_TYPE_ACTION_STATE_FLOAT;
+                floatState.next = nullptr;
+                floatState.currentState = 0.0f;
+                floatState.changedSinceLastSync = XR_FALSE;
+                floatState.lastChangeTime = 0;
+                floatState.isActive = XR_FALSE;
+                break;
+            }
+            case XR_ACTION_TYPE_VECTOR2F_INPUT: {
+                vector2fState.type = XR_TYPE_ACTION_STATE_VECTOR2F;
+                vector2fState.next = nullptr;
+                vector2fState.currentState = {0.0f, 0.0f};
+                vector2fState.changedSinceLastSync = XR_FALSE;
+                vector2fState.lastChangeTime = 0;
+                vector2fState.isActive = XR_FALSE;
+                break;
+            }
+            case XR_ACTION_TYPE_POSE_INPUT: {
+                poseState.type = XR_TYPE_ACTION_STATE_POSE;
+                poseState.next = nullptr;
+                poseState.isActive = XR_FALSE;
+                break;
+            }
+        }
+    }
+"""
 }
-
 
 after_downchain_main["xrCreateAction"] = f"""
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
@@ -1076,7 +1154,9 @@ struct {layer_name}{handle_type}HandleInfo
     {layer_name}{handle_type}HandleInfo({parent_ctor_params}std::shared_ptr<XrGeneratedDispatchTable> downchain_) :
         {parent_ctor_member_init}
         downchain(downchain_)
-    {{}}
+    {{
+        {in_constructor.get(handle_type, "")}
+    }}
 
     ~{layer_name}{handle_type}HandleInfo()
     {{
@@ -1093,6 +1173,7 @@ struct {layer_name}{handle_type}HandleInfo
         return std::unique_lock<std::recursive_mutex>(mutex);
     }}
 
+    {add_to_handle_struct.get(handle_type, {}).get("methods", "")}
 }};
 
 extern std::unordered_map<{handle_type}, {layer_name}{handle_type}HandleInfo::Ptr> g{layer_name}{handle_type}ToHandleInfo;

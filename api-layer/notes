@@ -143,6 +143,21 @@ VirtualAction {
         XrActionStateBoolean booleanState;
         // etc;
     };
+    Ctor()
+    {
+        switch(createInfo->type) {
+            case XR_ACTION_TYPE_BOOLEAN_INPUT: {
+                booleanState.type = XR_TYPE_ACTION_STATE_BOOLEAN
+                booleanState.next = nullptr;
+                booleanState.currentState = XR_FALSE;
+                booleanState.changedSinceLastSync = XR_FALSE;
+                booleanState.lastChangeTime = 0;
+                booleanState.isActive = XR_FALSE;
+                break;
+            }
+                // etc
+        }
+    }
 }
 
 XXX NO REAL ACTION OR ACTIONSET PASSED BACK TO MAIN OR TO OVERLAY
