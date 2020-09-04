@@ -2808,6 +2808,7 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
             std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionToHandleInfoMutex);
             info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
             info->actualHandle = *action;
+            info->Clear(createInfo->actionType);
             *action = (XrAction)GetNextLocalHandle();
             gOverlaysLayerXrActionToHandleInfo.insert({*action, info});
         }
