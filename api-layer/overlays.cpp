@@ -332,9 +332,6 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
 std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
 std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
 
-
-
-
 struct PlaceholderActionId
 {
     std::string name;
@@ -1371,8 +1368,6 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
 
     // create placeholder Actions
 
-    std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> bindingsByProfile;
-
     XrActionSetCreateInfo createActionSetInfo { XR_TYPE_ACTION_SET_CREATE_INFO, nullptr, "overlaysapilayer", "overlays API layer synthetic actionset", 1 };
     XrResult result2 = instanceInfo->downchain->CreateActionSet(instance, &createActionSetInfo, &info->placeholderActionSet);
     if(result2 != XR_SUCCESS) {
@@ -1385,6 +1380,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     for(auto& id : PlaceholderActionIds) {
         char placeholderNameString[64];
         sprintf(placeholderNameString, "overlays%d", i++);
+
         XrActionCreateInfo createActionInfo { XR_TYPE_ACTION_CREATE_INFO };
         strcpy(createActionInfo.actionName, placeholderNameString);
         strcpy(createActionInfo.localizedActionName, placeholderNameString);
@@ -1392,6 +1388,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         createActionInfo.countSubactionPaths = 1;
         XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
         createActionInfo.subactionPaths = &subactionPath;
+
         XrAction action;
         XrResult result2 = instanceInfo->downchain->CreateAction(info->placeholderActionSet, &createActionInfo, &action);
         if(result2 != XR_SUCCESS) {
@@ -1399,11 +1396,12 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
                 OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create session placeholder action for %s.\n", id.name).c_str());
             return XR_ERROR_INITIALIZATION_FAILED;
         }
+
         XrPath fullBindingPath = OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
         info->placeholderActions.insert({fullBindingPath, action});
 
         XrPath interactionProfilePath = OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
-        bindingsByProfile[interactionProfilePath].push_back({action, fullBindingPath});
+        info->bindingsByProfile[interactionProfilePath].push_back({action, fullBindingPath});
     }
 
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
@@ -2968,6 +2966,29 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
     }
 }
 
+std::string PathToString(XrInstance instance, XrPath path)
+{
+    uint32_t countOutput;
+    char buffer[257];
+    auto instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+    XrResult result;
+    result = instanceInfo->downchain->PathToString(instance, path, 0, &countOutput, nullptr);
+    if(result != XR_SUCCESS) {
+        auto index = OverlaysLayerPathToWellKnownString.at(path);
+        auto str = OverlaysLayerWellKnownStrings.at(index);
+        sprintf(buffer, "<PathToString failed?! %08llX, \"%s\">", path, str);
+        return buffer;
+    }
+    result = instanceInfo->downchain->PathToString(instance, path, countOutput, &countOutput, buffer);
+    if(result != XR_SUCCESS) {
+        auto index = OverlaysLayerPathToWellKnownString.at(path);
+        auto str = OverlaysLayerWellKnownStrings.at(index);
+        sprintf(buffer, "<PathToString failed?! %08llX, \"%s\">", path, str);
+        return buffer;
+    }
+    return buffer;
+}
+
 XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
     XrResult result = XR_SUCCESS;
@@ -2976,21 +2997,56 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
 
     // XXX check and return ALREADY_ATTACHED, don't call Suggest
 
-    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(parentInstance);
+    auto instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(parentInstance);
     for(auto profileAndBindings : instanceInfo->profilesToBindings) {
         XrPath interactionProfile = profileAndBindings.first;
         auto bindings = profileAndBindings.second;
 
         XrInteractionProfileSuggestedBinding suggestedBindings { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
         suggestedBindings.interactionProfile = interactionProfile;
-
-        // merge main app's suggested bindings and our suggested bindings
-        std::vector newBindings(bindings);
-
+        suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
+        suggestedBindings.suggestedBindings = bindings.data();
 
         auto suggestedBindingsCopy = GetSharedCopyHandlesRestored(parentInstance, "xrAttachSessionActionSets", &suggestedBindings);
 
+        // merge main app's suggested bindings and our suggested bindings - our Actions are actual runtime Handles, so add after Restoring
+        std::vector<XrActionSuggestedBinding> newBindings(suggestedBindingsCopy->suggestedBindings, suggestedBindingsCopy->suggestedBindings + suggestedBindingsCopy->countSuggestedBindings);
+
+        {
+            auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
+            for (const auto& actionBinding : sessionInfo->bindingsByProfile.at(interactionProfile)) {
+                newBindings.push_back(actionBinding);
+            }
+        }
+        
+        suggestedBindingsCopy->countSuggestedBindings = (uint32_t)newBindings.size();
+        auto suggestedBindingsSave = suggestedBindingsCopy->suggestedBindings;
+        suggestedBindingsCopy->suggestedBindings = newBindings.data();
+
         result = instanceInfo->downchain->SuggestInteractionProfileBindings(parentInstance, suggestedBindingsCopy.get());
+
+        if(result == XR_ERROR_PATH_UNSUPPORTED) {
+            std::vector<XrActionSuggestedBinding> newBindings2;
+            suggestedBindingsCopy->countSuggestedBindings = 1;
+            for(int i = 0; i < newBindings.size(); i++) {
+                suggestedBindingsCopy->suggestedBindings = &newBindings[i];
+                result = instanceInfo->downchain->SuggestInteractionProfileBindings(parentInstance, suggestedBindingsCopy.get());
+                if(result != XR_SUCCESS) {
+                    OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrAttachSessionActionSets",
+                        OverlaysLayerNoObjectInfo,
+                        fmt("Applying deferred SuggestedInteractionProfileBindings, discovered %s is unsupported for %s, omitting...", PathToString(parentInstance, newBindings[i].binding).c_str(), PathToString(parentInstance, interactionProfile).c_str()).c_str());
+                } else {
+                    newBindings2.push_back(newBindings[i]);
+                }
+            }
+
+            suggestedBindingsCopy->countSuggestedBindings = (uint32_t)newBindings2.size();
+            suggestedBindingsCopy->suggestedBindings = newBindings2.data();
+
+            result = instanceInfo->downchain->SuggestInteractionProfileBindings(parentInstance, suggestedBindingsCopy.get());
+        }
+
+        suggestedBindingsCopy->suggestedBindings = suggestedBindingsSave;
 
         if(result != XR_SUCCESS) {
             OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
@@ -2999,12 +3055,10 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
             return XR_ERROR_HANDLE_INVALID;
         }
     }
-
-    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = gOverlaysLayerXrSessionToHandleInfo.at(session);
-
+	
     auto attachInfoCopy = GetSharedCopyHandlesRestored(parentInstance, "xrAttachSessionActionSets", attachInfo);
-    result = sessionInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
+	auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+	result = sessionInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
 
     return result;
 }
