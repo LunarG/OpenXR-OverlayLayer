@@ -328,10 +328,10 @@ manually_implemented_commands = [
     "xrCreateActionSet",
     "xrCreateAction",
     "xrCreateActionSpace",
-    # "xrGetActionStateBoolean",
-    # "xrGetActionStateFloat",
-    # "xrGetActionStateVector2f",
-    # "xrGetActionStatePose",
+    "xrGetActionStateBoolean",
+    "xrGetActionStateFloat",
+    "xrGetActionStateVector2f",
+    "xrGetActionStatePose",
     "xrSyncActions",
     "xrSuggestInteractionProfileBindings",
     "xrAttachSessionActionSets",
@@ -665,9 +665,6 @@ add_to_handle_struct["XrAction"] = {
     "methods" : """
     XrResult getBoolean(XrPath subactionPath, XrActionStateBoolean *state)
     {
-        if(createInfo->type != XR_ACTION_TYPE_BOOLEAN_INPUT) {
-            return XR_ERROR_ACTION_TYPE_MISMATCH; 
-        }
         if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
             return XR_ERROR_PATH_UNSUPPORTED; 
         }
@@ -703,9 +700,6 @@ add_to_handle_struct["XrAction"] = {
     }
     XrResult getFloat(XrPath subactionPath, XrActionStateFloat *state)
     {
-        if(createInfo->type != XR_ACTION_TYPE_FLOAT_INPUT) {
-            return XR_ERROR_ACTION_TYPE_MISMATCH; 
-        }
         if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
             return XR_ERROR_PATH_UNSUPPORTED; 
         }
@@ -740,9 +734,6 @@ add_to_handle_struct["XrAction"] = {
     }
     XrResult getVector2f(XrPath subactionPath, XrActionStateVector2f *state)
     {
-        if(createInfo->type != XR_ACTION_TYPE_VECTOR2F_INPUT) {
-            return XR_ERROR_ACTION_TYPE_MISMATCH; 
-        }
         if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
             return XR_ERROR_PATH_UNSUPPORTED; 
         }
@@ -778,9 +769,6 @@ add_to_handle_struct["XrAction"] = {
     }
     XrResult getPose(XrPath subactionPath, XrActionStatePose *state)
     {
-        if(createInfo->type != XR_ACTION_TYPE_POSE_INPUT) {
-            return XR_ERROR_ACTION_TYPE_MISMATCH; 
-        }
         if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
             return XR_ERROR_PATH_UNSUPPORTED; 
         }
@@ -800,6 +788,7 @@ add_to_handle_struct["XrAction"] = {
                 state->isActive = XR_TRUE;
             }
         }
+        return XR_SUCCESS;
     }
 """
 }

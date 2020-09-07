@@ -830,4 +830,9 @@ XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSession
 
 XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* syncInfo);
 
+XrResult OverlaysLayerGetActionStateBoolean(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateBoolean* state);
+XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateFloat* state);
+XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateVector2f* state);
+XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStatePose* state);
+
 #endif /* _OVERLAYS_H_ */
