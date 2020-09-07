@@ -46,6 +46,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <unordered_set>
 
 #include <dxgi1_2.h>
 #include <d3d11_1.h>
@@ -2775,8 +2776,16 @@ XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCrea
             info->createInfo = reinterpret_cast<XrActionSetCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
             info->actualHandle = *actionSet;
             *actionSet = (XrActionSet)GetNextLocalHandle();
-			std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
-			gOverlaysLayerXrActionSetToHandleInfo.insert({*actionSet, info});
+
+            {
+                std::unique_lock<std::recursive_mutex> lock(gActualXrActionSetToLocalHandleMutex);
+                gActualXrActionSetToLocalHandle.insert({info->actualHandle, *actionSet});
+            }
+
+            {
+                std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
+                gOverlaysLayerXrActionSetToHandleInfo.insert({*actionSet, info});
+            }
         }
 
         return result;
@@ -2805,12 +2814,21 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
 
         if(result == XR_SUCCESS) {
             OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
-            std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionToHandleInfoMutex);
             info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
             info->actualHandle = *action;
-            info->Clear(createInfo->actionType);
+            info->subactionPaths.insert(info->createInfo->subactionPaths, info->createInfo->subactionPaths + info->createInfo->countSubactionPaths);
+            actionSetInfo->childActions.insert(info);
             *action = (XrAction)GetNextLocalHandle();
-            gOverlaysLayerXrActionToHandleInfo.insert({*action, info});
+
+            {
+                std::unique_lock<std::recursive_mutex> lock(gActualXrActionToLocalHandleMutex);
+                gActualXrActionToLocalHandle.insert({info->actualHandle, *action});
+            }
+
+            {
+                std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrActionToHandleInfoMutex);
+                gOverlaysLayerXrActionToHandleInfo.insert({*action, info});
+            }
         }
 
         return result;
@@ -3058,8 +3076,18 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
     }
 	
     auto attachInfoCopy = GetSharedCopyHandlesRestored(parentInstance, "xrAttachSessionActionSets", attachInfo);
-	auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
-	result = sessionInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    result = sessionInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
+
+    if(result == XR_SUCCESS) {
+        for(uint32_t i = 0; i < attachInfo->countActionSets; i++) {
+            auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(attachInfo->actionSets[i]);
+            actionSetInfo->bindLocation = BOUND_MAIN;
+            for(auto actionInfo: actionSetInfo->childActions) {
+                actionInfo->bindLocation = BOUND_MAIN;
+            }
+        }
+    }
 
     return result;
 }
@@ -3092,6 +3120,243 @@ XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSession
     }
 }
 
+#if 0
+
+// SyncAndGetMainAsOverlay will convert bindings to placeholder actions and subactionpaths, create an XrActionsSyncInfo, and then call SyncActionsAndGetState
+RPC { 
+    XrSession session;
+    uint32_t countBindingsInfo;
+    WellKnownStringIndex *bindings;
+    ActionStateUnion *states;
+}
+
+#endif
+
+struct ActionGetInfo
+{
+    XrAction action;
+    XrActionType actionType;
+    XrPath subactionPath;
+    auto hash() const {
+        return std::hash<XrAction>()(action) ^ std::hash<XrPath>()(subactionPath) ^ actionType;
+    }
+};
+
+bool operator ==(const ActionGetInfo& asp1, const ActionGetInfo& asp2) noexcept
+{
+    return (asp1.action == asp2.action) && (asp1.subactionPath == asp2.subactionPath) && (asp1.actionType == asp2.actionType);
+}
+
+// https://en.cppreference.com/w/cpp/utility/hash
+struct MyHash
+{
+    std::size_t operator()(ActionGetInfo const& asp) const noexcept
+    {
+        return asp.hash(); // or use boost::hash_combine (see Discussion)
+    }
+};
+
+
+typedef std::unordered_set<ActionGetInfo, MyHash> ActionGetInfoSet;
+
+
+//syncInfo will be RestoreHandles()d but actionsToGet will not
+XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* syncInfo, const ActionGetInfoSet& actionsToGet, ActionStateUnion *states)
+{
+    XrResult result;
+
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto syncInfoSave = syncInfo;
+    auto syncInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrSyncActions", syncInfo);
+    syncInfo = syncInfoCopy.get();
+
+    result = sessionInfo->downchain->SyncActions(sessionInfo->actualHandle, syncInfo);
+	if(result == XR_SESSION_NOT_FOCUSED) {
+		return XR_SESSION_NOT_FOCUSED;
+	}
+
+    if(result != XR_SUCCESS) {
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't sync actions in bulk update");
+        return result;
+    }
+
+    syncInfo = syncInfoSave;
+
+    uint32_t index = 0;
+    for(const auto& whatToGet: actionsToGet) {
+        XrActionStateGetInfo get { XR_TYPE_ACTION_STATE_GET_INFO, nullptr, whatToGet.action, whatToGet.subactionPath};
+
+        switch(whatToGet.actionType) {
+            case XR_ACTION_TYPE_BOOLEAN_INPUT: {
+                auto *state = reinterpret_cast<XrActionStateBoolean*>(&states[index]);
+                state->type = XR_TYPE_ACTION_STATE_BOOLEAN;
+                state->next = nullptr;
+                result = sessionInfo->downchain->GetActionStateBoolean(sessionInfo->actualHandle, &get, state);
+                if(result != XR_SUCCESS) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    return result;
+                }
+                break;
+            }
+            case XR_ACTION_TYPE_FLOAT_INPUT: {
+                auto *state = reinterpret_cast<XrActionStateFloat*>(&states[index]);
+                state->type = XR_TYPE_ACTION_STATE_FLOAT;
+                state->next = nullptr;
+                result = sessionInfo->downchain->GetActionStateFloat(sessionInfo->actualHandle, &get, state);
+                if(result != XR_SUCCESS) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    return result;
+                }
+                break;
+            }
+            case XR_ACTION_TYPE_VECTOR2F_INPUT: {
+                auto *state = reinterpret_cast<XrActionStateVector2f*>(&states[index]);
+                state->type = XR_TYPE_ACTION_STATE_VECTOR2F;
+                state->next = nullptr;
+                result = sessionInfo->downchain->GetActionStateVector2f(sessionInfo->actualHandle, &get, state);
+                if(result != XR_SUCCESS) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    return result;
+                }
+                break;
+            }
+            case XR_ACTION_TYPE_POSE_INPUT: {
+                auto *state = reinterpret_cast<XrActionStatePose*>(&states[index]);
+                state->type = XR_TYPE_ACTION_STATE_POSE;
+                state->next = nullptr;
+                result = sessionInfo->downchain->GetActionStatePose(sessionInfo->actualHandle, &get, state);
+                if(result != XR_SUCCESS) {
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    return result;
+                }
+                break;
+            }
+        }
+        index ++;
+    }
+    return result;
+}
+
+XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
+{
+    XrResult result = XR_SUCCESS;
+
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    
+    std::unordered_map<XrActionSet, std::set<XrPath>> actionSetSubactionPaths;
+
+    for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
+        actionSetSubactionPaths[syncInfo->activeActionSets[i].actionSet].insert(syncInfo->activeActionSets[i].subactionPath);
+    }
+
+    ActionGetInfoSet actionsToGet;
+
+    for(auto& as: actionSetSubactionPaths) {
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(as.first);
+        auto subactionPaths = as.second;
+
+        /* subactionPaths is either XR_NULL_PATH (get them all) or a set of valid subactionPaths */
+
+        for(auto& actionInfo: actionSetInfo->childActions) {
+
+            if(subactionPaths.size() == 1 && *(subactionPaths.begin()) == XR_NULL_PATH) {
+
+                if(actionInfo->createInfo->countSubactionPaths == 0) { // action created with no subaction paths
+
+                    // GetActionState can only be called with XR_NULL_PATH
+                    // Get action state with XR_NULL_PATH
+                    actionsToGet.insert({ actionInfo->actualHandle, actionInfo->createInfo->actionType, XR_NULL_PATH });
+
+                } else { // action created with subaction paths
+
+                    // GetActionState be called with any created path or with XR_NULL_PATH (combine all paths)
+                    // Get action state for all created paths
+                    for(const auto& subactionPath : actionInfo->subactionPaths) {
+                        actionsToGet.insert({ actionInfo->actualHandle, actionInfo->createInfo->actionType, subactionPath });
+                    }
+
+                }
+
+            } else {
+
+                if(actionInfo->createInfo->countSubactionPaths == 0) { // action created with no subaction paths
+
+                    // GetActionState can only be called with XR_NULL_PATH
+                    // do nothing -> Get would return XR_ERROR_PATH_UNSUPPORTED, so this is not valid
+
+                } else { // action created with subaction paths
+
+                    // GetActionState be called with any created path or with XR_NULL_PATH (combine all paths)
+                    // Get action state for all passed subactionPaths that are in actionInfo->subactionPaths
+                    for(const auto& subactionPath : subactionPaths) {
+                        if(actionInfo->subactionPaths.count(subactionPath) > 0) {
+                            actionsToGet.insert({actionInfo->actualHandle, actionInfo->createInfo->actionType, subactionPath});
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    std::vector<ActionStateUnion> states(actionsToGet.size());
+    result = SyncActionsAndGetState(session, syncInfo, actionsToGet, states.data());
+
+    if(result == XR_SUCCESS) {
+
+        // Clear state so getting something not sync'd will be filled with "inactive" and 0s.
+        for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
+            auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
+            for(auto actionInfo: actionSetInfo->childActions) {
+                actionInfo->stateBySubactionPath.clear();
+            }
+        }
+
+        uint32_t index = 0;
+        for(const auto& actionGetInfo: actionsToGet) {
+            XrAction localHandle; 
+            {
+                std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
+                localHandle = gActualXrActionToLocalHandle[actionGetInfo.action];
+            }
+            auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(localHandle);
+            actionInfo->stateBySubactionPath[actionGetInfo.subactionPath] = states[index];
+            index ++;
+        }
+    }
+
+    return result;
+}
+
+XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* syncInfo)
+{
+    try {
+
+        auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+        
+        bool isProxied = sessionInfo->isProxied;
+        XrResult result;
+        if(isProxied) {
+            result = OverlaysLayerSyncActionsOverlay(sessionInfo->parentInstance, session, syncInfo);
+        } else {
+            result = OverlaysLayerSyncActionsMain(sessionInfo->parentInstance, session, syncInfo);
+        }
+
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
 
 // CreateActionSpace
 // SyncActions

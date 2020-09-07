@@ -267,6 +267,12 @@ CreateActionSet
     main: downchain->CreateActionSet
     overlay: create virtual actionset
 CreateAction
+    Actions can be created with 0 or more subactionPaths
+        SyncAction passes an array of ActionSet and subactionPaths (can be more than one pair of ActionSet and subactionPath)
+            XR_NULL_HANDLE means all subaction paths created for the Action
+            so XR_NULL_HANDLE on an Action with 0 subactionPaths means sync all suggested bindings for the action
+        GetActionState* passes XR_NULL_HANDLE or a subactionPath
+            XR_NULL_HANDLE means all subpaths; means combine state from all paths
     main: downchain->CreateAction
     overlay: create virtual action
 SuggestInteractionProfileBindings
