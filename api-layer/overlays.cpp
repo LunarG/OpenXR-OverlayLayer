@@ -1828,7 +1828,7 @@ XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connecti
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
     OverlaysLayerXrSpaceHandleInfo::Ptr baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
 
-    // XXX This will need to be smart about ActionSpaces?
+    // XXX This will need to be smart about ActionSpaces
 
     XrResult result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
 
@@ -3357,6 +3357,107 @@ XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* sy
 
     }
 }
+
+XrResult OverlaysLayerGetActionStateBoolean(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateBoolean* state)
+{
+    try {
+        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
+
+        if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_BOOLEAN_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+
+        XrResult result = actionInfo->getBoolean(getInfo->subactionPath, state); 
+        
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
+XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateFloat* state)
+{
+    try {
+        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
+
+        if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_FLOAT_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+
+        XrResult result = actionInfo->getFloat(getInfo->subactionPath, state); 
+        
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
+XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateVector2f* state)
+{
+    try {
+        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
+
+        if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_VECTOR2F_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+
+        XrResult result = actionInfo->getVector2f(getInfo->subactionPath, state); 
+        
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
+XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStatePose* state)
+{
+    try {
+        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
+
+        if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_POSE_INPUT) {
+            return XR_ERROR_ACTION_TYPE_MISMATCH; 
+        }
+
+        XrResult result = actionInfo->getPose(getInfo->subactionPath, state); 
+        
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
 
 // CreateActionSpace
 // SyncActions
