@@ -733,8 +733,8 @@ std::shared_ptr<T> GetSharedCopyHandlesRestored(XrInstance instance, const char 
 enum ActionBindLocation
 {
     BIND_PENDING,
-    BIND_MAIN,
-    BIND_OVERLAY,
+    BOUND_MAIN,
+    BOUND_OVERLAY,
 };
 
 enum SpaceType
@@ -743,6 +743,13 @@ enum SpaceType
     SPACE_ACTION,
 };
 
+union ActionStateUnion
+{
+    XrActionStateBoolean booleanState;
+    XrActionStateFloat floatState;
+    XrActionStateVector2f vector2fState;
+    XrActionStatePose poseState;
+};
 
 // Manually written functions -----------------------------------------------
 
@@ -820,5 +827,7 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
 XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space);
 
 XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSessionActionSetsAttachInfo* attachInfo);
+
+XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* syncInfo);
 
 #endif /* _OVERLAYS_H_ */

@@ -332,7 +332,7 @@ manually_implemented_commands = [
     # "xrGetActionStateFloat",
     # "xrGetActionStateVector2f",
     # "xrGetActionStatePose",
-    # "xrSyncActions",
+    "xrSyncActions",
     "xrSuggestInteractionProfileBindings",
     "xrAttachSessionActionSets",
 ]
@@ -403,8 +403,8 @@ supported_handles = [
     "XrSwapchain",
     "XrSpace",
     "XrSession",
-    "XrActionSet",
     "XrAction",
+    "XrActionSet",
     "XrDebugUtilsMessengerEXT",
     "XrInstance",
 ]
@@ -638,6 +638,7 @@ add_to_handle_struct["XrActionSet"] = {
     "members" : """
     XrActionSetCreateInfo *createInfo = nullptr;
     ActionBindLocation bindLocation = BIND_PENDING;
+    std::set<OverlaysLayerXrActionHandleInfo::Ptr> childActions;
 """,
 }
 
@@ -658,80 +659,145 @@ add_to_handle_struct["XrAction"] = {
     "members" : """
     XrActionCreateInfo *createInfo = nullptr;
     ActionBindLocation bindLocation = BIND_PENDING;
-    union {
-        XrActionStateBoolean booleanState;
-        XrActionStateFloat floatState;
-        XrActionStateVector2f vector2fState;
-        XrActionStatePose poseState;
-    };
+    std::set<XrPath> subactionPaths;
+    std::unordered_map<XrPath, ActionStateUnion> stateBySubactionPath;
 """,
     "methods" : """
-    XrResult getBoolean(XrActionStateBoolean *state)
+    XrResult getBoolean(XrPath subactionPath, XrActionStateBoolean *state)
     {
         if(createInfo->type != XR_ACTION_TYPE_BOOLEAN_INPUT) {
             return XR_ERROR_ACTION_TYPE_MISMATCH; 
         }
-        *state = booleanState;
+        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
+            return XR_ERROR_PATH_UNSUPPORTED; 
+        }
+        state->type = XR_TYPE_ACTION_STATE_BOOLEAN;
+        state->next = nullptr;
+        state->currentState = XR_FALSE;
+        state->changedSinceLastSync = XR_FALSE;
+        state->lastChangeTime = 0;
+        state->isActive = XR_FALSE;
+        XrTime oldest = std::numeric_limits<XrTime>::max();
+        if(subactionPath == XR_NULL_PATH) {
+            for(const auto& pathAndState: stateBySubactionPath) {
+                const auto& syncedState = pathAndState.second.booleanState;
+                state->currentState |= syncedState.currentState;
+                if(syncedState.lastChangeTime < oldest) {
+                    state->changedSinceLastSync = syncedState.changedSinceLastSync;
+                    state->lastChangeTime = syncedState.lastChangeTime;
+                    oldest = syncedState.lastChangeTime;
+                }
+                state->isActive = XR_TRUE;
+            }
+        } else {
+            auto it = stateBySubactionPath.find(subactionPath);
+            if(it != stateBySubactionPath.end()) {
+                const auto& syncedState = it->second.booleanState;
+                state->currentState = syncedState.currentState;
+                state->changedSinceLastSync = syncedState.changedSinceLastSync;
+                state->lastChangeTime = syncedState.lastChangeTime;
+                state->isActive = XR_TRUE;
+            }
+        }
         return XR_SUCCESS;
     }
-    XrResult getFloat(XrActionStateFloat *state)
+    XrResult getFloat(XrPath subactionPath, XrActionStateFloat *state)
     {
         if(createInfo->type != XR_ACTION_TYPE_FLOAT_INPUT) {
             return XR_ERROR_ACTION_TYPE_MISMATCH; 
         }
-        *state = floatState;
+        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
+            return XR_ERROR_PATH_UNSUPPORTED; 
+        }
+        state->type = XR_TYPE_ACTION_STATE_FLOAT;
+        state->next = nullptr;
+        state->currentState = std::numeric_limits<float>::lowest();
+        state->changedSinceLastSync = XR_FALSE;
+        state->lastChangeTime = 0;
+        state->isActive = XR_FALSE;
+        float largest = std::numeric_limits<float>::lowest();
+        if(subactionPath == XR_NULL_PATH) {
+            for(const auto& pathAndState: stateBySubactionPath) {
+                const auto& syncedState = pathAndState.second.floatState;
+                if(syncedState.currentState > largest) {
+                    state->currentState = syncedState.currentState;
+                    state->changedSinceLastSync = syncedState.changedSinceLastSync;
+                    state->lastChangeTime = syncedState.lastChangeTime;
+                }
+                state->isActive = XR_TRUE;
+            }
+        } else {
+            auto it = stateBySubactionPath.find(subactionPath);
+            if(it != stateBySubactionPath.end()) {
+                const auto& syncedState = it->second.floatState;
+                state->currentState = syncedState.currentState;
+                state->changedSinceLastSync = syncedState.changedSinceLastSync;
+                state->lastChangeTime = syncedState.lastChangeTime;
+                state->isActive = XR_TRUE;
+            }
+        }
         return XR_SUCCESS;
     }
-    XrResult getVector2f(XrActionStateVector2f *state)
+    XrResult getVector2f(XrPath subactionPath, XrActionStateVector2f *state)
     {
         if(createInfo->type != XR_ACTION_TYPE_VECTOR2F_INPUT) {
             return XR_ERROR_ACTION_TYPE_MISMATCH; 
         }
-        *state = vector2fState;
+        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
+            return XR_ERROR_PATH_UNSUPPORTED; 
+        }
+        state->type = XR_TYPE_ACTION_STATE_VECTOR2F;
+        state->next = nullptr;
+        state->currentState = {0.0f, 0.0f};
+        state->changedSinceLastSync = XR_FALSE;
+        state->lastChangeTime = std::numeric_limits<XrTime>::max();
+        state->isActive = XR_FALSE;
+        float largestsq = std::numeric_limits<float>::lowest();
+        if(subactionPath == XR_NULL_PATH) {
+            for(const auto& pathAndState: stateBySubactionPath) {
+                const auto& syncedState = pathAndState.second.vector2fState;
+                float lengthsq = syncedState.currentState.x * syncedState.currentState.x + syncedState.currentState.y * syncedState.currentState.y;
+                if(lengthsq > largestsq) {
+                    state->currentState = syncedState.currentState;
+                    state->changedSinceLastSync = syncedState.changedSinceLastSync;
+                    state->lastChangeTime = syncedState.lastChangeTime;
+                }
+                state->isActive = XR_TRUE;
+            }
+        } else {
+            auto it = stateBySubactionPath.find(subactionPath);
+            if(it != stateBySubactionPath.end()) {
+                const auto& syncedState = it->second.vector2fState;
+                state->currentState = syncedState.currentState;
+                state->changedSinceLastSync = syncedState.changedSinceLastSync;
+                state->lastChangeTime = syncedState.lastChangeTime;
+                state->isActive = XR_TRUE;
+            }
+        }
         return XR_SUCCESS;
     }
-    XrResult getPose(XrActionStatePose *state)
+    XrResult getPose(XrPath subactionPath, XrActionStatePose *state)
     {
         if(createInfo->type != XR_ACTION_TYPE_POSE_INPUT) {
             return XR_ERROR_ACTION_TYPE_MISMATCH; 
         }
-        *state = poseState;
-        return XR_SUCCESS;
-    }
-    void Clear(XrActionType type) {
-        switch(type) {
-            case XR_ACTION_TYPE_BOOLEAN_INPUT: {
-                booleanState.type = XR_TYPE_ACTION_STATE_BOOLEAN;
-                booleanState.next = nullptr;
-                booleanState.currentState = XR_FALSE;
-                booleanState.changedSinceLastSync = XR_FALSE;
-                booleanState.lastChangeTime = 0;
-                booleanState.isActive = XR_FALSE;
-                break;
+        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
+            return XR_ERROR_PATH_UNSUPPORTED; 
+        }
+        state->type = XR_TYPE_ACTION_STATE_POSE;
+        state->next = nullptr;
+        state->isActive = XR_FALSE;
+        if(subactionPath == XR_NULL_PATH) {
+            // Punt and use first data, if any
+            if(stateBySubactionPath.size() > 0) {
+                state->isActive = XR_TRUE;
             }
-            case XR_ACTION_TYPE_FLOAT_INPUT: {
-                floatState.type = XR_TYPE_ACTION_STATE_FLOAT;
-                floatState.next = nullptr;
-                floatState.currentState = 0.0f;
-                floatState.changedSinceLastSync = XR_FALSE;
-                floatState.lastChangeTime = 0;
-                floatState.isActive = XR_FALSE;
-                break;
-            }
-            case XR_ACTION_TYPE_VECTOR2F_INPUT: {
-                vector2fState.type = XR_TYPE_ACTION_STATE_VECTOR2F;
-                vector2fState.next = nullptr;
-                vector2fState.currentState = {0.0f, 0.0f};
-                vector2fState.changedSinceLastSync = XR_FALSE;
-                vector2fState.lastChangeTime = 0;
-                vector2fState.isActive = XR_FALSE;
-                break;
-            }
-            case XR_ACTION_TYPE_POSE_INPUT: {
-                poseState.type = XR_TYPE_ACTION_STATE_POSE;
-                poseState.next = nullptr;
-                poseState.isActive = XR_FALSE;
-                break;
+        } else {
+            XrPath subactionPath = *(subactionPaths.begin());
+            auto it = stateBySubactionPath.find(subactionPath);
+            if(it != stateBySubactionPath.end()) {
+                const auto& syncedState = it->second.poseState;
+                state->isActive = XR_TRUE;
             }
         }
     }
@@ -740,9 +806,10 @@ add_to_handle_struct["XrAction"] = {
 
 after_downchain_main["xrCreateAction"] = f"""
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
+    info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
+    info->subactionPaths.insert(info->createInfo->subactionPaths, info->createInfo->subactionPaths + info->createInfo->countSubactionPaths);
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionToHandleInfoMutex);
     gOverlaysLayerXrActionToHandleInfo.insert({{*action, info}});
-    info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
     mlock2.unlock();
 
 """
@@ -815,8 +882,30 @@ after_downchain_main["xrSuggestInteractionProfileBindings"] = """
 
 # store preambles of generated header and source -----------------------------
 
+header_text = """
+// #include "api_layer_platform_defines.h"
+#include "xr_generated_dispatch_table.h"
+#include <openxr/openxr.h>
+#include <openxr/openxr_platform.h>
+
+#include <mutex>
+#include <string>
+#include <memory>
+#include <tuple>
+#include <vector>
+#include <set>
+
+#include "overlays.h"
+
+"""
+
 
 source_text = """
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif  // !NOMINMAX
+
 #include "xr_generated_overlays.hpp"
 #include "hex_and_handles.h"
 
@@ -824,6 +913,7 @@ source_text = """
 #include <sstream>
 #include <iomanip>
 #include <unordered_map>
+#include <limits>
 
 std::unordered_map<XrPath, XrInteractionProfileSuggestedBinding*> gPathToSuggestedInteractionProfileBinding;
 
@@ -985,23 +1075,6 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
     IPCCopyOut(dstbase->next, srcbase->next);
 }
 
-
-"""
-
-header_text = """
-// #include "api_layer_platform_defines.h"
-#include "xr_generated_dispatch_table.h"
-#include <openxr/openxr.h>
-#include <openxr/openxr_platform.h>
-
-#include <mutex>
-#include <string>
-#include <memory>
-#include <tuple>
-#include <vector>
-#include <set>
-
-#include "overlays.h"
 
 """
 
