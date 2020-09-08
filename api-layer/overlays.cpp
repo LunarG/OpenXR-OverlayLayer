@@ -3076,8 +3076,21 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
     }
 	
     auto attachInfoCopy = GetSharedCopyHandlesRestored(parentInstance, "xrAttachSessionActionSets", attachInfo);
-    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
-    result = sessionInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
+
+    // Now we add our placeholder ActionSet because it is already the runtime's ("restored") handle
+    auto actionSetsSave = attachInfoCopy->actionSets;
+
+    std::vector<XrActionSet> actionSetsPlusPlaceholder(actionSetsSave, actionSetsSave + attachInfoCopy->countActionSets);
+    attachInfoCopy->countActionSets = attachInfoCopy->countActionSets + 1;
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
+    actionSetsPlusPlaceholder.push_back(sessionInfo->placeholderActionSet);
+    attachInfoCopy->actionSets = actionSetsPlusPlaceholder.data();
+
+    result = instanceInfo->downchain->AttachSessionActionSets(sessionInfo->actualHandle, attachInfoCopy.get());
+
+    // Put pointer back so it will be free'd correctly when it goes out of scope
+    attachInfoCopy->countActionSets = attachInfoCopy->countActionSets - 1;
+    attachInfoCopy->actionSets = actionSetsSave;
 
     if(result == XR_SUCCESS) {
         for(uint32_t i = 0; i < attachInfo->countActionSets; i++) {
