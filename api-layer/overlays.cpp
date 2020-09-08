@@ -3010,6 +3010,11 @@ std::string PathToString(XrInstance instance, XrPath path)
 
 XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
+    if(sessionInfo->actionSetsWereAttached) {
+        return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
+    }
+
     for(uint32_t i = 0; i < attachInfo->countActionSets; i++) {
         auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(attachInfo->actionSets[i]);
         actionSetInfo->bindLocation = BOUND_OVERLAY;
@@ -3017,6 +3022,7 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
             actionInfo->bindLocation = BOUND_OVERLAY;
         }
     }
+    sessionInfo->actionSetsWereAttached = true;
     return XR_SUCCESS;
 }
 
@@ -3028,7 +3034,12 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
 
     // XXX check and return ALREADY_ATTACHED, don't call Suggest
 
-    auto instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(parentInstance);
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
+    if(sessionInfo->actionSetsWereAttached) {
+        return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
+    }
+
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(parentInstance);
     for(auto profileAndBindings : instanceInfo->profilesToBindings) {
         XrPath interactionProfile = profileAndBindings.first;
         auto bindings = profileAndBindings.second;
@@ -3044,7 +3055,6 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
         std::vector<XrActionSuggestedBinding> newBindings(suggestedBindingsCopy->suggestedBindings, suggestedBindingsCopy->suggestedBindings + suggestedBindingsCopy->countSuggestedBindings);
 
         {
-            auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
             for (const auto& actionBinding : sessionInfo->bindingsByProfile.at(interactionProfile)) {
                 newBindings.push_back(actionBinding);
             }
@@ -3094,7 +3104,6 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
 
     std::vector<XrActionSet> actionSetsPlusPlaceholder(actionSetsSave, actionSetsSave + attachInfoCopy->countActionSets);
     attachInfoCopy->countActionSets = attachInfoCopy->countActionSets + 1;
-    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
     actionSetsPlusPlaceholder.push_back(sessionInfo->placeholderActionSet);
     attachInfoCopy->actionSets = actionSetsPlusPlaceholder.data();
 
@@ -3112,6 +3121,8 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
                 actionInfo->bindLocation = BOUND_MAIN;
             }
         }
+
+        sessionInfo->actionSetsWereAttached = true;
     }
 
     return result;
