@@ -3008,6 +3008,18 @@ std::string PathToString(XrInstance instance, XrPath path)
     return buffer;
 }
 
+XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
+{
+    for(uint32_t i = 0; i < attachInfo->countActionSets; i++) {
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(attachInfo->actionSets[i]);
+        actionSetInfo->bindLocation = BOUND_OVERLAY;
+        for(auto actionInfo: actionSetInfo->childActions) {
+            actionInfo->bindLocation = BOUND_OVERLAY;
+        }
+    }
+    return XR_SUCCESS;
+}
+
 XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
     XrResult result = XR_SUCCESS;
