@@ -1,6 +1,5 @@
 9/7
-In AttachSessionActionSetsOverlay mark in the session that the action and action sets are attached, mark the actions and action sets bound to overlay
-Need to implement create action space...  On overlay side record all data for create info, create actual spaces at attach time
+Need to implement action space...  On overlay side record all data for create info, create actual spaces at attach time using suggested bindings
 
 9/2
 I was able to make more than 9800 XrPaths on Oculus' RT
@@ -254,10 +253,10 @@ xrPollEvent
     Overlay
         translate profile changed event if possible
 
-CreateActionSet
+./ CreateActionSet
     main: downchain->CreateActionSet
     overlay: create virtual actionset
-CreateAction
+./ CreateAction
     Actions can be created with 0 or more subactionPaths
         SyncAction passes an array of ActionSet and subactionPaths (can be more than one pair of ActionSet and subactionPath)
             XR_NULL_HANDLE means all subaction paths created for the Action
@@ -266,7 +265,7 @@ CreateAction
             XR_NULL_HANDLE means all subpaths; means combine state from all paths
     main: downchain->CreateAction
     overlay: create virtual action
-SuggestInteractionProfileBindings
+./ SuggestInteractionProfileBindings
     main: save off bindings
     overlay: save off bindgs, use to map from Action to input source
         if any action is attached localAction, XR_ERROR_ACTIONSETS_ALREADY_ATTACHED
@@ -274,7 +273,7 @@ SuggestInteractionProfileBindings
           in Interaction Profiles or suggested bindings contain paths
           that do not follow format defined in Device input subpaths,
           XR_ERROR_PATH_UNSUPPORTED
-AttachSessionActionSets
+./ AttachSessionActionSets
     main: call downchain->SuggestInteractionProfileBindings
     overlay: virtual, so register and that's it
         must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY and already attached
@@ -289,9 +288,9 @@ CreateActionSpace
             just pick the first pose listed as a suggested binding
             Or do multiple spaces need to be created and pick the first active one at LocateSpace time?
 SyncActions
-    main: get all state for active actionsets, store, set remaining inactive.
+    ./ main: get all state for active actionsets, store, set remaining inactive.
     overlay: RPC to get all state for active actionsets, store, set remaining inactive.
-GetActionState*
+./ GetActionState*
     if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
     XR_ERROR_ACTIONSET_NOT_ATTACHED
     get cached value
