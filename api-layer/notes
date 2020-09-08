@@ -1,3 +1,7 @@
+9/7
+In AttachSessionActionSetsOverlay mark in the session that the action and action sets are attached, mark the actions and action sets bound to overlay
+Need to implement create action space...  On overlay side record all data for create info, create actual spaces at attach time
+
 9/2
 I was able to make more than 9800 XrPaths on Oculus' RT
 I was able to make 9998 XrActions on Oculus' RT
@@ -162,16 +166,7 @@ VirtualAction {
 
 XXX NO REAL ACTION OR ACTIONSET PASSED BACK TO MAIN OR TO OVERLAY
 
-Real ActionSet and Placeholder Actions created at Attach time
-
-OverlaysLayerXrActionSetHandleInfo, add:
-    std::vector<XrAction> actions;          // main side only
-    std::set<OverlaysLayerVirtualActionHandleInfo::Ptr> localActions;        // overlay side only
-    bool mutable = true; // false after attach
-
-OverlaysLayerXrActionHandleInfo, add:
-    OverlaysLayerXrActionSetHandleInfo::Ptr parentActionHandle;
-
+Real ActionSet and Placeholder Actions created at CreateSession time
 
 So we know that if the overlay suggested for "/interaction_profiles/khr/simple_controller/" binding an action to "/user/hand/left/input/squeeze/value", we can query the action we created and bound for those.
 
@@ -250,12 +245,8 @@ Applications "may" suggest interaction profile bindings
         need to catch profile changed event 
 
 to get to something working for feasibility
-    CreateActionSet
-    CreateAction
     CreateActionSpace
-    SyncActions
     AttachSessionActionSets
-    GetActionState*
 
 xrPollEvent
     Main
