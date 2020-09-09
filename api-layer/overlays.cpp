@@ -233,7 +233,7 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
 
 std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
 std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
-std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubAction;
+std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
 
 
 
@@ -1420,7 +1420,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         info->bindingsByAction[action] = fullBindingPath;
 
         // XXX This should be on CreateInstance in the instance info
-        OverlaysLayerBindingToSubAction.insert({fullBindingPath, subactionPath});
+        OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
     }
 
     std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
@@ -1593,7 +1593,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     for(auto& id : PlaceholderActionIds) {
         XrPath fullBindingPath = OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
         XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
-        OverlaysLayerBindingToSubAction.insert({fullBindingPath, subactionPath});
+        OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
     }
 
     return result;
@@ -1881,21 +1881,6 @@ XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connecti
     return result;
 }
 
-#if 0 /* create deferred ActionSpace in LocateSpace */
-    // Determine placeholder action to use as pose
-    auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(createInfo->action);
-
-    // XXX what if SuggestProfileBindings was never called?  I don't think it's an error
-    const auto& firstProfileBindings = actionInfo->profileBindings.begin()->second;
-    XrPath firstBinding = *(firstProfileBindings.begin());
-
-    XrAction actualActionHandle = sessionInfo->placeholderActions.at(firstBinding);
-
-    XrActionSpaceCreateInfo createInfo2 = *createInfo;
-    createInfo2.action = actualActionHandle;
-    result = sessionInfo->downchain->CreateActionSpace(session, &createInfo2, space);
-#endif
-
 
 XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
@@ -1914,8 +1899,7 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
                 location->locationFlags = 0;
                 return XR_SUCCESS;
             }
-            // result = RPCCallLocateSpace(instance, spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
-            DebugBreak();
+            result = RPCCallLocateSpace(instance, spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
             break;
     }
 
@@ -3026,8 +3010,46 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
     }
 }
 
+XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space)
+{
+    XrPath path = OverlaysLayerWellKnownStringToPath.at(bindingString);
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
+    XrAction actualActionHandle = sessionInfo->placeholderActions.at(path).first;
+
+    XrActionSpaceCreateInfo createInfo { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+    createInfo.action = actualActionHandle, 
+    createInfo.subactionPath = OverlaysLayerBindingToSubaction.at(path); 
+    createInfo.poseInActionSpace = *poseInActionSpace; 
+    XrResult result = sessionInfo->downchain->CreateActionSpace(sessionInfo->actualHandle, &createInfo, space);
+
+    if(result == XR_SUCCESS) {
+
+        XrSpace actualHandle = *space;
+        XrSpace localHandle = (XrSpace)GetNextLocalHandle();
+        *space = localHandle;
+
+        {
+            std::unique_lock<std::recursive_mutex> lock(gActualXrSpaceToLocalHandleMutex);
+            gActualXrSpaceToLocalHandle.insert({actualHandle, localHandle});
+        }
+
+        OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
+        spaceInfo->spaceType = SPACE_ACTION;
+        spaceInfo->actualHandle = actualHandle;
+        // spaceInfo->action.reset(); // Should never be accessed from MainAsOverlay
+        // spaceInfo->isProxied; // Should never be accessed from MainAsOverlay
+
+        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
+        gOverlaysLayerXrSpaceToHandleInfo.insert({*space, spaceInfo});
+    }
+
+    return result;
+}
+
 XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
+    XrResult result = XR_SUCCESS;
+
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
     if(sessionInfo->actionSetsWereAttached) {
         return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED;
@@ -3052,7 +3074,42 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
         }
     }
 
-    // XXX for all action spaces using overlay actions, go create those spaces now on the main side using a placeholder action matching the action space's action's suggested binding
+    for(auto space: sessionInfo->childSpaces) {
+
+        // Determine placeholder action to use as pose
+        
+        if(space->spaceType == SPACE_ACTION) {
+
+            auto actionInfo = space->action;
+			
+            // XXX what if SuggestProfileBindings was never called?  It's not an error.
+            XrPath matchingBinding = XR_NULL_PATH;
+            bool found = false;
+            for(auto binding: actionInfo->suggestedBindings) {
+                XrPath subactionPath = OverlaysLayerBindingToSubaction.at(binding);
+                if(subactionPath == space->actionSpaceCreateInfo->subactionPath) {
+                    matchingBinding = binding;
+                    found = true;
+                }
+            }
+
+            if(!found) {
+
+                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrAttachSessionActionSets",
+                    OverlaysLayerNoObjectInfo, "Couldn't find a suggested binding matching the subaction with which an XrSpace was created");
+
+            } else {
+
+                WellKnownStringIndex bindingString = OverlaysLayerPathToWellKnownString.at(matchingBinding);
+
+                result = RPCCallCreateActionSpaceFromBinding(parentInstance, sessionInfo->actualHandle, bindingString, &space->actionSpaceCreateInfo->poseInActionSpace, &space->actualHandle);
+                if(result != XR_SUCCESS) {
+                    OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
+                        OverlaysLayerNoObjectInfo, "Couldn't create XrSpace for Action from main placeholders");
+                }
+            }
+        }
+    }
 
     sessionInfo->actionSetsWereAttached = true;
     return XR_SUCCESS;
@@ -3416,7 +3473,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
             auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
             for(auto actionInfo: actionSetInfo->childActions) {
                 for(auto path: actionInfo->suggestedBindings) {
-                    XrPath subactionPath = OverlaysLayerBindingToSubAction.at(path);
+                    XrPath subactionPath = OverlaysLayerBindingToSubaction.at(path);
                     // XXX by the spec, we must resolve all results from subactionPaths, but punt for now and choose first
                     actionInfo->stateBySubactionPath[subactionPath] = states[index];
                     index ++;

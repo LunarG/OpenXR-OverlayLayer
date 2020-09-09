@@ -1790,6 +1790,35 @@ SyncActionsAndGetStateRPC = {
     "function" : "OverlaysLayerSyncActionsAndGetStateMainAsOverlay"
 }
 
+CreateActionSpaceFromBindingRPC = {
+    "command_name" : "CreateActionSpaceFromBinding",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "bindingString",
+            "type" : "POD",
+            "pod_type" : "WellKnownStringIndex",
+        },
+        {
+            "name" : "poseInActionSpace",
+            "type" : "pointer_to_pod",
+            "pod_type" : "XrPosef",
+            "is_const" : True
+        },
+        {
+            "name" : "space",
+            "type" : "pointer_to_pod",
+            "pod_type" : "XrSpace",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerCreateActionSpaceFromBinding",
+}
+
 
 rpcs = (
     CreateSessionRPC,
@@ -1814,6 +1843,7 @@ rpcs = (
     WaitSwapchainImageRPC,
     ReleaseSwapchainImageRPC,
     SyncActionsAndGetStateRPC,
+    CreateActionSpaceFromBindingRPC,
 )
 
 
@@ -1845,7 +1875,13 @@ def rpc_arg_to_serialize(arg):
     if arg["type"] == "POD": 
         return f"    dst->{arg['name']} = src->{arg['name']};\n"
     elif arg["type"] == "pointer_to_pod":
-        return f"""
+        if arg.get("is_const", False):
+            return f"""
+    dst->{arg["name"]} = IPCSerialize(ipcbuf, header, src->{arg["name"]}); // pointer_to_pod
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
+"""
+        else:
+            return f"""
     dst->{arg["name"]} = IPCSerializeNoCopy(ipcbuf, header, src->{arg["name"]}); // pointer_to_pod
     header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
 """
