@@ -147,20 +147,24 @@ for l in path_specs.splitlines():
         # print("profile %s" % profile)
         well_known_strings.add(profile)
         placeholder_profiles[profile] = {}
+        pathnames = []
     elif l.startswith("* pathname:"):
         top_level = l.split(":")[1]
         # print("    top level path %s" % top_level)
         well_known_strings.add(top_level)
         placeholder_profiles[profile][top_level] = set()
+        pathnames.append(top_level)
     elif l.startswith("* subpathname:"):
         component = l.split(":")[1]
         # print("        component %s" % component)
         well_known_strings.add(component)
-        well_known_strings.add(top_level + component)
-        placeholder_profiles[profile][top_level].add(component)
+        for top_level in pathnames:
+            well_known_strings.add(top_level + component)
+            placeholder_profiles[profile][top_level].add(component)
         if component.endswith("x") or component.endswith("y"):
             well_known_strings.add(component[:-2])
-            well_known_strings.add(top_level + component[:-2])
+            for top_level in pathnames:
+                well_known_strings.add(top_level + component[:-2])
             # don't add upper component for vector2f here
             # that's added below, once, for just .x
 
@@ -207,6 +211,7 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
 
 std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
 std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
+std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubAction;
 
 """
 
