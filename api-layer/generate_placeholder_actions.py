@@ -211,7 +211,7 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
 
 std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
 std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
-std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubAction;
+std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
 
 """
 

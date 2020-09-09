@@ -1000,4 +1000,6 @@ XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateG
 
 XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr parentInstance, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states);
 
+XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space);
+
 #endif /* _OVERLAYS_H_ */
