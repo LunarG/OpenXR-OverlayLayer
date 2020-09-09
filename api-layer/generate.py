@@ -400,11 +400,11 @@ supported_commands = [
 ]
 
 supported_handles = [
+    "XrAction",
+    "XrActionSet",
     "XrSwapchain",
     "XrSpace",
     "XrSession",
-    "XrAction",
-    "XrActionSet",
     "XrDebugUtilsMessengerEXT",
     "XrInstance",
 ]
@@ -535,8 +535,10 @@ add_to_handle_struct["XrSession"] = {
     std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
     std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
     XrActionSet placeholderActionSet;
-    std::unordered_map<XrPath, XrAction> placeholderActions;
+    std::unordered_map<XrPath, std::pair<XrAction, XrActionType>> placeholderActions;
+    std::unordered_map<XrAction, XrActionType> placeholderActionTypes;
     std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> bindingsByProfile;
+    std::unordered_map<XrAction, std::vector<XrPath>> bindingsByAction;
     std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
     bool actionSetsWereAttached = false;
 """,
@@ -661,6 +663,7 @@ add_to_handle_struct["XrAction"] = {
     XrActionCreateInfo *createInfo = nullptr;
     ActionBindLocation bindLocation = BIND_PENDING;
     std::set<XrPath> subactionPaths;
+    std::set<XrPath> suggestedBindings;
     std::unordered_map<XrPath, ActionStateUnion> stateBySubactionPath;
 """,
     "methods" : """
@@ -812,7 +815,7 @@ in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(pare
 add_to_handle_struct["XrSpace"] = {
     "members" : """
     SpaceType spaceType;
-    XrAction action = XR_NULL_HANDLE;
+    OverlaysLayerXrActionHandleInfo::Ptr action;
     std::shared_ptr<const XrActionSpaceCreateInfo> actionSpaceCreateInfo;
 """,
 }
@@ -1756,6 +1759,38 @@ DestroySwapchainRPC = {
     "function" : "OverlaysLayerDestroySwapchainMainAsOverlay"
 }
 
+SyncActionsAndGetStateRPC = { 
+    "command_name" : "SyncActionsAndGetState",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "countBindings",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "bindings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countBindings",
+            "is_const" : True
+        },
+        {
+            "name" : "states",
+            "type" : "fixed_array",
+            "base_type" : "ActionStateUnion",
+            "input_size" : "countBindings",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerSyncActionsAndGetStateMainAsOverlay"
+}
+
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1778,6 +1813,7 @@ rpcs = (
     AcquireSwapchainImageRPC,
     WaitSwapchainImageRPC,
     ReleaseSwapchainImageRPC,
+    SyncActionsAndGetStateRPC,
 )
 
 
@@ -1814,7 +1850,13 @@ def rpc_arg_to_serialize(arg):
     header->addOffsetToPointer(ipcbuf.base, &dst->{arg["name"]});
 """
     elif arg["type"] == "fixed_array":
-        return f"""
+        if arg.get("is_const", False):
+            return f"""
+    dst->{arg['name']} = IPCSerialize(ipcbuf, header, src->{arg['name']}, src->{arg['input_size']});
+    header->addOffsetToPointer(ipcbuf.base, &dst->{arg['name']});
+"""
+        else:
+            return f"""
     dst->{arg['name']} = IPCSerializeNoCopy(ipcbuf, header, src->{arg['name']}, src->{arg['input_size']});
     header->addOffsetToPointer(ipcbuf.base, &dst->{arg['name']});
 """
@@ -1847,9 +1889,16 @@ def rpc_arg_to_copyout(arg):
         if arg["is_const"]:
             return "" # input only
         else:
-            return f"""
+            if "output_size" in arg:
+                return f"""
     if (src->{arg["name"]}) {{
         IPCCopyOut(dst->{arg["name"]}, src->{arg["name"]}, *src->{arg["output_size"]});
+    }}
+"""
+            else:
+                return f"""
+    if (src->{arg["name"]}) {{
+        IPCCopyOut(dst->{arg["name"]}, src->{arg["name"]}, src->{arg["input_size"]});
     }}
 """
     elif arg["type"] == "xr_struct_pointer":
@@ -1898,9 +1947,7 @@ rpc_case_bodies = ""
 for rpc in rpcs:
 
     command_name = rpc["command_name"]
-    command = commands["xr" + command_name]
-    parameter_cdecls = ", ".join([parameter_to_cdecl(command_name, parameter) for parameter in command["parameters"]])
-    command_type = command["return_type"]
+    command_type = 'XrResult'
     layer_command = api_layer_name_for_command("xr" + command_name)
     rpc_arguments_list = ", ".join(["%s" % arg["name"] for arg in rpc["args"]])
     served_args = ", ".join(["args->%s" % arg["name"] for arg in rpc["args"]])
@@ -2071,13 +2118,7 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "AttachSessionActionSets",
     "GetCurrentInteractionProfile",
-    "GetActionStateBoolean",
-    "GetActionStateFloat",
-    "GetActionStateVector2f",
-    "GetActionStatePose",
-    "SyncActions",
     "EnumerateBoundSourcesForAction",
     "GetInputSourceLocalizedName",
     "ApplyHapticFeedback",
