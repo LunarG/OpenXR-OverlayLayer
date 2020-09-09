@@ -538,7 +538,7 @@ add_to_handle_struct["XrSession"] = {
     std::unordered_map<XrPath, std::pair<XrAction, XrActionType>> placeholderActions;
     std::unordered_map<XrAction, XrActionType> placeholderActionTypes;
     std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> bindingsByProfile;
-    std::unordered_map<XrAction, std::vector<XrPath>> bindingsByAction;
+    std::unordered_map<XrAction, XrPath> bindingsByAction;
     std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
     bool actionSetsWereAttached = false;
 """,
