@@ -65,7 +65,10 @@
 
 const char *kOverlayLayerName = "xr_extx_overlay";
 
+constexpr bool PrintDebugInfo = false;
 
+
+// XXX debug this *could* be done at runtime with hashes instead of indices.
 std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStrings = {
     {USER_HAND_RIGHT_OUTPUT_HAPTIC, "/user/hand/right/output/haptic"},
     {USER_HAND_RIGHT_INPUT_TRACKPAD_CLICK, "/user/hand/right/input/trackpad/click"},
@@ -448,10 +451,16 @@ uint64_t GetNextLocalHandle()
 
 std::string PathToString(XrInstance instance, XrPath path)
 {
-    uint32_t countOutput;
+    if(path == XR_NULL_PATH) {
+        return "XR_NULL_PATH";
+    }
+
     char buffer[257];
-    auto instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+    uint32_t countOutput;
     XrResult result;
+
+    auto instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+
     result = instanceInfo->downchain->PathToString(instance, path, 0, &countOutput, nullptr);
     if(result != XR_SUCCESS) {
         auto index = OverlaysLayerPathToWellKnownString.at(path);
@@ -1408,6 +1417,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
 
         XrPath interactionProfilePath = OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
         info->bindingsByProfile[interactionProfilePath].push_back({action, fullBindingPath});
+        info->bindingsByAction[action] = fullBindingPath;
 
         // XXX This should be on CreateInstance in the instance info
         OverlaysLayerBindingToSubAction.insert({fullBindingPath, subactionPath});
@@ -2881,23 +2891,6 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
     }
 }
 
-#if 0 // XXX add placeholder for profiles main suggests
-        // Maybe we need to create Actions here?  What if CreateSession after SuggestInteractionProfileBindings?
-    for(const auto& profileBinding: bindingsByProfile) {
-        XrInteractionProfileSuggestedBinding suggestedBindings { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-        suggestedBindings.interactionProfile = profileBinding.first;
-        const auto& bindings = profileBinding.second;
-        suggestedBindings.countSuggestedBindings = (uint32_t)bindings.size();
-        suggestedBindings.suggestedBindings = bindings.data();
-        result2 = instanceInfo->downchain->SuggestInteractionProfileBindings(instance, &suggestedBindings);
-        if(result2 != XR_SUCCESS) {
-            OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-                OverlaysLayerNoObjectInfo, fmt("FATAL: Could not suggest bindings.\n").c_str());
-            return XR_ERROR_INITIALIZATION_FAILED;
-        }
-    }
-#endif
-
 
 XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, const XrInteractionProfileSuggestedBinding* suggestedBindings)
 {
@@ -2908,6 +2901,16 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
         // XXX This does not take into account any extension structs like the one Valve suggested
         instanceInfo->profilesToBindings[suggestedBindings->interactionProfile] = 
             std::vector<XrActionSuggestedBinding>(suggestedBindings->suggestedBindings, suggestedBindings->suggestedBindings + suggestedBindings->countSuggestedBindings);
+
+        for(auto it: instanceInfo->profilesToBindings[suggestedBindings->interactionProfile]) {
+            auto found = OverlaysLayerPathToWellKnownString.find(it.binding);
+            if(found == OverlaysLayerPathToWellKnownString.end()) {
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
+                    OverlaysLayerNoObjectInfo,
+                    fmt("Application suggested binding \"%s\", which this API layer does not know", PathToString(instance, it.binding)).c_str());
+                DebugBreak();
+            }
+        }
 
         return XR_SUCCESS;
 
@@ -3091,6 +3094,13 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
         {
             for (const auto& actionBinding : sessionInfo->bindingsByProfile.at(interactionProfile)) {
                 newBindings.push_back(actionBinding);
+                if(PrintDebugInfo) {
+                    XrPath binding = actionBinding.binding;
+                    XrPath recorded = sessionInfo->bindingsByAction[actionBinding.action];
+                    OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                        OverlaysLayerNoObjectInfo,
+                        fmt("Suggested \"%s\" for placeholder action \"%s\"", PathToString(sessionInfo->parentInstance, binding).c_str(), PathToString(sessionInfo->parentInstance, recorded).c_str()).c_str());
+                }
             }
         }
         
@@ -3203,14 +3213,17 @@ typedef std::vector<ActionGetInfo> ActionGetInfoList;
 // syncInfo will be RestoreHandles()d but actionsToGet will not
 XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* syncInfo, const ActionGetInfoList& actionsToGet, ActionStateUnion *states)
 {
+    static std::recursive_mutex mutex;
+    auto syncAndGetLock = std::unique_lock<std::recursive_mutex>(mutex);
+
     XrResult result;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     result = sessionInfo->downchain->SyncActions(sessionInfo->actualHandle, syncInfo);
-	if(result == XR_SESSION_NOT_FOCUSED) {
-		return XR_SESSION_NOT_FOCUSED;
-	}
+    if(result == XR_SESSION_NOT_FOCUSED) {
+        return XR_SESSION_NOT_FOCUSED;
+    }
 
     if(result != XR_SUCCESS) {
         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't sync actions in bulk update");
@@ -3231,6 +3244,41 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
                 }
+                if(PrintDebugInfo) {
+                    std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
+                    auto it = gActualXrActionToLocalHandle.find(whatToGet.action);
+                    if(it != gActualXrActionToLocalHandle.end()) {
+                        // application XrAction
+                        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(it->second);
+                        if(false) OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("Got Boolean from \"%s\" for application action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), actionInfo->createInfo->actionName, state->currentState ? "on" : " off").c_str());
+                    } else {
+                        // placeholder XrAction
+                        XrPath binding = sessionInfo->bindingsByAction[whatToGet.action];
+                        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("Got Boolean from \"%s\" for placeholder action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), PathToString(sessionInfo->parentInstance, binding).c_str(), state->currentState ? "on" : " off").c_str());
+                        XrBoundSourcesForActionEnumerateInfo enumerateInfo = {XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO, nullptr, whatToGet.action};
+                        uint32_t capacity;
+						result = sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, 0, &capacity, nullptr);
+						if(result != XR_SUCCESS) DebugBreak();
+						
+                        std::vector<XrPath> sources(capacity);
+						sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, capacity, &capacity, sources.data());
+                        if(capacity == 0) {
+                            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                                OverlaysLayerNoObjectInfo,
+                                fmt("No bound sources for that action...").c_str());
+                        } else {
+                            for(uint32_t i = 0; i< capacity; i++) {
+                                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                                    OverlaysLayerNoObjectInfo,
+                                    fmt("That action bound to \"%s\"", PathToString(sessionInfo->parentInstance, sources[i]).c_str()).c_str());
+                            }
+                        }
+                    }
+                }
                 break;
             }
             case XR_ACTION_TYPE_FLOAT_INPUT: {
@@ -3241,6 +3289,23 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                 if(result != XR_SUCCESS) {
                     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
+                }
+                if(PrintDebugInfo) {
+                    std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
+                    auto it = gActualXrActionToLocalHandle.find(whatToGet.action);
+                    if(it != gActualXrActionToLocalHandle.end()) {
+                        // application XrAction
+                        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(it->second);
+                        if(false) OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("Got Float from \"%s\" for application action \"%s\": %d", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), actionInfo->createInfo->actionName, state->currentState).c_str());
+                    } else {
+                        // placeholder XrAction
+                        XrPath binding = sessionInfo->bindingsByAction[whatToGet.action];
+                        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("Got Float from \"%s\" for placeholder action \"%s\": %f", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), PathToString(sessionInfo->parentInstance, binding).c_str(), state->currentState).c_str());
+                    }
                 }
                 break;
             }
@@ -3293,6 +3358,11 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::P
         XrActionType type = it->second.second;
         actionsToGet.push_back({ action, type, XR_NULL_PATH });
     }
+    if(PrintDebugInfo) {
+        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+            OverlaysLayerNoObjectInfo,
+            fmt("I think I'm getting %d placeholder Action states", actionsToGet.size()).c_str());
+    }
 
     result = SyncActionsAndGetState(session, &syncInfo, actionsToGet, states);
 
@@ -3314,12 +3384,15 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
         for(auto actionInfo: actionSetInfo->childActions) {
             for(auto path: actionInfo->suggestedBindings) {
                 auto found = OverlaysLayerPathToWellKnownString.find(path);
-                if(found == OverlaysLayerPathToWellKnownString.end()) {
-                    printf("unknown?  %s\n", PathToString(parentInstance, path).c_str());
-                    DebugBreak();
+                if(found != OverlaysLayerPathToWellKnownString.end()) {
+                    WellKnownStringIndex index = found->second;
+                    bindingStrings.push_back(index);
+                    if(PrintDebugInfo) {
+                        OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("I think I'm probing placeholder \"%s\" for an action", OverlaysLayerWellKnownStrings.at(index)).c_str());
+                    }
                 }
-                WellKnownStringIndex index = found->second;
-                bindingStrings.push_back(index);
             }
         }
     }
@@ -3344,7 +3417,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
             for(auto actionInfo: actionSetInfo->childActions) {
                 for(auto path: actionInfo->suggestedBindings) {
                     XrPath subactionPath = OverlaysLayerBindingToSubAction.at(path);
-                    // XXX to the spec must resolve all results from paths, but punt for now
+                    // XXX by the spec, we must resolve all results from subactionPaths, but punt for now and choose first
                     actionInfo->stateBySubactionPath[subactionPath] = states[index];
                     index ++;
                 }
