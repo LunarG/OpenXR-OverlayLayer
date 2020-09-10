@@ -65,7 +65,7 @@
 
 const char *kOverlayLayerName = "xr_extx_overlay";
 
-constexpr bool PrintDebugInfo = false;
+constexpr bool PrintDebugInfo = true;
 
 
 // XXX debug this *could* be done at runtime with hashes instead of indices.
@@ -1870,8 +1870,6 @@ XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connecti
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
     OverlaysLayerXrSpaceHandleInfo::Ptr baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
 
-    // XXX This will need to be smart about ActionSpaces
-
     XrResult result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
 
     if(result == XR_SUCCESS) {
@@ -3385,6 +3383,41 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                 if(result != XR_SUCCESS) {
                     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
+                }
+                if(PrintDebugInfo) {
+                    std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
+                    auto it = gActualXrActionToLocalHandle.find(whatToGet.action);
+                    if(it != gActualXrActionToLocalHandle.end()) {
+                        // application XrAction
+                        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(it->second);
+                        if(false) OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("Got Pose from \"%s\" for application action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), actionInfo->createInfo->actionName, state->isActive ? "active" : "inactive").c_str());
+                    } else {
+                        // placeholder XrAction
+                        XrPath binding = sessionInfo->bindingsByAction[whatToGet.action];
+                        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerNoObjectInfo,
+                            fmt("Got Pose from \"%s\" for placeholder action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), PathToString(sessionInfo->parentInstance, binding).c_str(), state->isActive ? "active" : "inactive").c_str());
+                        XrBoundSourcesForActionEnumerateInfo enumerateInfo = {XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO, nullptr, whatToGet.action};
+                        uint32_t capacity;
+						result = sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, 0, &capacity, nullptr);
+						if(result != XR_SUCCESS) DebugBreak();
+						
+                        std::vector<XrPath> sources(capacity);
+						sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, capacity, &capacity, sources.data());
+                        if(capacity == 0) {
+                            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                                OverlaysLayerNoObjectInfo,
+                                fmt("No bound sources for that action...").c_str());
+                        } else {
+                            for(uint32_t i = 0; i< capacity; i++) {
+                                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                                    OverlaysLayerNoObjectInfo,
+                                    fmt("That action bound to \"%s\"", PathToString(sessionInfo->parentInstance, sources[i]).c_str()).c_str());
+                            }
+                        }
+                    }
                 }
                 break;
             }
