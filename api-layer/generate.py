@@ -1726,7 +1726,7 @@ LocateSpaceRPC = {
             "pod_type" : "XrTime",
         },
         {
-            "name" : "XrSpaceLocation",
+            "name" : "spaceLocation",
             "type" : "xr_struct_pointer",
             "struct_type" : "XrSpaceLocation",
             "is_const" : False
