@@ -1,6 +1,7 @@
 9/9
 "The changedSinceLastSync value must be XR_TRUE if the computed currentState value differs from the currentState value that would have been computed as of the previous sync for the same subactionPaths. If there is no previous sync, OR THE ACTION WAS NOT ACTIVE FOR THE PREVIOUS SYNC, THE CHANGEDSINCELASTSYNC VALUE MUST BE SET TO XR_FALSE."
     So I will have to fake changedSinceLastSync also, for both main and overlay.
+Every ActionHandInfo will always have a currentState per subactionPath
 
 9/2
 I was able to make more than 9800 XrPaths on Oculus' RT
