@@ -478,6 +478,147 @@ std::string PathToString(XrInstance instance, XrPath path)
     return buffer;
 }
 
+void ClearActionState(XrActionType actionType, ActionStateUnion* stateUnion)
+{
+    switch(actionType) {
+        case XR_ACTION_TYPE_BOOLEAN_INPUT: {
+            auto& state = stateUnion->booleanState;
+            state.type = XR_TYPE_ACTION_STATE_BOOLEAN;
+            state.next = nullptr;
+            state.currentState = XR_FALSE;
+            state.changedSinceLastSync = XR_FALSE;
+            state.lastChangeTime = 0;
+            state.isActive = XR_FALSE;
+            break;
+        }
+        case XR_ACTION_TYPE_FLOAT_INPUT: {
+            auto& state = stateUnion->floatState;
+            state.type = XR_TYPE_ACTION_STATE_FLOAT;
+            state.next = nullptr;
+            state.currentState = 0.0f;
+            state.changedSinceLastSync = XR_FALSE;
+            state.lastChangeTime = 0;
+            state.isActive = XR_FALSE;
+            break;
+        }
+        case XR_ACTION_TYPE_VECTOR2F_INPUT: {
+            auto& state = stateUnion->vector2fState;
+            state.type = XR_TYPE_ACTION_STATE_VECTOR2F;
+            state.next = nullptr;
+            state.currentState = {0.0f, 0.0f};
+            state.changedSinceLastSync = XR_FALSE;
+            state.lastChangeTime = 0;
+            state.isActive = XR_FALSE;
+            break;
+        }
+        case XR_ACTION_TYPE_POSE_INPUT: {
+            auto& state = stateUnion->poseState;
+            state.type = XR_TYPE_ACTION_STATE_POSE;
+            state.next = nullptr;
+            state.isActive = XR_FALSE;
+            break;
+        }
+    }
+}
+
+// NB: Does not change lastChangeTime or changedSinceLastSync since those depend on the previously sync'd action state
+void MergeActionState(XrActionType actionType, const ActionStateUnion* toMergeUnion, ActionStateUnion *accumulatedUnion)
+{
+    switch(actionType) {
+        case XR_ACTION_TYPE_BOOLEAN_INPUT: {
+            const auto& toMerge = toMergeUnion->booleanState;
+            auto& accumulated = accumulatedUnion->booleanState;
+
+            if(!accumulated.isActive) {
+                accumulated = toMerge;
+            } else {
+                accumulated.currentState |= toMerge.currentState;
+            }
+            break;
+        }
+        case XR_ACTION_TYPE_FLOAT_INPUT: {
+            auto& toMerge = toMergeUnion->floatState;
+            auto& accumulated = accumulatedUnion->floatState;
+
+            if(!accumulated.isActive) {
+                accumulated = toMerge;
+            } else {
+                accumulated.currentState = std::max(accumulated.currentState, toMerge.currentState);
+            }
+            break;
+        }
+        case XR_ACTION_TYPE_VECTOR2F_INPUT: {
+            auto& toMerge = toMergeUnion->vector2fState;
+            auto& accumulated = accumulatedUnion->vector2fState;
+            float mergesq = toMerge.currentState.x * toMerge.currentState.x + toMerge.currentState.y * toMerge.currentState.y;
+            float accumsq = accumulated.currentState.x * accumulated.currentState.x + accumulated.currentState.y * accumulated.currentState.y;
+            if(!accumulated.isActive) {
+                accumulated = toMerge;
+            } else {
+                if(mergesq > accumsq) {
+                    accumulated.currentState = toMerge.currentState;
+                }
+            }
+            break;
+        }
+        case XR_ACTION_TYPE_POSE_INPUT: {
+            auto& toMerge = toMergeUnion->poseState;
+            auto& accumulated = accumulatedUnion->poseState;
+            accumulated.isActive |= toMerge.isActive;
+            break;
+        }
+    }
+}
+
+// Updates currentState changedSinceLastSync and lastChangeTime if
+// previous was active and current is active and state has changed
+void UpdateActionStateLastChange(XrActionType actionType, const ActionStateUnion *previousState, ActionStateUnion *currentState)
+{
+    switch(actionType) {
+        case XR_ACTION_TYPE_BOOLEAN_INPUT: {
+            const auto& previous = previousState->booleanState;
+            auto& current = currentState->booleanState;
+
+            if(current.isActive && previous.isActive) {
+                if(current.currentState != previous.currentState) {
+                    current.changedSinceLastSync = XR_TRUE;
+                } else {
+                    current.lastChangeTime = previous.lastChangeTime;
+                }
+            }
+            break;
+        }
+        case XR_ACTION_TYPE_FLOAT_INPUT: {
+            auto& previous = previousState->floatState;
+            auto& current = currentState->floatState;
+
+            if(current.isActive && previous.isActive) {
+                if(current.currentState != previous.currentState) {
+                    current.changedSinceLastSync = XR_TRUE;
+                } else {
+                    current.lastChangeTime = previous.lastChangeTime;
+                }
+            }
+            break;
+        }
+        case XR_ACTION_TYPE_VECTOR2F_INPUT: {
+            auto& previous = previousState->vector2fState;
+            auto& current = currentState->vector2fState;
+
+            if(current.isActive && previous.isActive) {
+                if((current.currentState.x != previous.currentState.x) || (current.currentState.y != previous.currentState.y)) {
+                    current.changedSinceLastSync = XR_TRUE;
+                } else {
+                    current.lastChangeTime = previous.lastChangeTime;
+                }
+            }
+            break;
+        }
+        case XR_ACTION_TYPE_POSE_INPUT: {
+            break;
+        }
+    }
+}
 
 void LogWindowsLastError(const char *xrfunc, const char* what, const char *file, int line)
 {
@@ -2845,8 +2986,15 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
             info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
             info->actualHandle = *action;
             info->subactionPaths.insert(info->createInfo->subactionPaths, info->createInfo->subactionPaths + info->createInfo->countSubactionPaths);
+            for(auto subactionPath: info->subactionPaths) {
+                ActionStateUnion state;
+                ClearActionState(createInfo->actionType, &state);
+                info->stateBySubactionPath.insert({subactionPath, state});
+            }
+
             actionSetInfo->childActions.insert(info);
             *action = (XrAction)GetNextLocalHandle();
+            info->localHandle = *action;
 
             {
                 std::unique_lock<std::recursive_mutex> lock(gActualXrActionToLocalHandleMutex);
@@ -3459,6 +3607,75 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::P
     return result;
 }
 
+void ClearSessionLastSyncedActiveActionSets(OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo, const XrActionsSyncInfo* syncInfo)
+{
+    for(auto activeActionSet: sessionInfo->lastSyncedActiveActionSets) {
+        XrActionSet actionSet = activeActionSet.actionSet;
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
+        XrPath subactionPath = activeActionSet.subactionPath;
+        for(auto actionInfo: actionSetInfo->childActions) {
+            if(subactionPath == XR_NULL_PATH) {
+                for(XrPath subactionPath: actionInfo->subactionPaths) {
+                    ClearActionState(actionInfo->createInfo->actionType, &actionInfo->stateBySubactionPath.at(subactionPath));
+                }
+            } else {
+                if(actionInfo->stateBySubactionPath.count(subactionPath) > 0) {
+                    ClearActionState(actionInfo->createInfo->actionType, &actionInfo->stateBySubactionPath.at(subactionPath));
+                }
+            }
+        }
+    }
+}
+
+void ClearSyncedActiveActionSets(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
+{
+    for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
+        XrActionSet actionSet = syncInfo->activeActionSets[i].actionSet;
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
+        XrPath subactionPath = syncInfo->activeActionSets[i].subactionPath;
+        for(auto actionInfo: actionSetInfo->childActions) {
+            if(subactionPath == XR_NULL_PATH) {
+                for(XrPath subactionPath: actionInfo->subactionPaths) {
+                    ClearActionState(actionInfo->createInfo->actionType, &actionInfo->stateBySubactionPath.at(subactionPath));
+                }
+            } else {
+                if(actionInfo->stateBySubactionPath.count(subactionPath) > 0) {
+                    ClearActionState(actionInfo->createInfo->actionType, &actionInfo->stateBySubactionPath.at(subactionPath));
+                }
+            }
+        }
+    }
+}
+
+void GetPreviousActionStates(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo, std::unordered_map <XrAction, std::unordered_map<XrPath, ActionStateUnion>> &previousActionStates)
+{
+    for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
+        for(auto actionInfo: actionSetInfo->childActions) {
+            previousActionStates.insert({actionInfo->localHandle, actionInfo->stateBySubactionPath});
+        }
+    }
+}
+
+void UpdateSyncActionStateLastChange(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo, const std::unordered_map <XrAction, std::unordered_map<XrPath, ActionStateUnion>> &previousActionStates)
+{
+    for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
+        XrPath subactionPath = syncInfo->activeActionSets[i].subactionPath;
+        for(auto actionInfo: actionSetInfo->childActions) {
+            if(subactionPath == XR_NULL_PATH) {
+                for(XrPath subactionPath: actionInfo->subactionPaths) {
+                    UpdateActionStateLastChange(actionInfo->createInfo->actionType, &previousActionStates.at(actionInfo->localHandle).at(subactionPath), &actionInfo->stateBySubactionPath.at(subactionPath));
+                }
+            } else {
+                if(actionInfo->stateBySubactionPath.count(subactionPath) > 0) {
+                    UpdateActionStateLastChange(actionInfo->createInfo->actionType, &previousActionStates.at(actionInfo->localHandle).at(subactionPath), &actionInfo->stateBySubactionPath.at(subactionPath));
+                }
+            }
+        }
+    }
+}
+
 XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
 {
     XrResult result = XR_SUCCESS;
@@ -3490,29 +3707,31 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
     std::vector<ActionStateUnion> states(bindingStrings.size());
     RPCCallSyncActionsAndGetState(parentInstance, session, (uint32_t)bindingStrings.size(), bindingStrings.data(), states.data());
 
-    // for each binding, add probed state to the action
     if(result == XR_SUCCESS) {
 
-        // Clear state so getting something not sync'd will be filled with "inactive" and 0s.
-        for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
-            auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
-            for(auto actionInfo: actionSetInfo->childActions) {
-                actionInfo->stateBySubactionPath.clear();
-            }
-        }
+        // Save off previous action's states
+        std::unordered_map <XrAction, std::unordered_map<XrPath, ActionStateUnion>> previousActionStates;
+        GetPreviousActionStates(sessionInfo->parentInstance, session, syncInfo, previousActionStates);
 
+        // On all actions in previous ActionSet and in this ActionSet, clear state
+        ClearSessionLastSyncedActiveActionSets(sessionInfo, syncInfo);
+        ClearSyncedActiveActionSets(sessionInfo->parentInstance, session, syncInfo);
+
+        // Merge all fetched state
         uint32_t index = 0;
         for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
             auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
             for(auto actionInfo: actionSetInfo->childActions) {
                 for(auto path: actionInfo->suggestedBindings) {
                     XrPath subactionPath = OverlaysLayerBindingToSubaction.at(path);
-                    // XXX by the spec, we must resolve all results from subactionPaths, but punt for now and choose first
-                    actionInfo->stateBySubactionPath[subactionPath] = states[index];
+                    MergeActionState(actionInfo->createInfo->actionType, &states[index], &actionInfo->stateBySubactionPath[subactionPath]);
                     index ++;
                 }
             }
         }
+
+        // On all actions in current state and all subactionPaths, set lastSyncTime and changedSinceLastSync 
+        UpdateSyncActionStateLastChange(sessionInfo->parentInstance, session, syncInfo, previousActionStates);
     }
 
     return result;
@@ -3593,13 +3812,13 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
 
     if(result == XR_SUCCESS) {
 
-        // Clear state so getting something not sync'd will be filled with "inactive" and 0s.
-        for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
-            auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
-            for(auto actionInfo: actionSetInfo->childActions) {
-                actionInfo->stateBySubactionPath.clear();
-            }
-        }
+        // Save off previous action's states
+        std::unordered_map <XrAction, std::unordered_map<XrPath, ActionStateUnion>> previousActionStates;
+        GetPreviousActionStates(sessionInfo->parentInstance, session, syncInfo, previousActionStates);
+
+        // On all actions in previous ActionSet and in this ActionSet, clear state
+        ClearSessionLastSyncedActiveActionSets(sessionInfo, syncInfo);
+        ClearSyncedActiveActionSets(sessionInfo->parentInstance, session, syncInfo);
 
         uint32_t index = 0;
         for(const auto& actionGetInfo: actionsToGet) {
@@ -3609,9 +3828,12 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
                 localHandle = gActualXrActionToLocalHandle[actionGetInfo.action];
             }
             auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(localHandle);
-            actionInfo->stateBySubactionPath[actionGetInfo.subactionPath] = states[index];
+            MergeActionState(actionInfo->createInfo->actionType, &states[index], &actionInfo->stateBySubactionPath[actionGetInfo.subactionPath]);
             index ++;
         }
+
+        // On all actions in current state and all subactionPaths, set lastSyncTime and changedSinceLastSync 
+        UpdateSyncActionStateLastChange(sessionInfo->parentInstance, session, syncInfo, previousActionStates);
     }
 
     return result;
@@ -3630,6 +3852,7 @@ XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* sy
         } else {
             result = OverlaysLayerSyncActionsMain(sessionInfo->parentInstance, session, syncInfo);
         }
+        sessionInfo->lastSyncedActiveActionSets.assign(syncInfo->activeActionSets, syncInfo->activeActionSets + syncInfo->countActiveActionSets);
 
         return result;
 

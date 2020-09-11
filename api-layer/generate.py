@@ -540,6 +540,7 @@ add_to_handle_struct["XrSession"] = {
     std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> bindingsByProfile;
     std::unordered_map<XrAction, XrPath> bindingsByAction;
     std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
+    std::vector<XrActiveActionSet> lastSyncedActiveActionSets;
     bool actionSetsWereAttached = false;
 """,
 }
@@ -657,7 +658,6 @@ after_downchain_main["xrCreateActionSet"] = f"""
 
 
 # XrAction
-
 add_to_handle_struct["XrAction"] = {
     "members" : """
     XrActionCreateInfo *createInfo = nullptr;
@@ -665,6 +665,7 @@ add_to_handle_struct["XrAction"] = {
     std::set<XrPath> subactionPaths;
     std::set<XrPath> suggestedBindings;
     std::unordered_map<XrPath, ActionStateUnion> stateBySubactionPath;
+    XrAction localHandle;
 """,
     "methods" : """
     XrResult getBoolean(XrPath subactionPath, XrActionStateBoolean *state)
