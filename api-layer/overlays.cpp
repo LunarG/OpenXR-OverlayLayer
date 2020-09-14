@@ -68,7 +68,6 @@ const char *kOverlayLayerName = "xr_extx_overlay";
 constexpr bool PrintDebugInfo = true;
 
 
-// XXX debug this *could* be done at runtime with hashes instead of indices.
 std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStrings = {
     {USER_HAND_RIGHT_OUTPUT_HAPTIC, "/user/hand/right/output/haptic"},
     {USER_HAND_RIGHT_INPUT_TRACKPAD_CLICK, "/user/hand/right/input/trackpad/click"},
@@ -459,7 +458,7 @@ std::string PathToString(XrInstance instance, XrPath path)
     uint32_t countOutput;
     XrResult result;
 
-    auto instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
     result = instanceInfo->downchain->PathToString(instance, path, 0, &countOutput, nullptr);
     if(result != XR_SUCCESS) {
@@ -856,7 +855,7 @@ void OverlaysLayerLogMessage(XrInstance instance,
     // callback.
     if(instance != XR_NULL_HANDLE) {
 
-        OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = gOverlaysLayerXrInstanceToHandleInfo.at(instance);
+        auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
         // To be a little more performant, check all messenger's
         // messageSeverities and messageTypes to make sure we will call at
@@ -889,9 +888,9 @@ void OverlaysLayerLogMessage(XrInstance instance,
             // Loop through all active messengers and give each a chance to output information
             for (const auto &messenger : instanceInfo->debugUtilsMessengers) {
 
-                std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-                XrDebugUtilsMessengerCreateInfoEXT *messenger_create_info = gOverlaysLayerXrDebugUtilsMessengerEXTToHandleInfo.at(messenger)->createInfo;
-                mlock.unlock();
+                auto messengerInfo = OverlaysLayerGetHandleInfoFromXrDebugUtilsMessengerEXT(messenger);
+
+                XrDebugUtilsMessengerCreateInfoEXT *messenger_create_info = messengerInfo->createInfo;
 
                 // If a callback exists, and the message is of a type this callback cares about, call it.
                 if (nullptr != messenger_create_info->userCallback &&
@@ -988,10 +987,10 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     std::shared_ptr<XrGeneratedDispatchTable> next_dispatch = std::make_shared<XrGeneratedDispatchTable>();
     GeneratedXrPopulateDispatchTable(next_dispatch.get(), returned_instance, next_get_instance_proc_addr);
 
-    std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
     OverlaysLayerXrInstanceHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
     info->createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
-    gOverlaysLayerXrInstanceToHandleInfo.insert({*instance, info});
+
+    OverlaysLayerAddHandleInfoForXrInstance(*instance, info);
 
     return result;
 }
@@ -1440,7 +1439,7 @@ void MainNegotiateThreadBody()
                 {
                     auto l = connection->GetLock();
                     connection->thread = std::move(receiverThread);
-					connection->thread.detach();
+                    connection->thread.detach();
                 }
             }
         }
@@ -1564,9 +1563,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
     }
 
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
-    gOverlaysLayerXrSessionToHandleInfo.insert({localHandle, info});
-    mlock2.unlock();
+    OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
 
     gAppHasAMainSession = true;
 
@@ -1709,9 +1706,8 @@ XrResult OverlaysLayerCreateSessionOverlay(
     info->actualHandle = actualHandle;
     info->isProxied = true;
     info->d3d11Device = d3d11Device;
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSessionToHandleInfoMutex);
-    gOverlaysLayerXrSessionToHandleInfo.insert({localHandle, info});
-    mlock2.unlock();
+
+    OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
 
     // Create XrPaths for well-known strings.  We can use the compile-time fixed string enums to pass strings and paths over RPC
     // XXX This should be on CreateInstance in the instance info
@@ -1834,10 +1830,8 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
     swapchainInfo->mainAsOverlaySwapchain = std::make_shared<SwapchainCachedData>(*swapchain, swapchainTextures);
     swapchainInfo->actualHandle = actualHandle;
-    { 
-        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-        gOverlaysLayerXrSwapchainToHandleInfo.insert({*swapchain, swapchainInfo});
-    }
+
+    OverlaysLayerAddHandleInfoForXrSwapchain(*swapchain, swapchainInfo);
 
     return result;
 }
@@ -1880,10 +1874,7 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
-    { 
-        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSwapchainToHandleInfoMutex);
-        gOverlaysLayerXrSwapchainToHandleInfo.insert({*swapchain, swapchainInfo});
-    }
+    OverlaysLayerAddHandleInfoForXrSwapchain(*swapchain, swapchainInfo);
 
     return result;
 }
@@ -1937,10 +1928,7 @@ XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr
     spaceInfo->actualHandle = actualHandle;
     spaceInfo->spaceType = SPACE_REFERENCE;
 
-    { 
-        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        gOverlaysLayerXrSpaceToHandleInfo.insert({*space, spaceInfo});
-    }
+    OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
 
     return result;
 }
@@ -1972,10 +1960,7 @@ XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession
     spaceInfo->spaceType = SPACE_REFERENCE;
     spaceInfo->isProxied = true;
 
-    { 
-        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        gOverlaysLayerXrSpaceToHandleInfo.insert({*space, spaceInfo});
-    }
+    OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
 
     return result;
 }
@@ -2207,11 +2192,12 @@ XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection
 
     OptionalSessionStateChange pendingStateChange;
 
-	{
-		MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
-		auto l = mainSessionContext->GetLock();
-		pendingStateChange = connection->ctx->sessionState.GetAndDoPendingStateChange(&mainSessionContext->sessionState);
-	}
+    {
+        MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+        auto l = mainSessionContext->GetLock();
+        auto l2 = connection->ctx->GetLock();
+        pendingStateChange = connection->ctx->sessionState.GetAndDoPendingStateChange(&mainSessionContext->sessionState);
+    }
 
     if(pendingStateChange.first) {
 
@@ -2219,11 +2205,12 @@ XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection
         ssc->type = XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED;
         ssc->next = nullptr;
 
-		{
-			MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
-			auto l = mainSessionContext->GetLock();
-			ssc->session = mainSessionContext->session;
-		}
+        {
+            MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+            auto l = mainSessionContext->GetLock();
+            auto l2 = connection->ctx->GetLock();
+            ssc->session = mainSessionContext->session;
+        }
         
         ssc->state = pendingStateChange.second;
         XrTime calculatedTime = 1; // XXX 
@@ -2296,14 +2283,7 @@ void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, Ma
 XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData)
 {
     try {
-        std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrInstanceToHandleInfoMutex);
-        auto it = gOverlaysLayerXrInstanceToHandleInfo.find(instance);
-        if(it == gOverlaysLayerXrInstanceToHandleInfo.end()) {
-            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrPollEvent",
-                OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
-            return XR_ERROR_VALIDATION_FAILURE;
-        }
-        OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = it->second;
+        auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
         XrResult result = instanceInfo->downchain->PollEvent(instance, eventData);
 
@@ -2397,6 +2377,7 @@ XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connect
     auto l = connection->GetLock();
     // auto beginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", beginInfo);
 
+    auto l2 = connection->ctx->GetLock();
     connection->ctx->sessionState.DoCommand(OpenXRCommand::BEGIN_SESSION);
 
     return XR_SUCCESS;
@@ -2422,6 +2403,7 @@ XrResult OverlaysLayerRequestExitSessionMainAsOverlay(ConnectionToOverlay::Ptr c
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
+    auto l2 = connection->ctx->GetLock();
     if(!connection->ctx->sessionState.isRunning) {
         return XR_ERROR_SESSION_NOT_RUNNING;
     }
@@ -2448,9 +2430,12 @@ XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connectio
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
+    auto l2 = connection->ctx->GetLock();
+
     if(connection->ctx->sessionState.sessionState != XR_SESSION_STATE_STOPPING) {
         return XR_ERROR_SESSION_NOT_STOPPING;
     }
+
     connection->ctx->sessionState.DoCommand(OpenXRCommand::END_SESSION);
     connection->ctx->overlayLayers.clear();
 
@@ -2473,6 +2458,7 @@ XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session)
 XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState)
 {
     auto l = connection->GetLock();
+    auto l2 = connection->ctx->GetLock();
 
     if(!connection->ctx->relaxedDisplayTime) {
         // XXX tell main we are waiting by setting a variable in ctx and then wait on a semaphore
@@ -2735,8 +2721,11 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
     return result;
 }
 
+std::recursive_mutex EndFrameMutex; // LATER understand which lock isn't doing its job and take this out
+
 XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    std::unique_lock<std::recursive_mutex> EndFrameLock(EndFrameMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     XrResult result = XR_SUCCESS;
@@ -2787,38 +2776,32 @@ XrResult OverlaysLayerEndFrameOverlay(XrInstance instance, XrSession session, co
     return result;
 }
 
-void AddSwapchainInFlight(OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo)
-{
-    auto mainSession = gMainSessionContext;
-    auto lock2 = mainSession->GetLock();
-    mainSession->swapchainsInFlight.insert(swapchainInfo);
-}
-
-void AddSwapchainsInFlightFromLayers(OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo, std::shared_ptr<const XrCompositionLayerBaseHeader> p)
+void AddSwapchainsFromLayers(OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo, std::shared_ptr<const XrCompositionLayerBaseHeader> p, std::set<std::shared_ptr<OverlaysLayerXrSwapchainHandleInfo>> swapchains)
 {
     switch(p->type) {
         case XR_TYPE_COMPOSITION_LAYER_QUAD: {
             auto p2 = reinterpret_cast<const XrCompositionLayerQuad*>(p.get());
             OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(p2->subImage.swapchain);
-            AddSwapchainInFlight(swapchainInfo);
+            swapchains.insert(swapchainInfo);
             break;
         }
         case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
             auto p2 = reinterpret_cast<const XrCompositionLayerProjection*>(p.get());
             for(uint32_t j = 0; j < p2->viewCount; j++) {
                 OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(p2->views[j].subImage.swapchain);
-                AddSwapchainInFlight(swapchainInfo);
+                swapchains.insert(swapchainInfo);
             }
             break;
         }
         case XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR: {
             auto p2 = reinterpret_cast<const XrCompositionLayerDepthInfoKHR*>(p.get());
             OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(p2->subImage.swapchain);
-            AddSwapchainInFlight(swapchainInfo);
+            swapchains.insert(swapchainInfo);
             break;
         }
         default: {
             char structureTypeName[XR_MAX_STRUCTURE_NAME_SIZE];
+            auto sessLock = sessionInfo->GetLock();
             XrResult r = sessionInfo->downchain->StructureTypeToString(sessionInfo->parentInstance, p->type, structureTypeName);
             if(r != XR_SUCCESS) {
                 sprintf(structureTypeName, "(type %08X)", p->type);
@@ -2833,13 +2816,8 @@ void AddSwapchainsInFlightFromLayers(OverlaysLayerXrSessionHandleInfo::Ptr sessi
 
 XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    std::unique_lock<std::recursive_mutex> EndFrameLock(EndFrameMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
-
-    {
-        auto mainSession = gMainSessionContext;
-        auto lock2 = mainSession->GetLock();
-        mainSession->swapchainsInFlight.clear();
-    }
 
     // combine overlay and main layers
 
@@ -2849,20 +2827,31 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
         layersMerged.push_back(frameEndInfo->layers[i]);
     }
 
-    std::unique_lock<std::recursive_mutex> lock(gConnectionsToOverlayByProcessIdMutex);
-    if(!gConnectionsToOverlayByProcessId.empty()) {
-        for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
-            auto conn = overlayconn.second;
-            auto lock = conn->GetLock();
-            if(conn->ctx) {
-                auto lock2 = conn->ctx->GetLock();
-                for(uint32_t i = 0; i < conn->ctx->overlayLayers.size(); i++) {
-                    auto sessLock = sessionInfo->GetLock();
-                    AddSwapchainsInFlightFromLayers(sessionInfo, conn->ctx->overlayLayers[i]);
-                    layersMerged.push_back(conn->ctx->overlayLayers[i].get());
+    std::set<std::shared_ptr<OverlaysLayerXrSwapchainHandleInfo>> swapchainsInFlight;
+
+    {
+        std::unique_lock<std::recursive_mutex> connectionLock(gConnectionsToOverlayByProcessIdMutex);
+        if(!gConnectionsToOverlayByProcessId.empty()) {
+            for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
+                auto conn = overlayconn.second;
+				connectionLock.unlock();
+                auto lock = conn->GetLock();
+                if(conn->ctx) {
+                    auto lock2 = conn->ctx->GetLock();
+                    for(uint32_t i = 0; i < conn->ctx->overlayLayers.size(); i++) {
+                        AddSwapchainsFromLayers(sessionInfo, conn->ctx->overlayLayers[i], swapchainsInFlight);
+                        layersMerged.push_back(conn->ctx->overlayLayers[i].get());
+                    }
                 }
+                connectionLock.lock();
             }
         }
+    }
+    
+    {
+        auto mainSession = gMainSessionContext;
+        auto lock2 = mainSession->GetLock();
+        mainSession->swapchainsInFlight = swapchainsInFlight;
     }
 
     // Malloc this struct and the layer pointers array and then deep copy "next" and the layer pointers.
@@ -2874,6 +2863,7 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
     frameEndInfoMerged->displayTime = frameEndInfo->displayTime;
     frameEndInfoMerged->environmentBlendMode = frameEndInfo->environmentBlendMode;
     frameEndInfoMerged->layerCount = (uint32_t)layersMerged.size();
+    printf("layer count %d\n", frameEndInfoMerged->layerCount);
 
     if(frameEndInfoMerged->layerCount > 0) {
 
@@ -2900,14 +2890,7 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
     try { 
-        std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
-        auto it = gOverlaysLayerXrSessionToHandleInfo.find(session);
-        if(it == gOverlaysLayerXrSessionToHandleInfo.end()) {
-            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame",
-                OverlaysLayerNoObjectInfo, "FATAL: invalid handle couldn't be found in tracking map.\n");
-            return XR_ERROR_VALIDATION_FAILURE;
-        }
-        OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = it->second;
+        auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
         
         bool isProxied = sessionInfo->isProxied;
         XrResult result;
@@ -2951,10 +2934,7 @@ XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCrea
                 gActualXrActionSetToLocalHandle.insert({info->actualHandle, *actionSet});
             }
 
-            {
-                std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrActionSetToHandleInfoMutex);
-                gOverlaysLayerXrActionSetToHandleInfo.insert({*actionSet, info});
-            }
+            OverlaysLayerAddHandleInfoForXrActionSet(*actionSet, info);
         }
 
         return result;
@@ -3001,10 +2981,7 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
                 gActualXrActionToLocalHandle.insert({info->actualHandle, *action});
             }
 
-            {
-                std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrActionToHandleInfoMutex);
-                gOverlaysLayerXrActionToHandleInfo.insert({*action, info});
-            }
+            OverlaysLayerAddHandleInfoForXrAction(*action, info);
         }
 
         return result;
@@ -3074,8 +3051,7 @@ XrResult OverlaysLayerCreateActionSpaceOverlay(XrInstance parentInstance, XrSess
     std::shared_ptr<const XrActionSpaceCreateInfo> createInfoCopy(reinterpret_cast<const XrActionSpaceCreateInfo*>(CopyXrStructChainWithMalloc(sessionInfo->parentInstance, createInfo)), [instance=sessionInfo->parentInstance](const XrActionSpaceCreateInfo* p){ FreeXrStructChainWithFree(instance, p);});
     spaceInfo->actionSpaceCreateInfo = createInfoCopy;
 
-    std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-    gOverlaysLayerXrSpaceToHandleInfo.insert({*space, spaceInfo});
+    OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
 
     return XR_SUCCESS;
 }
@@ -3116,8 +3092,7 @@ XrResult OverlaysLayerCreateActionSpaceMain(XrInstance parentInstance, XrSession
         spaceInfo->action = actionInfo;
         spaceInfo->isProxied = false;
 
-        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        gOverlaysLayerXrSpaceToHandleInfo.insert({*space, spaceInfo});
+        OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
     }
 
     return result;
@@ -3138,8 +3113,8 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
         }
 
         if(XR_SUCCEEDED(result)) {
-            std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-            sessionInfo->childSpaces.insert(gOverlaysLayerXrSpaceToHandleInfo.at(*space));
+            auto l = sessionInfo->GetLock();
+            sessionInfo->childSpaces.insert(OverlaysLayerGetHandleInfoFromXrSpace(*space));
         }
 
         return result;
@@ -3185,8 +3160,7 @@ XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr conn
         // spaceInfo->action.reset(); // Should never be accessed from MainAsOverlay
         // spaceInfo->isProxied; // Should never be accessed from MainAsOverlay
 
-        std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
-        gOverlaysLayerXrSpaceToHandleInfo.insert({*space, spaceInfo});
+         OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
     }
 
     return result;
