@@ -2863,7 +2863,6 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
     frameEndInfoMerged->displayTime = frameEndInfo->displayTime;
     frameEndInfoMerged->environmentBlendMode = frameEndInfo->environmentBlendMode;
     frameEndInfoMerged->layerCount = (uint32_t)layersMerged.size();
-    printf("layer count %d\n", frameEndInfoMerged->layerCount);
 
     if(frameEndInfoMerged->layerCount > 0) {
 
