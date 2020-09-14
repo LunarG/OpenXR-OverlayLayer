@@ -65,7 +65,7 @@
 
 const char *kOverlayLayerName = "xr_extx_overlay";
 
-constexpr bool PrintDebugInfo = true;
+constexpr bool PrintDebugInfo = false;
 
 
 std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStrings = {
