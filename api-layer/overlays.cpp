@@ -234,15 +234,13 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
     {USER_GAMEPAD, "/user/gamepad"},
     {USER_HEAD_INPUT_SYSTEM_CLICK, "/user/head/input/system/click"},
     {USER_HAND_RIGHT_INPUT_TRIGGER_TOUCH, "/user/hand/right/input/trigger/touch"},
-
 };
 
+// XXX These may be different by XrInstance
 std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
 std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
 std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
-
-
-
+std::set<XrPath> OverlaysLayerAllSubactionPaths;
 
 struct PlaceholderActionId
 {
@@ -1012,10 +1010,36 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     std::shared_ptr<XrGeneratedDispatchTable> next_dispatch = std::make_shared<XrGeneratedDispatchTable>();
     GeneratedXrPopulateDispatchTable(next_dispatch.get(), returned_instance, next_get_instance_proc_addr);
 
-    OverlaysLayerXrInstanceHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
-    info->createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
+    instanceInfo->createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
 
-    OverlaysLayerAddHandleInfoForXrInstance(*instance, info);
+    OverlaysLayerAddHandleInfoForXrInstance(*instance, instanceInfo);
+
+    // Create XrPaths for well-known strings.  We can use the compile-time fixed string enums to pass strings and paths over RPC
+    // XXX This should be on CreateInstance in the instance info
+    if(OverlaysLayerWellKnownStringToPath.size() == 0) { 
+        OverlaysLayerWellKnownStringToPath.insert({WellKnownStringIndex::NULL_PATH, XR_NULL_PATH});
+        OverlaysLayerPathToWellKnownString.insert({XR_NULL_PATH, WellKnownStringIndex::NULL_PATH});
+        for(auto& w : OverlaysLayerWellKnownStrings) {
+            XrPath path;
+            XrResult result2 = instanceInfo->downchain->StringToPath(*instance, w.second, &path);
+            if(result2 != XR_SUCCESS) {
+                OverlaysLayerLogMessage(*instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+                    OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create path from.\n", w.second).c_str());
+                return XR_ERROR_INITIALIZATION_FAILED;
+            }
+            OverlaysLayerWellKnownStringToPath.insert({w.first, path});
+            OverlaysLayerPathToWellKnownString.insert({path, w.first});
+        }
+        for(auto& id : PlaceholderActionIds) {
+            XrPath fullBindingPath = OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
+            XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
+            // XXX This should be on CreateInstance in the instance info
+            OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
+            OverlaysLayerAllSubactionPaths.insert(subactionPath);
+        }
+
+    }
 
     return result;
 }
@@ -1033,7 +1057,6 @@ XrResult OverlaysLayerXrDestroyInstance(XrInstance instance)
 
 NegotiationChannels gNegotiationChannels;
 
-bool gAppHasAMainSession = false;
 XrInstance gMainSessionInstance;
 MainSessionContext::Ptr gMainSessionContext;
 DWORD gMainProcessId;   // Set by Overlay to check for main process unexpected exit
@@ -1497,8 +1520,6 @@ bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSess
     return true;
 }
 
-ConnectionToMain::Ptr gConnectionToMain;
-
 XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session, ID3D11Device *d3d11Device)
 {
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
@@ -1529,22 +1550,6 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     }
     d3dMultithread->SetMultithreadProtected(TRUE);
     d3dMultithread->Release();
-
-    // Create XrPaths for well-known strings.  We can use the compile-time fixed string enums to pass strings and paths over RPC
-    // XXX This should be on CreateInstance in the instance info
-    if(OverlaysLayerWellKnownStringToPath.size() == 0) { 
-        for(auto& w : OverlaysLayerWellKnownStrings) {
-            XrPath path;
-            XrResult result2 = instanceInfo->downchain->StringToPath(instance, w.second, &path);
-            if(result2 != XR_SUCCESS) {
-                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-                    OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create path from.\n", w.second).c_str());
-                return XR_ERROR_INITIALIZATION_FAILED;
-            }
-            OverlaysLayerWellKnownStringToPath.insert({w.first, path});
-            OverlaysLayerPathToWellKnownString.insert({path, w.first});
-        }
-    }
 
     // create placeholder Actions
 
@@ -1583,14 +1588,12 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         XrPath interactionProfilePath = OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
         info->bindingsByProfile[interactionProfilePath].push_back({action, fullBindingPath});
         info->bindingsByAction[action] = fullBindingPath;
-
-        // XXX This should be on CreateInstance in the instance info
-        OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
+    }
+    for(XrPath p: OverlaysLayerAllSubactionPaths) {
+        info->currentInteractionProfileBySubactionPath.insert({p, XR_NULL_PATH});
     }
 
     OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
-
-    gAppHasAMainSession = true;
 
     bool result = CreateMainSessionNegotiateThread(instance, localHandle);
 
@@ -1601,6 +1604,8 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     }
     return xrresult;
 }
+
+ConnectionToMain::Ptr gConnectionToMain;
 
 bool ConnectToMain(XrInstance instance)
 {
@@ -1732,31 +1737,11 @@ XrResult OverlaysLayerCreateSessionOverlay(
     info->isProxied = true;
     info->d3d11Device = d3d11Device;
 
+    for(XrPath p: OverlaysLayerAllSubactionPaths) {
+        info->currentInteractionProfileBySubactionPath.insert({p, XR_NULL_PATH});
+    }
+
     OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
-
-    // Create XrPaths for well-known strings.  We can use the compile-time fixed string enums to pass strings and paths over RPC
-    // XXX This should be on CreateInstance in the instance info
-    if(OverlaysLayerWellKnownStringToPath.size() == 0) { 
-        for(auto& w : OverlaysLayerWellKnownStrings) {
-            XrPath path;
-            XrResult result2 = instanceInfo->downchain->StringToPath(instance, w.second, &path);
-            if(result2 != XR_SUCCESS) {
-                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-                    OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create path from.\n", w.second).c_str());
-                return XR_ERROR_INITIALIZATION_FAILED;
-            }
-            OverlaysLayerWellKnownStringToPath.insert({w.first, path});
-            OverlaysLayerPathToWellKnownString.insert({path, w.first});
-        }
-    }
-
-    // XXX This should be on CreateInstance in the instance info
-    int i=1;
-    for(auto& id : PlaceholderActionIds) {
-        XrPath fullBindingPath = OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
-        XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
-        OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
-    }
 
     return result;
 }
@@ -2302,12 +2287,12 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
     return XR_SUCCESS;
 }
 
+
 XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection, XrEventDataBuffer *eventData)
 {
     XrResult result;
 
     OptionalSessionStateChange pendingStateChange;
-
     {
         MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
         auto l = mainSessionContext->GetLock();
@@ -2399,6 +2384,21 @@ void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, Ma
 XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData)
 {
     try {
+
+        // See if any Session needs to return a synthetic interaction profile changed event
+        extern std::recursive_mutex gOverlaysLayerXrSessionToHandleInfoMutex;
+        for(auto [sessionHandle, sessionInfo]: gOverlaysLayerXrSessionToHandleInfo) {
+            auto l = sessionInfo->GetLock();
+            if(sessionInfo->interactionProfileChangePending) {
+                auto* ipc = reinterpret_cast<XrEventDataInteractionProfileChanged*>(eventData);
+                ipc->type = XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED;
+                ipc->next = nullptr;
+                ipc->session = sessionHandle;
+                sessionInfo->interactionProfileChangePending = false;
+                return XR_SUCCESS;
+            }
+        }
+
         auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
         XrResult result = instanceInfo->downchain->PollEvent(instance, eventData);
@@ -2407,7 +2407,8 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
 
             if(gConnectionToMain) {
 
-                /* See if the main process has any events for us */
+
+                /* Overlay app: See if the main process has any events for us */
                 result = RPCCallPollEvent(instance, eventData);
                 if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
                     const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
@@ -2415,13 +2416,26 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
                 if(result == XR_SUCCESS) {
                     SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
                 }
+
             }
 
         } else if(result == XR_SUCCESS) {
 
             SubstituteLocalHandles(instance, (XrBaseOutStructure *)eventData);
 
-            if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
+            if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
+
+                auto* ipc = reinterpret_cast<XrEventDataInteractionProfileChanged*>(eventData);
+                ipc->type = XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED;
+                ipc->next = nullptr;
+                MainSessionContext::Ptr mainSessionContext = gMainSessionContext;
+                auto l = mainSessionContext->GetLock();
+                if(ipc->session == mainSessionContext->session) {
+                    // Discard on the ground since we enqueued to synthesize an event in SyncActions
+                    result = XR_EVENT_UNAVAILABLE;
+                }
+
+            } else if(eventData->type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 
                 // XXX ignores any chained event data
                 const auto* ssc = reinterpret_cast<const XrEventDataSessionStateChanged*>(eventData);
@@ -2456,19 +2470,7 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
                             }
                         }
 
-                    } else if(eventData->type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
-
-                        // XXX further processing
-                        // If occurred earlier than an Overlay connect, will need to synthesize this.
-                        for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
-                            auto conn = overlayconn.second;
-                            auto lock = conn->GetLock();
-                            if(conn->ctx) {
-                                EnqueueEventToOverlay(instance, eventData, conn->ctx);
-                            }
-                        }
-                    }
-
+                    } /* could receive a XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED but we synthesize those in SyncActions */
                 }
             }
         }
@@ -3315,6 +3317,10 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
             auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(binding.action);
             actionInfo->suggestedBindings.insert(binding.binding);
         }
+
+        if(bindings.size() > 0) {
+            sessionInfo->interactionProfiles.insert(interactionProfile);
+        }
     }
 
     for(auto space: sessionInfo->childSpaces) {
@@ -3375,6 +3381,10 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
     for(auto profileAndBindings : instanceInfo->profilesToBindings) {
         XrPath interactionProfile = profileAndBindings.first;
         auto bindings = profileAndBindings.second;
+
+        if(bindings.size() > 0) {
+            sessionInfo->interactionProfiles.insert(interactionProfile);
+        }
 
         for(auto binding: bindings) {
             auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(binding.action);
@@ -3652,12 +3662,12 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                         std::vector<XrPath> sources(capacity);
 						sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, capacity, &capacity, sources.data());
                         if(capacity == 0) {
-                            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
                                 OverlaysLayerNoObjectInfo,
                                 fmt("No bound sources for that action...").c_str());
                         } else {
                             for(uint32_t i = 0; i< capacity; i++) {
-                                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
                                     OverlaysLayerNoObjectInfo,
                                     fmt("That action bound to \"%s\"", PathToString(sessionInfo->parentInstance, sources[i]).c_str()).c_str());
                             }
@@ -3669,10 +3679,42 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
         }
         index ++;
     }
+
     return result;
 }
 
-XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states)
+XrResult OverlaysLayerGetCurrentInteractionProfile(XrSession session, XrPath topLevelUserPath, XrInteractionProfileState* interactionProfile)
+{
+    try {
+
+        auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+        auto it = sessionInfo->currentInteractionProfileBySubactionPath.find(topLevelUserPath);
+        if(it == sessionInfo->currentInteractionProfileBySubactionPath.end()) {
+            return XR_ERROR_PATH_INVALID;
+        }
+            
+        if(sessionInfo->interactionProfiles.count(it->second) > 0) {
+            interactionProfile->interactionProfile = it->second;
+        } else {
+            interactionProfile->interactionProfile = XR_NULL_PATH;
+        }
+        
+        return XR_SUCCESS;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
+XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states, uint32_t countProfiles, const WellKnownStringIndex *topLevelStrings, WellKnownStringIndex *interactionProfileStrings)
 {
     XrResult result = XR_SUCCESS;
 
@@ -3691,7 +3733,8 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::P
 			
         XrAction action = it->second.first;
         XrActionType type = it->second.second;
-        actionsToGet.push_back({ action, type, XR_NULL_PATH });
+        XrPath subactionPath = OverlaysLayerBindingToSubaction.at(bindingPath);
+        actionsToGet.push_back({ action, type, subactionPath });
     }
     if(PrintDebugInfo) {
         OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
@@ -3700,6 +3743,25 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::P
     }
 
     result = SyncActionsAndGetState(session, &syncInfo, actionsToGet, states);
+
+    if(result == XR_SUCCESS) {
+
+        for(uint32_t i = 0; i < countProfiles; i++) {
+            XrPath p = OverlaysLayerWellKnownStringToPath.at(topLevelStrings[i]);
+            XrInteractionProfileState interactionProfile { XR_TYPE_INTERACTION_PROFILE_STATE };
+
+            XrResult result2 = sessionInfo->downchain->GetCurrentInteractionProfile(sessionInfo->actualHandle, p, &interactionProfile);
+
+            if(result2 != XR_SUCCESS) {
+                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
+                    OverlaysLayerNoObjectInfo,
+                    fmt("Couldn't get current interaction profile for top-level path \"%s\" in OverlaysLayerSyncActionsAndGetStateMainAsOverlay", PathToString(sessionInfo->parentInstance, p).c_str()).c_str());
+                interactionProfileStrings[i] = WellKnownStringIndex::NULL_PATH;
+            } else {
+                interactionProfileStrings[i] = OverlaysLayerPathToWellKnownString.at(interactionProfile.interactionProfile);
+            }
+        }
+    }
 
     return result;
 }
@@ -3801,8 +3863,26 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
         }
     }
 
+    std::vector<WellKnownStringIndex> topLevelStrings;
+    for(XrPath subactionPath: OverlaysLayerAllSubactionPaths) {
+        topLevelStrings.push_back(OverlaysLayerPathToWellKnownString.at(subactionPath));
+    }
+
     std::vector<ActionStateUnion> states(bindingStrings.size());
-    RPCCallSyncActionsAndGetState(parentInstance, session, (uint32_t)bindingStrings.size(), bindingStrings.data(), states.data());
+    std::vector<WellKnownStringIndex> profileStrings(topLevelStrings.size());
+    RPCCallSyncActionsAndGetState(parentInstance, session, (uint32_t)bindingStrings.size(), bindingStrings.data(), states.data(), (uint32_t)topLevelStrings.size(), topLevelStrings.data(), profileStrings.data());
+
+    for(uint32_t i = 0; i < topLevelStrings.size(); i++) {
+        XrPath topLevelPath = OverlaysLayerWellKnownStringToPath.at(topLevelStrings[i]);
+        XrPath interactionProfile = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]);
+        XrPath previousProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(topLevelPath);
+        if(previousProfile != interactionProfile) {
+            auto l = sessionInfo->GetLock();
+            sessionInfo->interactionProfileChangePending = true;
+        }
+
+        sessionInfo->currentInteractionProfileBySubactionPath[topLevelPath] = interactionProfile;
+    }
 
     if(result == XR_SUCCESS) {
 
@@ -3894,7 +3974,6 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
                 }
             }
         }
-
     }
 
     std::vector<ActionStateUnion> states(actionsToGet.size());
@@ -3931,6 +4010,28 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
 
         // On all actions in current state and all subactionPaths, set lastSyncTime and changedSinceLastSync 
         UpdateSyncActionStateLastChange(sessionInfo->parentInstance, session, syncInfo, previousActionStates);
+
+        // update interaction profiles and mark whether we need to synthesize an EVENT_DATA_INTERACTION_PROFILE_CHANGE
+        for(XrPath p: OverlaysLayerAllSubactionPaths) {
+
+            XrInteractionProfileState interactionProfile { XR_TYPE_INTERACTION_PROFILE_STATE };
+            result = sessionInfo->downchain->GetCurrentInteractionProfile(sessionInfo->actualHandle, p, &interactionProfile);
+
+            if(result != XR_SUCCESS) {
+                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
+                    OverlaysLayerNoObjectInfo,
+                    fmt("Couldn't get current interaction profile for top-level path \"%s\" in order to possibly synthesize a profile change event", PathToString(sessionInfo->parentInstance, p).c_str()).c_str());
+                return XR_ERROR_RUNTIME_FAILURE;
+            }
+
+            XrPath previousProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(p);
+            if(previousProfile != interactionProfile.interactionProfile) {
+                auto l = sessionInfo->GetLock();
+                sessionInfo->interactionProfileChangePending = true;
+            }
+
+            sessionInfo->currentInteractionProfileBySubactionPath[p] = interactionProfile.interactionProfile;
+        }
     }
 
     return result;

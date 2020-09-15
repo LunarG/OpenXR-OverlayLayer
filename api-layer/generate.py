@@ -322,6 +322,8 @@ supported_structs = [
 ]
 
 manually_implemented_commands = [
+    "xrApplyHapticFeedback",
+    "xrStopHapticFeedback",
     "xrLocateSpace",
     "xrCreateSession",
     "xrPollEvent",
@@ -336,6 +338,7 @@ manually_implemented_commands = [
     "xrSyncActions",
     "xrSuggestInteractionProfileBindings",
     "xrAttachSessionActionSets",
+    "xrGetCurrentInteractionProfile",
 ]
 
 supported_commands = [
@@ -388,8 +391,6 @@ supported_commands = [
     "xrSyncActions",
     "xrEnumerateBoundSourcesForAction",
     "xrGetInputSourceLocalizedName",
-    "xrApplyHapticFeedback",
-    "xrStopHapticFeedback",
     "xrGetD3D11GraphicsRequirementsKHR",
     "xrSetDebugUtilsObjectNameEXT",
     "xrCreateDebugUtilsMessengerEXT",
@@ -398,6 +399,8 @@ supported_commands = [
     "xrSessionBeginDebugUtilsLabelRegionEXT",
     "xrSessionEndDebugUtilsLabelRegionEXT",
     "xrSessionInsertDebugUtilsLabelEXT",
+    "xrApplyHapticFeedback",
+    "xrStopHapticFeedback",
 ]
 
 supported_handles = [
@@ -543,6 +546,9 @@ add_to_handle_struct["XrSession"] = {
     std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
     std::vector<XrActiveActionSet> lastSyncedActiveActionSets;
     bool actionSetsWereAttached = false;
+    std::set<XrPath> interactionProfiles;
+    std::unordered_map<XrPath,XrPath> currentInteractionProfileBySubactionPath;
+    bool interactionProfileChangePending = false;
 """,
 }
 
@@ -1781,6 +1787,25 @@ SyncActionsAndGetStateRPC = {
             "input_size" : "countBindings",
             "is_const" : False
         },
+        {
+            "name" : "countProfiles",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "topLevelStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfiles",
+            "is_const" : True
+        },
+        {
+            "name" : "interactionProfileStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfiles",
+            "is_const" : False
+        },
     ),
     "function" : "OverlaysLayerSyncActionsAndGetStateMainAsOverlay"
 }
@@ -2149,7 +2174,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "GetCurrentInteractionProfile",
     "EnumerateBoundSourcesForAction",
     "GetInputSourceLocalizedName",
     "ApplyHapticFeedback",
