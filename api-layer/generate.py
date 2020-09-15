@@ -322,6 +322,7 @@ supported_structs = [
 ]
 
 manually_implemented_commands = [
+    "xrLocateSpace",
     "xrCreateSession",
     "xrPollEvent",
     "xrEndFrame",
@@ -808,6 +809,7 @@ add_to_handle_struct["XrSpace"] = {
     "members" : """
     SpaceType spaceType;
     OverlaysLayerXrActionHandleInfo::Ptr action;
+    XrAction placeholderAction;
     std::shared_ptr<const XrActionSpaceCreateInfo> actionSpaceCreateInfo;
 """,
 }

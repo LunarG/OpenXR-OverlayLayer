@@ -448,6 +448,14 @@ uint64_t GetNextLocalHandle()
     return nextHandle++;
 }
 
+
+std::unique_lock<std::recursive_mutex> GetSyncActionsLock()
+{
+    static std::recursive_mutex syncActionsMutex;
+    return std::unique_lock<std::recursive_mutex>(syncActionsMutex);
+}
+
+
 std::string PathToString(XrInstance instance, XrPath path)
 {
     if(path == XR_NULL_PATH) {
@@ -1993,10 +2001,27 @@ XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, Xr
 
 XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
-    OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
-    OverlaysLayerXrSpaceHandleInfo::Ptr baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
+    XrResult result = XR_SUCCESS;
 
-    XrResult result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+    auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+    auto baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
+
+    {
+        auto syncActionsLock = GetSyncActionsLock();
+
+        XrActiveActionSet activeActionSet { sessionInfo->placeholderActionSet, XR_NULL_PATH };
+        XrActionsSyncInfo syncInfo { XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &activeActionSet };
+        auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
+        result = spaceInfo->downchain->SyncActions(sessionInfo->actualHandle, &syncInfo);
+        if(result != XR_SUCCESS) {
+            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
+                OverlaysLayerNoObjectInfo, "failed to SyncActions before reading placeHolder action to locate a space\n");
+            return result;
+        }
+
+        result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+    }
 
     if(result == XR_SUCCESS) {
         SubstituteLocalHandles(spaceInfo->parentInstance, (XrBaseOutStructure *)location);
@@ -2033,6 +2058,77 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
 
     return result;
 }
+
+
+XrResult OverlaysLayerLocateSpaceMain(XrInstance parentInstance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
+{
+    XrResult result = XR_SUCCESS;
+
+    auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+
+    // restore the actual handle
+    space = spaceInfo->actualHandle;
+    
+    baseSpace = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace)->actualHandle;
+
+    if(spaceInfo->spaceType == SPACE_ACTION) {
+        auto syncActionsLock = GetSyncActionsLock();
+
+        // Sync this Space's Action so it's active
+        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(spaceInfo->action->parentHandle);
+        XrActiveActionSet activeActionSet { actionSetInfo->actualHandle, XR_NULL_PATH }; // XXX may need to keep XrActionsSyncInfo from previous xrSyncActions and play that back
+        XrActionsSyncInfo syncInfo { XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &activeActionSet };
+        auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
+        result = spaceInfo->downchain->SyncActions(sessionInfo->actualHandle, &syncInfo);
+        if(result != XR_SUCCESS) {
+            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
+                OverlaysLayerNoObjectInfo, "failed to SyncActions before reading placeHolder action to locate a space\n");
+            return result;
+        }
+
+        result = spaceInfo->downchain->LocateSpace(space, baseSpace, time, location);
+
+    } else {
+
+        result = spaceInfo->downchain->LocateSpace(space, baseSpace, time, location);
+    }
+    
+    if(result == XR_SUCCESS) {
+        SubstituteLocalHandles(spaceInfo->parentInstance, location);
+    }
+
+    return result;
+}
+
+
+XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
+{
+    try {
+
+        auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+        
+        bool isProxied = spaceInfo->isProxied;
+        XrResult result;
+        if(isProxied) {
+            result = OverlaysLayerLocateSpaceOverlay(spaceInfo->parentInstance, space, baseSpace, time, location);
+        } else {
+            result = OverlaysLayerLocateSpaceMain(spaceInfo->parentInstance, space, baseSpace, time, location);
+        }
+
+        return result;
+
+    } catch (const OverlaysLayerXrException exc) {
+
+        return exc.result();
+
+    } catch (const std::bad_alloc& e) {
+
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+
+    }
+}
+
 
 XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space)
 {
@@ -3137,7 +3233,7 @@ XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr conn
     XrAction actualActionHandle = sessionInfo->placeholderActions.at(path).first;
 
     XrActionSpaceCreateInfo createInfo { XR_TYPE_ACTION_SPACE_CREATE_INFO };
-    createInfo.action = actualActionHandle, 
+    createInfo.action = actualActionHandle;
     createInfo.subactionPath = OverlaysLayerBindingToSubaction.at(path); 
     createInfo.poseInActionSpace = *poseInActionSpace; 
     XrResult result = sessionInfo->downchain->CreateActionSpace(sessionInfo->actualHandle, &createInfo, space);
@@ -3156,7 +3252,7 @@ XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr conn
         OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
         spaceInfo->spaceType = SPACE_ACTION;
         spaceInfo->actualHandle = actualHandle;
-        // spaceInfo->action.reset(); // Should never be accessed from MainAsOverlay
+        spaceInfo->placeholderAction = actualActionHandle;
         // spaceInfo->isProxied; // Should never be accessed from MainAsOverlay
 
          OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
@@ -3386,11 +3482,11 @@ struct ActionGetInfo
 
 typedef std::vector<ActionGetInfo> ActionGetInfoList;
 
+
 // syncInfo will be RestoreHandles()d but actionsToGet will not
 XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* syncInfo, const ActionGetInfoList& actionsToGet, ActionStateUnion *states)
 {
-    static std::recursive_mutex mutex;
-    auto syncAndGetLock = std::unique_lock<std::recursive_mutex>(mutex);
+    auto syncActionsLock = GetSyncActionsLock();
 
     XrResult result;
 
@@ -3941,23 +4037,6 @@ XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateG
     }
 }
 
-
-// CreateActionSpace
-// SyncActions
-// AttachSessionActionSets
-// GetActionState*
-
-#if 0 // Do on AttachSessionActionSets
-    XrSessionActionSetsAttachInfo attachInfo { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
-    attachInfo.countActionSets = 1;
-    attachInfo.actionSets = &info->placeholderActionSet;
-    result2 = instanceInfo->downchain->AttachSessionActionSets(actualHandle, &attachInfo);
-    if(result2 != XR_SUCCESS) {
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not attach placeholder ActionSet to XrSession.\n").c_str());
-        return XR_ERROR_INITIALIZATION_FAILED;
-    }
-#endif
 
 extern "C" {
 
