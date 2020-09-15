@@ -1002,4 +1002,6 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::P
 
 XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space);
 
+XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location);
+
 #endif /* _OVERLAYS_H_ */
