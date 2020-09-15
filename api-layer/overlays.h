@@ -752,6 +752,7 @@ union ActionStateUnion
 };
 
 enum WellKnownStringIndex {
+    NULL_PATH = 0,
     USER_HAND_LEFT_INPUT_THUMBSTICK_CLICK = 1,
     INPUT_DPAD_DOWN_CLICK = 2,
     USER_HAND_RIGHT_INPUT_SELECT_CLICK = 3,
@@ -1002,7 +1003,7 @@ XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionState
 XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateVector2f* state);
 XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStatePose* state);
 
-XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr parentInstance, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states);
+XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states, uint32_t countProfiles, const WellKnownStringIndex *topLevelStrings, WellKnownStringIndex *interactionProfileStrings);
 
 XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space);
 
@@ -1011,5 +1012,7 @@ XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time,
 XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticActionInfo* hapticActionInfo);
 
 XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback);
+
+XrResult OverlaysLayerGetCurrentInteractionProfile(XrSession session, XrPath topLevelUserPath, XrInteractionProfileState* interactionProfile);
 
 #endif /* _OVERLAYS_H_ */

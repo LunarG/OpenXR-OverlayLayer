@@ -218,6 +218,7 @@ for (profile, top_levels) in placeholder_profiles.items():
 
 well_known = f"""
 enum WellKnownStringIndex {{
+    NULL_PATH = 0,
 {well_known_enums}
 }}; // These will need to not change for subsequent versions for backward compatibility
 
@@ -225,9 +226,11 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
 {well_known_mappings}
 }};
 
+// XXX These may be different by XrInstance
 std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
 std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
 std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
+std::unordered_map<XrPath, XrPath> OverlaysLayerAllSubactionPaths;
 
 """
 

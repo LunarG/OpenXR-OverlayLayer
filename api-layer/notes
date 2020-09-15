@@ -281,7 +281,7 @@ xrPollEvent
         must pretend to be runtime: return XR_ERROR_ACTIONSETS_ALREADY_ATTACHED if OVERLAY and already attached
         note virtual actionsets and virtual actions in Session
         mark virtual actionsets and virtual actions bound to OVERLAY, mutable = false
-CreateActionSpace
+./ CreateActionSpace
     NB the target Action must be a POSE action
     main: downchain->CreateActionSpace
     overlay: store request, actually create at Attach when I'll know what the bindings are
@@ -289,15 +289,28 @@ CreateActionSpace
         space will be created against a particular action
             just pick the first pose listed as a suggested binding
             Or do multiple spaces need to be created and pick the first active one at LocateSpace time?
-SyncActions
+./ SyncActions
     ./ main: get all state for active actionsets, store, set remaining inactive.
-    overlay: RPC to get all state for active actionsets, store, set remaining inactive.
+    ./ overlay: RPC to get all state for active actionsets, store, set remaining inactive.
+    for main: get interaction profile change.  If it has changed since last SyncActions, mark that we should synthesize an event for main for PollEvent
+    for MainAsOverlay: get interaction profile change.  If it has changed since last SyncActions, mark that we should synthesize an event for overlay
 ./ GetActionState*
     if function doesn't match action type, XR_ERROR_ACTION_TYPE_MISMATCH
     XR_ERROR_ACTIONSET_NOT_ATTACHED
     get cached value
-    XXX need to store values inactive on initialization
-ApplyHapticFeedback
+Handle profile supported by main not supported by overlay - should support this for D1?
+    interaction profile is per top-level path
+    We *know* that on OVR, if khr and oculus were both suggested, even if only khr actions are active they don't get input
+    could specify that for now all overlay apps must suggest bindings for all other profiles...
+    restrict solution to overlay must also have suggested KHR.
+    only get and combine placeholder actions for current profile
+        overlay can know that it had no OVR profile, and OVR profile is current, and send only for OVR events and convert in SyncActions.
+    Are you getting garbage trying to get a squeeze value for a BOOLEAN action?
+        hello_xr doesn't fetch any value paths as BOOLEAN, so don't do that.  Instead get a/click and x/click.
+xrApplyHapticFeedback
+    main: map local to actual, downchain->ApplyHapticFeedback
+    overlay: map local to placeholder, RPC to Apply in main
+xrStopHapticFeedback
     main: map local to actual, downchain->ApplyHapticFeedback
     overlay: map local to placeholder, RPC to Apply in main
 xrEnumerateBoundSourcesForAction
@@ -312,7 +325,7 @@ xrGetCurrentInteractionProfile
     Overlay
         if actionsets not attached, XR_ERROR_ACTIONSETS_NOT_ATTACHED
         IPC to main to get path
-            return NULL_PATH if not yet actionsets attached
+            return NULL_PATH if actionsets not yet attached
             return profile string to overlay
         if it matches any provided to SuggestInteractionProfile on overlay
             return that one
