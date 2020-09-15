@@ -2,7 +2,7 @@ import sys
 
 well_known_strings = set()
 
-# As of 1.0.11
+# As of 1.0.11, these are the paths for input allowlist, from semantic_paths.adoc
 path_specs = """
 Path: pathname:/interaction_profiles/khr/simple_controller
 * pathname:/user/hand/left
@@ -165,6 +165,22 @@ for l in path_specs.splitlines():
             well_known_strings.add(component[:-2])
             for top_level in pathnames:
                 well_known_strings.add(top_level + component[:-2])
+            # don't add upper component for vector2f here
+            # that's added below, once, for just .x
+    elif l.startswith("* On pathname:"):
+        # This restricts following subpathnames to only this top_level path
+        top_level_restriction = l.split(":")[1].split(" ")[0]
+        # print("    top level path restriction %s" % top_level_restriction)
+    elif l.startswith("** subpathname:"):
+        # This subpath is only in the previously-given restricted top_level path
+        component = l.split(":")[1]
+        # print("        component %s" % component)
+        well_known_strings.add(component)
+        well_known_strings.add(top_level_restriction + component)
+        placeholder_profiles[profile][top_level_restriction].add(component)
+        if component.endswith("x") or component.endswith("y"):
+            well_known_strings.add(component[:-2])
+            well_known_strings.add(top_level_restriction + component[:-2])
             # don't add upper component for vector2f here
             # that's added below, once, for just .x
 
