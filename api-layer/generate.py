@@ -1044,7 +1044,7 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
             default: {
                 // I don't know what this is, drop it and keep going
                 OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
-                    OverlaysLayerNoObjectInfo, fmt("IPCCopyOut called to copy out to %p of unknown type %d - skipped.\\n", dstbase, dstbase->type).c_str());
+                    OverlaysLayerNoObjectInfo, fmt("IPCCopyOut called to copy out to %p of unknown type %d - skipped.", dstbase, dstbase->type).c_str());
 
                 dstbase = dstbase->next;
                 skipped = true;
@@ -1206,7 +1206,7 @@ struct {layer_name}{handle_type}HandleInfo
             valid = false;
         }} else {{
             OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
-                OverlaysLayerNoObjectInfo, "Unexpected Destroy() on already Destroyed {handle_type}HandleInfo.\\n");
+                OverlaysLayerNoObjectInfo, "Unexpected Destroy() on already Destroyed {handle_type}HandleInfo.");
         }}
     }}
     typedef std::shared_ptr<{layer_name}{handle_type}HandleInfo> Ptr;
@@ -1263,7 +1263,7 @@ void {layer_name}AddHandleInfoFor{handle_type}({handle_type} handle, {layer_name
     auto it = g{layer_name}{handle_type}ToHandleInfo.find(handle);
     if(it == g{layer_name}{handle_type}ToHandleInfo.end()) {{
         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
-            OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX\\n", handle).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX", handle).c_str());
         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
     }}
     return it->second;
@@ -1275,7 +1275,7 @@ void {layer_name}Remove{handle_type}FromHandleInfoMap({handle_type} handle)
     auto it = g{layer_name}{handle_type}ToHandleInfo.find(handle);
     if(it == g{layer_name}{handle_type}ToHandleInfo.end()) {{
         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
-            OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX\\n", handle).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX", handle).c_str());
         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
     }}
     g{layer_name}{handle_type}ToHandleInfo.erase(it);
@@ -2070,7 +2070,7 @@ void IPCCopyOut(RPCXr{command_name}* dst, const RPCXr{command_name}* src)
     bool success = gConnectionToMain->conn.WaitForMainResponseOrFail();
     if(!success) {{
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
-            OverlaysLayerNoObjectInfo, "couldn't RPC {command_name} to main process.\\n");
+            OverlaysLayerNoObjectInfo, "couldn't RPC {command_name} to main process.");
         return XR_ERROR_INITIALIZATION_FAILED;
     }}
 
@@ -2150,7 +2150,7 @@ source_text += f"""
             default: {{
                 // XXX use log message func
                 OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
-                    OverlaysLayerNoObjectInfo, fmt("Unknown request type %08X in RPC\\n", hdr->requestType).c_str());
+                    OverlaysLayerNoObjectInfo, fmt("Unknown request type %08X in RPC", hdr->requestType).c_str());
                 break;
             }}
         }}
@@ -2313,7 +2313,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
                 auto it = gActual{member["struct_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]}[i]);
                 if(it == gActual{member["struct_type"]}ToLocalHandle.end()) {{
                     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
-                        OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["struct_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
+                        OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["struct_type"]} handle %llX", {accessor_prefix}{member["name"]}).c_str());
                     throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
                 }}
                 (({member["struct_type"]}*){accessor_prefix}{member["name"]})[i] = gActual{member["struct_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]}[i]);
@@ -2346,7 +2346,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
                     auto it = gActual{member["pod_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]});
                     if(it == gActual{member["pod_type"]}ToLocalHandle.end()) {{
                         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
-                            OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["pod_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
+                            OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["pod_type"]} handle %llX", {accessor_prefix}{member["name"]}).c_str());
                         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
                     }}
                     {accessor_prefix}{member["name"]} = gActual{member["pod_type"]}ToLocalHandle.at({accessor_prefix}{member["name"]});
@@ -2680,7 +2680,7 @@ source_text += """
                 sprintf(structTypeName, "<type %08X>", p->type);
             }
             OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-                 nullptr, OverlaysLayerNoObjectInfo, fmt("Warning: Free called on %p of unknown type %d - will descend \\"next\\" but don't know any other pointers.\\n", p, structTypeName).c_str());
+                 nullptr, OverlaysLayerNoObjectInfo, fmt("Warning: Free called on %p of unknown type %d - will descend \\"next\\" but don't know any other pointers.", p, structTypeName).c_str());
             break;
         }
     }
@@ -2729,7 +2729,7 @@ source_text += """
                     sprintf(structTypeName, "<type %08X>", xrstruct->type);
                 }
                 OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-                    nullptr, OverlaysLayerNoObjectInfo, fmt("RestoreActualHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.\\n", xrstruct, structTypeName).c_str());
+                    nullptr, OverlaysLayerNoObjectInfo, fmt("RestoreActualHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.", xrstruct, structTypeName).c_str());
                 break;
             }
         }
@@ -2755,7 +2755,7 @@ source_text += """
                     sprintf(structTypeName, "<type %08X>", xrstruct->type);
                 }
                 OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT,
-                    nullptr, OverlaysLayerNoObjectInfo, fmt("SubstituteHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.\\n", xrstruct, structTypeName).c_str());
+                    nullptr, OverlaysLayerNoObjectInfo, fmt("SubstituteHandles called on %p of unhandled type %s. Handles will not be substituted. Behavior will be undefined; expect a validation error.", xrstruct, structTypeName).c_str());
                 break;
             }
         }
