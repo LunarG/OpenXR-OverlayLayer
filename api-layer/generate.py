@@ -1044,7 +1044,7 @@ void IPCCopyOut(XrBaseOutStructure* dstbase, const XrBaseOutStructure* srcbase)
             default: {
                 // I don't know what this is, drop it and keep going
                 OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
-                    OverlaysLayerNoObjectInfo, fmt("WARNING: IPCCopyOut called to copy out to %p of unknown type %d - skipped.\\n", dstbase, dstbase->type).c_str());
+                    OverlaysLayerNoObjectInfo, fmt("IPCCopyOut called to copy out to %p of unknown type %d - skipped.\\n", dstbase, dstbase->type).c_str());
 
                 dstbase = dstbase->next;
                 skipped = true;
@@ -1206,7 +1206,7 @@ struct {layer_name}{handle_type}HandleInfo
             valid = false;
         }} else {{
             OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "unknown",
-                OverlaysLayerNoObjectInfo, "WARNING: unexpected Destroy() on already Destroyed {handle_type}HandleInfo.\\n");
+                OverlaysLayerNoObjectInfo, "Unexpected Destroy() on already Destroyed {handle_type}HandleInfo.\\n");
         }}
     }}
     typedef std::shared_ptr<{layer_name}{handle_type}HandleInfo> Ptr;
@@ -1262,7 +1262,7 @@ void {layer_name}AddHandleInfoFor{handle_type}({handle_type} handle, {layer_name
     std::unique_lock<std::recursive_mutex> mlock(g{layer_name}{handle_type}ToHandleInfoMutex);
     auto it = g{layer_name}{handle_type}ToHandleInfo.find(handle);
     if(it == g{layer_name}{handle_type}ToHandleInfo.end()) {{
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
             OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX\\n", handle).c_str());
         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
     }}
@@ -1274,7 +1274,7 @@ void {layer_name}Remove{handle_type}FromHandleInfoMap({handle_type} handle)
     std::unique_lock<std::recursive_mutex> mlock(g{layer_name}{handle_type}ToHandleInfoMutex);
     auto it = g{layer_name}{handle_type}ToHandleInfo.find(handle);
     if(it == g{layer_name}{handle_type}ToHandleInfo.end()) {{
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
             OverlaysLayerNoObjectInfo, fmt("Could not look up info from {handle_type} handle %llX\\n", handle).c_str());
         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
     }}
@@ -2069,8 +2069,8 @@ void IPCCopyOut(RPCXr{command_name}* dst, const RPCXr{command_name}* src)
     // Wait for Main to report to us it has done the work
     bool success = gConnectionToMain->conn.WaitForMainResponseOrFail();
     if(!success) {{
-        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "{command_name}",
-            OverlaysLayerNoObjectInfo, "FATAL: couldn't RPC {command_name} to main process.\\n");
+        OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
+            OverlaysLayerNoObjectInfo, "couldn't RPC {command_name} to main process.\\n");
         return XR_ERROR_INITIALIZATION_FAILED;
     }}
 
@@ -2149,7 +2149,7 @@ source_text += f"""
 
             default: {{
                 // XXX use log message func
-                OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+                OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
                     OverlaysLayerNoObjectInfo, fmt("Unknown request type %08X in RPC\\n", hdr->requestType).c_str());
                 break;
             }}
@@ -2164,7 +2164,7 @@ source_text += f"""
 
     }} catch (const std::bad_alloc& e) {{
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr, OverlaysLayerNoObjectInfo, e.what());
         hdr->result = XR_ERROR_OUT_OF_MEMORY;
         return true;
 
@@ -2312,7 +2312,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
                 std::unique_lock<std::recursive_mutex> lock(gActual{member["struct_type"]}ToLocalHandleMutex);
                 auto it = gActual{member["struct_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]}[i]);
                 if(it == gActual{member["struct_type"]}ToLocalHandle.end()) {{
-                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
                         OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["struct_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
                     throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
                 }}
@@ -2345,7 +2345,7 @@ def get_code_to_substitute_handle(member, instance_string, accessor_prefix):
                     std::unique_lock<std::recursive_mutex> lock(gActual{member["pod_type"]}ToLocalHandleMutex);
                     auto it = gActual{member["pod_type"]}ToLocalHandle.find({accessor_prefix}{member["name"]});
                     if(it == gActual{member["pod_type"]}ToLocalHandle.end()) {{
-                        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "",
+                        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, nullptr,
                             OverlaysLayerNoObjectInfo, fmt("Could not look up local handle for {member["pod_type"]} handle %llX\\n", {accessor_prefix}{member["name"]}).c_str());
                         throw OverlaysLayerXrException(XR_ERROR_HANDLE_INVALID);
                     }}
@@ -2977,7 +2977,7 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
 
     }} catch (const std::bad_alloc& e) {{
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "{command_name}", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }}

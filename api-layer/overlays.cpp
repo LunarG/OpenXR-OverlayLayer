@@ -648,7 +648,7 @@ void LogWindowsLastError(const char *xrfunc, const char* what, const char *file,
     LPVOID messageBuf;
     FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, xrfunc,
-        OverlaysLayerNoObjectInfo, fmt("FATAL: %s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf).c_str());
+        OverlaysLayerNoObjectInfo, fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, lastError, messageBuf).c_str());
     LocalFree(messageBuf);
 }
 
@@ -657,7 +657,7 @@ void LogWindowsError(HRESULT result, const char *xrfunc, const char* what, const
     LPVOID messageBuf;
     FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, result, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
     OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, xrfunc,
-        OverlaysLayerNoObjectInfo, fmt("FATAL: %s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf).c_str());
+        OverlaysLayerNoObjectInfo, fmt("%s at %s:%d failed with %d (%s)\n", what, file, line, result, messageBuf).c_str());
     LocalFree(messageBuf);
 }
 
@@ -826,14 +826,14 @@ ID3D11Texture2D* SwapchainCachedData::getSharedTexture(ID3D11Device *d3d11Device
     HRESULT result;
 
     if((result = d3d11Device->QueryInterface(__uuidof (ID3D11Device1), (void **)&device1)) != S_OK) {
-        LogWindowsError(result, "xrCreateSwapchain", "QueryInterface", __FILE__, __LINE__);
+        LogWindowsError(result, nullptr, "QueryInterface", __FILE__, __LINE__);
         return nullptr;
     }
 
     auto it = handleTextureMap.find(sourceHandle);
     if(it == handleTextureMap.end()) {
         if((result = device1->OpenSharedResource1(sourceHandle, __uuidof(ID3D11Texture2D), (LPVOID*) &sharedTexture)) != S_OK) {
-            LogWindowsError(result, "xrCreateSwapchain", "OpenSharedResource1", __FILE__, __LINE__);
+            LogWindowsError(result, nullptr, "OpenSharedResource1", __FILE__, __LINE__);
             return nullptr;
         }
         handleTextureMap.insert({sourceHandle, sharedTexture});
@@ -1024,8 +1024,8 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
             XrPath path;
             XrResult result2 = instanceInfo->downchain->StringToPath(*instance, w.second, &path);
             if(result2 != XR_SUCCESS) {
-                OverlaysLayerLogMessage(*instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-                    OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create path from.\n", w.second).c_str());
+                OverlaysLayerLogMessage(*instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateInstance", 
+                    OverlaysLayerNoObjectInfo, fmt("Could not create path from \"%s\".\n", w.second).c_str());
                 return XR_ERROR_INITIALIZATION_FAILED;
             }
             OverlaysLayerWellKnownStringToPath.insert({w.first, path});
@@ -1073,7 +1073,7 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the negotiation mutex: CreateMutex error was %d (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not initialize the negotiation mutex: CreateMutex error was %d (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false;
     }
@@ -1091,7 +1091,7 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the negotiation shmem: CreateFileMappingA error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not initialize the negotiation shmem: CreateFileMappingA error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false; 
     }
@@ -1103,7 +1103,7 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not get the negotiation shmem: MapViewOfFile error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not get the negotiation shmem: MapViewOfFile error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false; 
     }
@@ -1114,7 +1114,7 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create negotiation overlay wait sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not create negotiation overlay wait sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false;
     }
@@ -1125,7 +1125,7 @@ bool OpenNegotiationChannels(XrInstance instance, NegotiationChannels &ch)
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create negotiation main wait sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not create negotiation main wait sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false;
     }
@@ -1146,7 +1146,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "no function", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the RPC mutex: CreateMutex error was %d (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not initialize the RPC mutex: CreateMutex error was %d (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false;
     }
@@ -1164,7 +1164,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "no function", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the RPC shmem: CreateFileMappingA error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not initialize the RPC shmem: CreateFileMappingA error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false; 
     }
@@ -1176,7 +1176,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not get the RPC shmem: MapViewOfFile error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not get the RPC shmem: MapViewOfFile error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false; 
     }
@@ -1187,7 +1187,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create RPC overlay request sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not create RPC overlay request sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false;
     }
@@ -1198,7 +1198,7 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
         LPVOID messageBuf;
         FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create RPC main response sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not create RPC main response sema: CreateSemaphore error was %08X (%s)\n", lastError, messageBuf).c_str());
         LocalFree(messageBuf);
         return false;
     }
@@ -1254,7 +1254,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
 
     if(createInfo->createFlags != sessionInfo->createInfo->createFlags) {
         OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for overlay session had different flags (%08X) than those with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", createInfo->createFlags, sessionInfo->createInfo->createFlags).c_str());
+            OverlaysLayerNoObjectInfo, fmt("xrCreateSession for overlay session had different flags (%08X) than those with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", createInfo->createFlags, sessionInfo->createInfo->createFlags).c_str());
     }
 
     // Verify that any structures match that are chained off createInfo
@@ -1268,13 +1268,13 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
                 if(!other) {
                     // XXX send directly to channels somehow
                     OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-                        OverlaysLayerNoObjectInfo, "FATAL: xrCreateSession for overlay session specified a XrGraphicsBindingD3D11KHR but main session did not.\n");
+                        OverlaysLayerNoObjectInfo, "xrCreateSession for overlay session specified a XrGraphicsBindingD3D11KHR but main session did not.\n");
                     return XR_ERROR_INITIALIZATION_FAILED;
                 }
 
                 if(other->device != d3dbinding->device) {
                     OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-                        OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for overlay session used different D3D11 Device (%08X) than that with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", d3dbinding->device, other->device).c_str());
+                        OverlaysLayerNoObjectInfo, fmt("xrCreateSession for overlay session used different D3D11 Device (%08X) than that with which main session was created (%08X). Effect is unknown, proceeding anyway.\n", d3dbinding->device, other->device).c_str());
                 }
                 break;
             }
@@ -1293,7 +1293,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
                 }
 
                 OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-                    OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateSession for an overlay session used a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
+                    OverlaysLayerNoObjectInfo, fmt("xrCreateSession for an overlay session used a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
                 return XR_ERROR_INITIALIZATION_FAILED;
                 break;
             }
@@ -1312,7 +1312,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
             }
 
             OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-                OverlaysLayerNoObjectInfo, fmt("WARNING: xrCreateSession for the main session used a struct (%s) which the overlay session did not. Effect is unknown, proceeding anyway.\n", structureTypeName).c_str());
+                OverlaysLayerNoObjectInfo, fmt("xrCreateSession for the main session used a struct (%s) which the overlay session did not. Effect is unknown, proceeding anyway.\n", structureTypeName).c_str());
         }
     }
     
@@ -1327,7 +1327,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
     }
     if(mainSessionFormFactor != formFactor) {
         OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateSession for the overlay session used an XrFormFactor (%s) which the main session did not.\n", formFactor).c_str());
+            OverlaysLayerNoObjectInfo, fmt("xrCreateSession for the overlay session used an XrFormFactor (%s) which the main session did not.\n", formFactor).c_str());
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -1339,7 +1339,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
             bool alsoInMain = FindExtensionInList(instanceCreateInfo->enabledExtensionNames[i], mainInstanceCreateInfo->enabledExtensionCount, mainInstanceCreateInfo->enabledExtensionNames);
             if(!alsoInMain) {
                 OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-                    OverlaysLayerNoObjectInfo, fmt("FATAL: xrCreateInstance for the parent of the overlay session specified an extension (%s) which the main session did not.\n", instanceCreateInfo->enabledExtensionNames[i]).c_str());
+                    OverlaysLayerNoObjectInfo, fmt("xrCreateInstance for the parent of the overlay session specified an extension (%s) which the main session did not.\n", instanceCreateInfo->enabledExtensionNames[i]).c_str());
                 didntFindExtension = true;
             }
         }
@@ -1452,8 +1452,8 @@ void MainNegotiateThreadBody()
             DWORD lastError = GetLastError();
             LPVOID messageBuf;
             FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR) &messageBuf, 0, nullptr);
-            OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "no function", 
-                OverlaysLayerNoObjectInfo, fmt("FATAL: Could not wait on negotiation sema sema: WaitForMultipleObjects error was %08X (%s)\n", lastError, messageBuf).c_str());
+            OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
+                OverlaysLayerNoObjectInfo, fmt("Could not wait on negotiation sema sema: WaitForMultipleObjects error was %08X (%s)\n", lastError, messageBuf).c_str());
             // XXX need way to signal main process that thread errored unexpectedly
             LocalFree(messageBuf);
             return;
@@ -1461,8 +1461,8 @@ void MainNegotiateThreadBody()
 
         if(gNegotiationChannels.params->status != NegotiationParams::SUCCESS) {
 
-            OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
-                OverlaysLayerNoObjectInfo, fmt("WARNING: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u), connection rejected.\n", gNegotiationChannels.params->overlayLayerBinaryVersion, gNegotiationChannels.params->mainLayerBinaryVersion).c_str());
+            OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+                OverlaysLayerNoObjectInfo, fmt("The Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u), connection rejected.\n", gNegotiationChannels.params->overlayLayerBinaryVersion, gNegotiationChannels.params->mainLayerBinaryVersion).c_str());
 
         } else {
 
@@ -1471,8 +1471,8 @@ void MainNegotiateThreadBody()
 
             if(!OpenRPCChannels(gNegotiationChannels.instance, overlayProcessId, overlayProcessId, channels)) {
 
-                OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
-                    OverlaysLayerNoObjectInfo, fmt("WARNING: couldn't open RPC channels to overlay app, connection rejected.\n").c_str());
+                OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+                    OverlaysLayerNoObjectInfo, fmt("Couldn't open RPC channels to overlay app, connection rejected.\n").c_str());
 
             } else {
                 ConnectionToOverlay::Ptr connection = std::make_shared<ConnectionToOverlay>(channels);
@@ -1500,14 +1500,14 @@ bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSess
     gMainSessionContext = std::make_shared<MainSessionContext>(hostingSession);
     if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create overlays negotiation channels\n").c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not create overlays negotiation channels\n").c_str());
         return false;
     }
 
     DWORD waitresult = WaitForSingleObject(gMainMutexHandle, NegotiationChannels::mutexWaitMillis);
     if (waitresult == WAIT_TIMEOUT) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not take main mutex sema; is there another main app running?\n").c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not take main mutex sema; is there another main app running?\n").c_str());
         return false;
     }
 
@@ -1557,7 +1557,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     XrResult result2 = instanceInfo->downchain->CreateActionSet(instance, &createActionSetInfo, &info->placeholderActionSet);
     if(result2 != XR_SUCCESS) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create session placeholder ActionSet.\n").c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not create session placeholder ActionSet.\n").c_str());
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -1578,7 +1578,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         XrResult result2 = instanceInfo->downchain->CreateAction(info->placeholderActionSet, &createActionInfo, &action);
         if(result2 != XR_SUCCESS) {
             OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-                OverlaysLayerNoObjectInfo, fmt("FATAL: Could not create session placeholder action for %s.\n", id.name).c_str());
+                OverlaysLayerNoObjectInfo, fmt("Could not create session placeholder action for %s.\n", id.name).c_str());
             return XR_ERROR_INITIALIZATION_FAILED;
         }
 
@@ -1599,7 +1599,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
 
     if(!result) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: Could not initialize the Main App listener thread.\n").c_str());
+            OverlaysLayerNoObjectInfo, fmt("Could not initialize the Main App listener thread.\n").c_str());
         return XR_ERROR_INITIALIZATION_FAILED;
     }
     return xrresult;
@@ -1612,7 +1612,7 @@ bool ConnectToMain(XrInstance instance)
     // check to make sure not already main session process
     if(gMainSessionInstance != XR_NULL_HANDLE) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, "FATAL: attempt to make an overlay session while also having a main session\n");
+            OverlaysLayerNoObjectInfo, "attempt to make an overlay session while also having a main session\n");
         return false;
     }
 
@@ -1620,7 +1620,7 @@ bool ConnectToMain(XrInstance instance)
 
     if(!OpenNegotiationChannels(instance, gNegotiationChannels)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, "FATAL: could not open negotiation channels\n");
+            OverlaysLayerNoObjectInfo, "could not open negotiation channels\n");
         return false;
     }
 
@@ -1635,7 +1635,7 @@ bool ConnectToMain(XrInstance instance)
 
     if(result == WAIT_TIMEOUT) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app could not connect to the main app after %d tries.\n", attempts).c_str());
+            OverlaysLayerNoObjectInfo, fmt("the Overlay API Layer in the overlay app could not connect to the main app after %d tries.\n", attempts).c_str());
         return false;
     }
 
@@ -1646,7 +1646,7 @@ bool ConnectToMain(XrInstance instance)
         gNegotiationChannels.params->status = NegotiationParams::DIFFERENT_BINARY_VERSION;
         ReleaseSemaphore(gNegotiationChannels.mainWaitSema, 1, nullptr);
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", 
-            OverlaysLayerNoObjectInfo, fmt("FATAL: the Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u).\n").c_str());
+            OverlaysLayerNoObjectInfo, fmt("The Overlay API Layer in the overlay app has a different version (%u) than in the main app (%u).\n").c_str());
         return false;
     }
 
@@ -1658,8 +1658,8 @@ bool ConnectToMain(XrInstance instance)
     ReleaseSemaphore(gNegotiationChannels.mainWaitSema, 1, nullptr);
 
     if(!OpenRPCChannels(gNegotiationChannels.instance, gMainProcessId, GetCurrentProcessId(), gConnectionToMain->conn)) {
-        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "no function",
-            OverlaysLayerNoObjectInfo, "WARNING: couldn't open RPC channels to main app, connection failed.\n");
+        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
+            OverlaysLayerNoObjectInfo, "Couldn't open RPC channels to main app, connection failed.\n");
         return false;
     }
 
@@ -1678,8 +1678,8 @@ XrResult OverlaysLayerCreateSessionOverlay(
 
     // Only on Overlay XrSession Creation, connect to the main app.
     if(!ConnectToMain(instance)) {
-        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "XrCreateSession",
-            OverlaysLayerNoObjectInfo, "WARNING: couldn't connect to main app.\n");
+        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "XrCreateSession",
+            OverlaysLayerNoObjectInfo, "Couldn't connect to main app.\n");
         return XR_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -1789,7 +1789,7 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
     }
 }
@@ -1814,7 +1814,7 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
     result = sessionInfo->downchain->EnumerateSwapchainImages(actualHandle, 0, &count, nullptr);
     if(!XR_SUCCEEDED(result)) {
         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
-            OverlaysLayerNoObjectInfo, "FATAL: Couldn't call EnumerateSwapchainImages to get swapchain image count.\n");
+            OverlaysLayerNoObjectInfo, "Couldn't call EnumerateSwapchainImages to get swapchain image count.\n");
         return result;
     }
 
@@ -1827,7 +1827,7 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
     result = sessionInfo->downchain->EnumerateSwapchainImages(actualHandle, count, &count, reinterpret_cast<XrSwapchainImageBaseHeader*>(swapchainImages.data()));
     if(!XR_SUCCEEDED(result)) {
         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
-            OverlaysLayerNoObjectInfo, "FATAL: Couldn't call EnumerateSwapchainImages to get swapchain images.\n");
+            OverlaysLayerNoObjectInfo, "Couldn't call EnumerateSwapchainImages to get swapchain images.\n");
         return result;
     }
 
@@ -1879,7 +1879,7 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
 
     if(!overlaySwapchain->CreateTextures(instance, sessionInfo->d3d11Device, gConnectionToMain->conn.otherProcessId)) {
         OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSwapchain",
-            OverlaysLayerNoObjectInfo, "FATAL: couldn't create D3D local resources for swapchain images\\n");
+            OverlaysLayerNoObjectInfo, "Couldn't create D3D local resources for swapchain images\\n");
         // XXX This leaks the session in main process if the Session is not closed.
         return XR_ERROR_INITIALIZATION_FAILED;
     }
@@ -1908,11 +1908,7 @@ XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain s
 
     OverlaysLayerRemoveXrSwapchainHandleInfo(swapchain);
 
-    if(!XR_SUCCEEDED(result)) {
-        return result;
-    }
-
-	// XXX anything here?
+    // XXX anything here?
 
     return result;
 }
@@ -2128,7 +2124,7 @@ XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time,
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -2271,7 +2267,7 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
             sprintf(structTypeName, "<type %08X>", images[0].type);
         }
         OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEnumerateSwapchainImages",
-            OverlaysLayerNoObjectInfo, fmt("FATAL: images structure type is %s and not XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR.\n", structTypeName).c_str());
+            OverlaysLayerNoObjectInfo, fmt("images structure type is %s and not XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR.\n", structTypeName).c_str());
         return XR_ERROR_VALIDATION_FAILURE;
     }
 
@@ -2371,7 +2367,7 @@ void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, Ma
             lost->lostEventCount = 1;
             overlay->eventsSaved.push(newEvent);
             OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
-                OverlaysLayerNoObjectInfo, "WARNING: Enqueued a lost event.\n");
+                OverlaysLayerNoObjectInfo, "Enqueued a lost event.\n");
 
         } else {
 
@@ -2452,7 +2448,7 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
                     }
 
                     OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrPollEvent",
-                        OverlaysLayerNoObjectInfo, fmt("WARNING: xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
+                        OverlaysLayerNoObjectInfo, fmt("xrPollEvent filled a struct (%s) which the Overlay API Layer does not know how to check.\n", structureTypeName).c_str());
                 }
 
             } else {
@@ -2483,7 +2479,7 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrPollEvent", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
     }
 }
@@ -3030,7 +3026,7 @@ XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEnd
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEndFrame", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
     }
 }
@@ -3068,7 +3064,7 @@ XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCrea
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateActionSet", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -3115,7 +3111,7 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateAction", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -3135,10 +3131,9 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
         for(auto it: instanceInfo->profilesToBindings[suggestedBindings->interactionProfile]) {
             auto found = OverlaysLayerPathToWellKnownString.find(it.binding);
             if(found == OverlaysLayerPathToWellKnownString.end()) {
-                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
+                OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrSuggestInteractionProfileBindings",
                     OverlaysLayerNoObjectInfo,
-                    fmt("Application suggested binding \"%s\", which this API layer does not know", PathToString(instance, it.binding).c_str()).c_str());
-                DebugBreak();
+                    fmt("Application suggested binding \"%s\", which this API layer does not know; binding will be ignored", PathToString(instance, it.binding).c_str()).c_str());
             }
         }
 
@@ -3150,7 +3145,7 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSuggestInteractionProfileBindings", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -3250,7 +3245,7 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateActionSpace", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -3345,7 +3340,7 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
             if(!found) {
 
                 OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrAttachSessionActionSets",
-                    OverlaysLayerNoObjectInfo, "Couldn't find a suggested binding matching the subaction with which an XrSpace was created");
+                    OverlaysLayerNoObjectInfo, "Couldn't find a suggested binding matching the subaction with which an XrSpace was created; XrSpace will not be locatable");
 
             } else {
 
@@ -3355,6 +3350,7 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
                 if(result != XR_SUCCESS) {
                     OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
                         OverlaysLayerNoObjectInfo, "Couldn't create XrSpace for Action from main placeholders");
+                    return XR_ERROR_RUNTIME_FAILURE;
                 }
             }
         }
@@ -3505,7 +3501,7 @@ XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSession
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -3536,7 +3532,7 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
     }
 
     if(result != XR_SUCCESS) {
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't sync actions in bulk update");
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions", OverlaysLayerNoObjectInfo, "Couldn't sync actions in bulk update");
         return result;
     }
 
@@ -3551,43 +3547,8 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                 state->next = nullptr;
                 result = sessionInfo->downchain->GetActionStateBoolean(sessionInfo->actualHandle, &get, state);
                 if(result != XR_SUCCESS) {
-                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
-                }
-                if(PrintDebugInfo) {
-                    std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
-                    auto it = gActualXrActionToLocalHandle.find(whatToGet.action);
-                    if(it != gActualXrActionToLocalHandle.end()) {
-                        // application XrAction
-                        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(it->second);
-                        if(false) OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                            OverlaysLayerNoObjectInfo,
-                            fmt("Got Boolean from \"%s\" for application action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), actionInfo->createInfo->actionName, state->currentState ? "on" : " off").c_str());
-                    } else {
-                        // placeholder XrAction
-                        XrPath binding = sessionInfo->bindingsByAction[whatToGet.action];
-                        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                            OverlaysLayerNoObjectInfo,
-                            fmt("Got Boolean from \"%s\" for placeholder action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), PathToString(sessionInfo->parentInstance, binding).c_str(), state->currentState ? "on" : " off").c_str());
-                        XrBoundSourcesForActionEnumerateInfo enumerateInfo = {XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO, nullptr, whatToGet.action};
-                        uint32_t capacity;
-						result = sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, 0, &capacity, nullptr);
-						if(result != XR_SUCCESS) DebugBreak();
-						
-                        std::vector<XrPath> sources(capacity);
-						sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, capacity, &capacity, sources.data());
-                        if(capacity == 0) {
-                            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                                OverlaysLayerNoObjectInfo,
-                                fmt("No bound sources for that action...").c_str());
-                        } else {
-                            for(uint32_t i = 0; i< capacity; i++) {
-                                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                                    OverlaysLayerNoObjectInfo,
-                                    fmt("That action bound to \"%s\"", PathToString(sessionInfo->parentInstance, sources[i]).c_str()).c_str());
-                            }
-                        }
-                    }
                 }
                 break;
             }
@@ -3597,25 +3558,8 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                 state->next = nullptr;
                 result = sessionInfo->downchain->GetActionStateFloat(sessionInfo->actualHandle, &get, state);
                 if(result != XR_SUCCESS) {
-                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
-                }
-                if(PrintDebugInfo) {
-                    std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
-                    auto it = gActualXrActionToLocalHandle.find(whatToGet.action);
-                    if(it != gActualXrActionToLocalHandle.end()) {
-                        // application XrAction
-                        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(it->second);
-                        if(false) OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                            OverlaysLayerNoObjectInfo,
-                            fmt("Got Float from \"%s\" for application action \"%s\": %d", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), actionInfo->createInfo->actionName, state->currentState).c_str());
-                    } else {
-                        // placeholder XrAction
-                        XrPath binding = sessionInfo->bindingsByAction[whatToGet.action];
-                        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                            OverlaysLayerNoObjectInfo,
-                            fmt("Got Float from \"%s\" for placeholder action \"%s\": %f", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), PathToString(sessionInfo->parentInstance, binding).c_str(), state->currentState).c_str());
-                    }
                 }
                 break;
             }
@@ -3625,7 +3569,7 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                 state->next = nullptr;
                 result = sessionInfo->downchain->GetActionStateVector2f(sessionInfo->actualHandle, &get, state);
                 if(result != XR_SUCCESS) {
-                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
                 }
                 break;
@@ -3636,43 +3580,8 @@ XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* sync
                 state->next = nullptr;
                 result = sessionInfo->downchain->GetActionStatePose(sessionInfo->actualHandle, &get, state);
                 if(result != XR_SUCCESS) {
-                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
+                    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions", OverlaysLayerNoObjectInfo, "Couldn't get state in bulk update");
                     return result;
-                }
-                if(PrintDebugInfo) {
-                    std::unique_lock<std::recursive_mutex> lock(gActualXrSessionToLocalHandleMutex);
-                    auto it = gActualXrActionToLocalHandle.find(whatToGet.action);
-                    if(it != gActualXrActionToLocalHandle.end()) {
-                        // application XrAction
-                        auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(it->second);
-                        if(false) OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                            OverlaysLayerNoObjectInfo,
-                            fmt("Got Pose from \"%s\" for application action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), actionInfo->createInfo->actionName, state->isActive ? "active" : "inactive").c_str());
-                    } else {
-                        // placeholder XrAction
-                        XrPath binding = sessionInfo->bindingsByAction[whatToGet.action];
-                        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-                            OverlaysLayerNoObjectInfo,
-                            fmt("Got Pose from \"%s\" for placeholder action \"%s\": %s", PathToString(sessionInfo->parentInstance, whatToGet.subactionPath).c_str(), PathToString(sessionInfo->parentInstance, binding).c_str(), state->isActive ? "active" : "inactive").c_str());
-                        XrBoundSourcesForActionEnumerateInfo enumerateInfo = {XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO, nullptr, whatToGet.action};
-                        uint32_t capacity;
-						result = sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, 0, &capacity, nullptr);
-						if(result != XR_SUCCESS) DebugBreak();
-						
-                        std::vector<XrPath> sources(capacity);
-						sessionInfo->downchain->EnumerateBoundSourcesForAction(sessionInfo->actualHandle, &enumerateInfo, capacity, &capacity, sources.data());
-                        if(capacity == 0) {
-                            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
-                                OverlaysLayerNoObjectInfo,
-                                fmt("No bound sources for that action...").c_str());
-                        } else {
-                            for(uint32_t i = 0; i< capacity; i++) {
-                                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
-                                    OverlaysLayerNoObjectInfo,
-                                    fmt("That action bound to \"%s\"", PathToString(sessionInfo->parentInstance, sources[i]).c_str()).c_str());
-                            }
-                        }
-                    }
                 }
                 break;
             }
@@ -3708,7 +3617,7 @@ XrResult OverlaysLayerGetCurrentInteractionProfile(XrSession session, XrPath top
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrGetCurrentInteractionProfile", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -3735,11 +3644,6 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::P
         XrActionType type = it->second.second;
         XrPath subactionPath = OverlaysLayerBindingToSubaction.at(bindingPath);
         actionsToGet.push_back({ action, type, subactionPath });
-    }
-    if(PrintDebugInfo) {
-        OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
-            OverlaysLayerNoObjectInfo,
-            fmt("I think I'm getting %d placeholder Action states", actionsToGet.size()).c_str());
     }
 
     result = SyncActionsAndGetState(session, &syncInfo, actionsToGet, states);
@@ -3854,7 +3758,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
                     WellKnownStringIndex index = found->second;
                     bindingStrings.push_back(index);
                     if(PrintDebugInfo) {
-                        OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrAttachSessionActionSets",
+                        OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrSyncActions",
                             OverlaysLayerNoObjectInfo,
                             fmt("I think I'm probing placeholder \"%s\" for an action", OverlaysLayerWellKnownStrings.at(index)).c_str());
                     }
@@ -4060,7 +3964,7 @@ XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* sy
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -4085,7 +3989,7 @@ XrResult OverlaysLayerGetActionStateBoolean(XrSession session, const XrActionSta
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrGetActionStateBoolean", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -4110,7 +4014,7 @@ XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionState
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrGetActionStateFloat", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -4135,7 +4039,7 @@ XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionSt
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrGetActionStateVector2f", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -4160,7 +4064,7 @@ XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateG
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrGetActionStatePose", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -4201,7 +4105,7 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
         bool isProxied = sessionInfo->isProxied;
         XrResult result;
         if(isProxied) {
-            result = OverlaysLayerApplyHapticFeedbackOverlay(sessionInfo->parentInstance, session, hapticActionInfo, hapticFeedback);
+            result = XR_SUCCESS; // OverlaysLayerApplyHapticFeedbackOverlay(sessionInfo->parentInstance, session, hapticActionInfo, hapticFeedback);
         } else {
             result = OverlaysLayerApplyHapticFeedbackMain(sessionInfo->parentInstance, session, hapticActionInfo, hapticFeedback);
         }
@@ -4214,7 +4118,7 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrApplyHapticFeedback", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
@@ -4250,7 +4154,7 @@ XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticAction
         bool isProxied = sessionInfo->isProxied;
         XrResult result;
         if(isProxied) {
-            result = OverlaysLayerStopHapticFeedbackOverlay(sessionInfo->parentInstance, session, hapticActionInfo);
+            result = XR_SUCCESS; // OverlaysLayerStopHapticFeedbackOverlay(sessionInfo->parentInstance, session, hapticActionInfo);
         } else {
             result = OverlaysLayerStopHapticFeedbackMain(sessionInfo->parentInstance, session, hapticActionInfo);
         }
@@ -4263,7 +4167,7 @@ XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticAction
 
     } catch (const std::bad_alloc& e) {
 
-        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "", OverlaysLayerNoObjectInfo, e.what());
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrStopHapticFeedback", OverlaysLayerNoObjectInfo, e.what());
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
