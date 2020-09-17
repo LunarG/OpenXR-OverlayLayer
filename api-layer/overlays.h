@@ -261,8 +261,8 @@ struct NegotiationChannels
     constexpr static char *mutexName = "LUNARG_XR_EXTX_overlay_negotiation_mutex";
     constexpr static uint32_t shmemSize = sizeof(NegotiationParams);
     constexpr static DWORD mutexWaitMillis = 500;
-    constexpr static DWORD negotiationWaitMillis = 500;
-    constexpr static int NegotiationChannels::maxAttempts = 10;
+    constexpr static DWORD negotiationWaitMillis = 2000;
+    constexpr static int NegotiationChannels::maxAttempts = 30;
 
 };
 
@@ -592,6 +592,9 @@ struct ConnectionToMain
     RPCChannels conn;
     typedef std::shared_ptr<ConnectionToMain> Ptr;
 };
+
+extern std::recursive_mutex gSynchronizeEveryProcMutex;
+extern bool gSynchronizeEveryProc;
 
 extern std::recursive_mutex gMainSessionContextMutex;
 extern MainSessionContext::Ptr gMainSessionContext;
@@ -1014,5 +1017,7 @@ XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticAction
 XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback);
 
 XrResult OverlaysLayerGetCurrentInteractionProfile(XrSession session, XrPath topLevelUserPath, XrInteractionProfileState* interactionProfile);
+
+XrResult OverlaysLayerLocateViews(XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views);
 
 #endif /* _OVERLAYS_H_ */

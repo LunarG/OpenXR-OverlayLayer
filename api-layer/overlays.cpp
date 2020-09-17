@@ -455,6 +455,18 @@ std::vector<PlaceholderActionId> PlaceholderActionIds =
 
 };
 
+// Just in case everything is terrible and every proc has to be synchronized
+std::recursive_mutex gSynchronizeEveryProcMutex;
+bool gSynchronizeEveryProc = true; // XXX Currently true because of both layer view loss and ReleaseSwapchainImage VALIDATION_FAILURE
+
+// LATER understand which lock isn't doing its job and take this out
+// But I'm also using to enforce synchronization between LocateSpace and EndFrame, which seem to conflict
+std::recursive_mutex EndFrameMutex;
+
+// On OVR I get regular deadlocks in one thread in runtime ReleaseSwapchainImage and in another thread in ApplyHapticFeedback.
+std::recursive_mutex HapticQuirkMutex;
+
+
 const std::set<HandleTypePair> OverlaysLayerNoObjectInfo = {};
 
 uint64_t GetNextLocalHandle()
@@ -961,6 +973,15 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     PFN_xrGetInstanceProcAddr next_get_instance_proc_addr = nullptr;
     PFN_xrCreateApiLayerInstance next_create_api_layer_instance = nullptr;
     XrApiLayerCreateInfo new_api_layer_info = {};
+
+    const char *sync_everything_env = getenv("OVERLAYS_API_LAYER_SYNCHRONIZE_EVERYTHING");
+    if(sync_everything_env) {
+        std::string sync_everything = sync_everything_env;
+        std::set<std::string> truths {"true", "TRUE", "True", "1", "yes"};
+        gSynchronizeEveryProc = (truths.count(sync_everything) > 0);
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, "xrCreateInstance", 
+            OverlaysLayerNoObjectInfo, fmt("gSynchronizeEveryProc set to %s", gSynchronizeEveryProc ? "true" : "false").c_str());
+    }
 
     // Validate the API layer info and next API layer info structures before we try to use them
     if (!apiLayerInfo ||
@@ -1522,6 +1543,8 @@ bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSess
 
 XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session, ID3D11Device *d3d11Device)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
     XrResult xrresult = instanceInfo->downchain->CreateSession(instance, createInfo, session);
@@ -1796,6 +1819,8 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
 
 XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
@@ -1916,6 +1941,8 @@ XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain s
 
 XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
@@ -1973,6 +2000,8 @@ XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession
 
 XrResult OverlaysLayerEnumerateReferenceSpacesMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t spaceCapacityInput, uint32_t* spaceCountOutput, XrReferenceSpaceType* spaces)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     return sessionInfo->downchain->EnumerateReferenceSpaces(sessionInfo->actualHandle, spaceCapacityInput, spaceCountOutput, spaces);
 }
@@ -1986,6 +2015,8 @@ XrResult OverlaysLayerEnumerateReferenceSpacesOverlay(XrInstance instance, XrSes
 
 XrResult OverlaysLayerGetReferenceSpaceBoundsRectMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, XrReferenceSpaceType referenceSpaceType, XrExtent2Df* bounds)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     return sessionInfo->downchain->GetReferenceSpaceBoundsRect(sessionInfo->actualHandle, referenceSpaceType, bounds);
 }
@@ -1999,6 +2030,8 @@ XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, Xr
 
 XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
@@ -2007,19 +2040,22 @@ XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connecti
 
     if(spaceInfo->spaceType == SPACE_ACTION) {
 
-        auto syncActionsLock = GetSyncActionsLock();
 
         XrActiveActionSet activeActionSet { sessionInfo->placeholderActionSet, XR_NULL_PATH };
         XrActionsSyncInfo syncInfo { XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &activeActionSet };
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
-        result = spaceInfo->downchain->SyncActions(sessionInfo->actualHandle, &syncInfo);
-        if(result != XR_SUCCESS) {
-            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
-                OverlaysLayerNoObjectInfo, "failed to SyncActions on placeHolder ActionSets to locate a space");
-            return result;
-        }
+        {
+            auto syncActionsLock = GetSyncActionsLock();
 
-        result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+            result = spaceInfo->downchain->SyncActions(sessionInfo->actualHandle, &syncInfo);
+            if(result != XR_SUCCESS) {
+                OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
+                    OverlaysLayerNoObjectInfo, "failed to SyncActions on placeHolder ActionSets to locate a space");
+                return result;
+            }
+
+            result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+        }
 
     } else /* SPACE_REFERENCE */ {
 
@@ -2065,6 +2101,8 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
 
 XrResult OverlaysLayerLocateSpaceMain(XrInstance parentInstance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
@@ -2073,21 +2111,23 @@ XrResult OverlaysLayerLocateSpaceMain(XrInstance parentInstance, XrSpace space, 
 
     if(spaceInfo->spaceType == SPACE_ACTION) {
 
-        auto syncActionsLock = GetSyncActionsLock();
-
         // Sync this Space's Action so it's active
         auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(spaceInfo->action->parentHandle);
         // XXX may need to keep XrActionsSyncInfo from previous xrSyncActions and play that back
         XrActiveActionSet activeActionSet { actionSetInfo->actualHandle, spaceInfo->actionSpaceCreateInfo->subactionPath };
         XrActionsSyncInfo syncInfo { XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &activeActionSet };
-        result = spaceInfo->downchain->SyncActions(sessionInfo->actualHandle, &syncInfo);
-        if(result != XR_SUCCESS) {
-            OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
-                OverlaysLayerNoObjectInfo, "failed to SyncActions before reading placeHolder action to locate a space");
-            return result;
-        }
+        { 
+            auto syncActionsLock = GetSyncActionsLock();
 
-        result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+            result = spaceInfo->downchain->SyncActions(sessionInfo->actualHandle, &syncInfo);
+            if(result != XR_SUCCESS) {
+                OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrLocateSpace",
+                        OverlaysLayerNoObjectInfo, "failed to SyncActions before reading placeHolder action to locate a space");
+                return result;
+            }
+
+            result = spaceInfo->downchain->LocateSpace(spaceInfo->actualHandle, baseSpaceInfo->actualHandle, time, location);
+        }
 
     } else /* SPACE_REFERENCE */ {
 
@@ -2107,7 +2147,7 @@ XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time,
     try {
 
         auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
-        
+
         bool isProxied = spaceInfo->isProxied;
         XrResult result;
         if(isProxied) {
@@ -2133,6 +2173,8 @@ XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time,
 
 XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
 
     // XXX This will need to be smart about ActionSpaces?
@@ -2158,6 +2200,8 @@ XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
 
 XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto viewLocateInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
@@ -2219,6 +2263,8 @@ XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession sessi
 
 XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     // Already have our tracked information on this XrSession from generated code in sessionInfo
@@ -2379,10 +2425,12 @@ void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, Ma
 
 XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     try {
 
         // See if any Session needs to return a synthetic interaction profile changed event
-        extern std::recursive_mutex gOverlaysLayerXrSessionToHandleInfoMutex;
+        std::unique_lock<std::recursive_mutex> lock(gOverlaysLayerXrSessionToHandleInfoMutex);
         for(auto [sessionHandle, sessionInfo]: gOverlaysLayerXrSessionToHandleInfo) {
             auto l = sessionInfo->GetLock();
             if(sessionInfo->interactionProfileChangePending) {
@@ -2634,6 +2682,8 @@ XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, 
 
 XrResult OverlaysLayerAcquireSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquireInfo, uint32_t *index)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     auto acquireInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
@@ -2668,6 +2718,8 @@ XrResult OverlaysLayerAcquireSwapchainImageOverlay(XrInstance instance, XrSwapch
 
 XrResult OverlaysLayerWaitSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageWaitInfo* waitInfo, HANDLE sourceImage)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     auto waitInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrWaitSwapchainImage", waitInfo);
@@ -2747,10 +2799,10 @@ XrResult OverlaysLayerWaitSwapchainImageOverlay(XrInstance instance, XrSwapchain
     return result;
 }
 
-std::recursive_mutex HapticQuirkMutex; // On OVR I get regular deadlocks in one thread in runtime ReleaseSwapchainImage and in another thread in ApplyHapticFeedback.
-
 XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* releaseInfo, HANDLE sourceImage)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     auto& mainAsOverlaySwapchain = swapchainInfo->mainAsOverlaySwapchain;
@@ -2795,6 +2847,7 @@ XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
     {
         std::unique_lock<std::recursive_mutex> HapticQuirkLock(HapticQuirkMutex);
         result = swapchainInfo->downchain->ReleaseSwapchainImage(swapchainInfo->actualHandle, releaseInfoCopy.get());
+        if(result != XR_SUCCESS) DebugBreak(); // XXX
     }
 
     return result;
@@ -2833,6 +2886,7 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
     XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, releaseInfoCopy.get(), sourceImage);
 
     if(!XR_SUCCEEDED(result)) {
+		DebugBreak(); // XXX
         return result;
     }
 
@@ -2840,8 +2894,6 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 
     return result;
 }
-
-std::recursive_mutex EndFrameMutex; // LATER understand which lock isn't doing its job and take this out
 
 XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
@@ -2936,6 +2988,8 @@ void AddSwapchainsFromLayers(OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo, 
 
 XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     std::unique_lock<std::recursive_mutex> EndFrameLock(EndFrameMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
@@ -2954,7 +3008,7 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
         if(!gConnectionsToOverlayByProcessId.empty()) {
             for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
                 auto conn = overlayconn.second;
-				connectionLock.unlock();
+                connectionLock.unlock();
                 auto lock = conn->GetLock();
                 if(conn->ctx) {
                     auto lock2 = conn->ctx->GetLock();
@@ -3009,6 +3063,8 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
     try { 
+        auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
         
         bool isProxied = sessionInfo->isProxied;
@@ -3037,6 +3093,7 @@ XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEnd
 XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCreateInfo* createInfo, XrActionSet* actionSet)
 {
     try {
+        auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
         auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
@@ -3075,6 +3132,7 @@ XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCrea
 XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateInfo* createInfo, XrAction* action)
 {
     try {
+        auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
         auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
 
@@ -3176,6 +3234,8 @@ XrResult OverlaysLayerCreateActionSpaceOverlay(XrInstance parentInstance, XrSess
 
 XrResult OverlaysLayerCreateActionSpaceMain(XrInstance parentInstance, XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -3253,6 +3313,8 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
 
 XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrPath path = OverlaysLayerWellKnownStringToPath.at(bindingString);
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
     XrAction actualActionHandle = sessionInfo->placeholderActions.at(path).first;
@@ -3362,6 +3424,8 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
 
 XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     // Submit main app's suggestions and our own placeholder suggestions
@@ -3518,6 +3582,8 @@ typedef std::vector<ActionGetInfo> ActionGetInfoList;
 // syncInfo will be RestoreHandles()d but actionsToGet will not
 XrResult SyncActionsAndGetState(XrSession session, const XrActionsSyncInfo* syncInfo, const ActionGetInfoList& actionsToGet, ActionStateUnion *states)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     auto syncActionsLock = GetSyncActionsLock();
 
     XrResult result;
@@ -3623,6 +3689,8 @@ XrResult OverlaysLayerGetCurrentInteractionProfile(XrSession session, XrPath top
 
 XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states, uint32_t countProfiles, const WellKnownStringIndex *topLevelStrings, WellKnownStringIndex *interactionProfileStrings)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -3818,6 +3886,8 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
 
 XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4070,6 +4140,8 @@ XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateG
 
 XrResult OverlaysLayerApplyHapticFeedbackMain(XrInstance parentInstance, XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
@@ -4124,6 +4196,8 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
 
 XrResult OverlaysLayerStopHapticFeedbackMain(XrInstance parentInstance, XrSession session, const XrHapticActionInfo* hapticActionInfo)
 {
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
     std::unique_lock<std::recursive_mutex> mlock(gOverlaysLayerXrSessionToHandleInfoMutex);
