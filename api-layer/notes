@@ -129,48 +129,6 @@ destroying instance that was used to create main session
     /user/gamepad
     .../input/thumbstick_left/click
 
-VirtualActionSet {
-    createInfo
-}
-
-VirtualAction {
-    createInfo
-    XrResult getBoolean(XrActionStateBoolean *state)
-    {
-        if(createInfo->type != XR_ACTION_TYPE_BOOLEAN_INPUT) {
-            return XR_ERROR_ACTION_TYPE_MISMATCH; 
-        }
-        *state = booleanState;
-        return XR_SUCCESS;
-    }
-    // etc
-    union {
-        XrActionStateBoolean booleanState;
-        // etc;
-    };
-    Ctor()
-    {
-        switch(createInfo->type) {
-            case XR_ACTION_TYPE_BOOLEAN_INPUT: {
-                booleanState.type = XR_TYPE_ACTION_STATE_BOOLEAN
-                booleanState.next = nullptr;
-                booleanState.currentState = XR_FALSE;
-                booleanState.changedSinceLastSync = XR_FALSE;
-                booleanState.lastChangeTime = 0;
-                booleanState.isActive = XR_FALSE;
-                break;
-            }
-                // etc
-        }
-    }
-}
-
-XXX NO REAL ACTION OR ACTIONSET PASSED BACK TO MAIN OR TO OVERLAY
-
-Real ActionSet and Placeholder Actions created at CreateSession time
-
-So we know that if the overlay suggested for "/interaction_profiles/khr/simple_controller/" binding an action to "/user/hand/left/input/squeeze/value", we can query the action we created and bound for those.
-
 hello_xr output:
     profile null_path
     bound "grab" to 0 sources...
@@ -308,18 +266,27 @@ Handle profile supported by main not supported by overlay - should support this 
     Are you getting garbage trying to get a squeeze value for a BOOLEAN action?
         hello_xr doesn't fetch any value paths as BOOLEAN, so don't do that.  Instead get a/click and x/click.
 xrApplyHapticFeedback
-    main: map local to actual, downchain->ApplyHapticFeedback
+    ./ main: map local to actual, downchain->ApplyHapticFeedback
+        find which is bound, put that in session with timeout
     overlay: map local to placeholder, RPC to Apply in main
+    MainAsOverlay:
+        expire all main haptics as necessary
+        if main not applying to requested placeholder, haptic binding
 xrStopHapticFeedback
-    main: map local to actual, downchain->ApplyHapticFeedback
-    overlay: map local to placeholder, RPC to Apply in main
+    ./ main: map local to actual, downchain->StopHapticFeedback
+        find which is bound, erase that from session
+    overlay:
+    overlay: map local to placeholder, RPC to Stop in main
+    MainAsOverlay:
+        expire all main haptics as necessary
+        if main not applying to requested placeholder, haptic binding
 xrEnumerateBoundSourcesForAction
     main: downchain->EnumerateBoundSourcesForAction
-    overlay: ??
+    overlay: RPC and EnumerateBoundSourcesForAction all the actions that API layer chose for that action
 xrGetInputSourceLocalizedName
     main: downchain->GetInputSourceLocalizedName
-    overlay: ??
-xrGetCurrentInteractionProfile
+    overlay: 
+./ xrGetCurrentInteractionProfile
     Main
         execute normally - anything else?
     Overlay
