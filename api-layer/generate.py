@@ -1166,6 +1166,8 @@ for handle_type in supported_handles:
 """
         substitution_destroy = f"""
             if(!isProxied) {{
+                auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
                 downchain->Destroy{handle_type[2:]}(actualHandle);
             }}
 """
@@ -2894,10 +2896,12 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
         command_for_main_side = f"""
 {command_type} {layer_command}Main(XrInstance parentInstance, {parameter_cdecls})
 {{
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
     XrResult result = XR_SUCCESS;
 
-    std::unique_lock<std::recursive_mutex> mlock(g{layer_name}{handle_type}ToHandleInfoMutex);
-    {layer_name}{handle_type}HandleInfo::Ptr {handle_name}Info = g{layer_name}{handle_type}ToHandleInfo.at({handle_name});
+    auto {handle_name}Info = {layer_name}GetHandleInfoFrom{handle_type}({handle_name});
+
     // restore the actual handle
     {handle_type} localHandleStore = {handle_name};
     {handle_name} = {handle_name}Info->actualHandle;
@@ -2937,7 +2941,14 @@ for command_name in [c for c in supported_commands if c not in manually_implemen
     }}
 """
     else:
-        call_actual_command = f"    XrResult result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});\n\n"
+        call_actual_command = f"""
+    XrResult result;
+    {{
+        auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
+        result = {handle_name}Info->downchain->{dispatch_command}({parameter_names});
+    }}
+"""
 
     if command_name in after_downchain_main:
         after_downchain_if_success = f"""
