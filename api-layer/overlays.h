@@ -1006,9 +1006,14 @@ XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionState
 XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateVector2f* state);
 XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStatePose* state);
 
-XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t countBindings, const WellKnownStringIndex *bindingStrings, ActionStateUnion *states, uint32_t countProfiles, const WellKnownStringIndex *topLevelStrings, WellKnownStringIndex *interactionProfileStrings);
+XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
+    ConnectionToOverlay::Ptr connection, XrSession session,
+    uint32_t countProfileAndBindings, const WellKnownStringIndex *profileStrings, const WellKnownStringIndex *bindingStrings,   /* input is profiles and bindings for which to Get */
+    ActionStateUnion *states,                                                                                                   /* output is result of Get */
+    uint32_t countSubactionStrings, const WellKnownStringIndex *subactionStrings,                                               /* input is subactionPaths for which to get current interaction Profile */
+    WellKnownStringIndex *interactionProfileStrings);                                                                           /* output is current interaction profiles */
 
-XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space);
+XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex profileString, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space);
 
 XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location);
 

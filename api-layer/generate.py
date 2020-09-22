@@ -539,11 +539,11 @@ add_to_handle_struct["XrSession"] = {
     std::set<OverlaysLayerXrSwapchainHandleInfo::Ptr> childSwapchains;
     std::set<OverlaysLayerXrSpaceHandleInfo::Ptr> childSpaces;
     XrActionSet placeholderActionSet;
+    std::unordered_map<XrAction, std::string> placeholderActionNames;
     std::unordered_map<XrPath, std::pair<XrAction, XrActionType>> placeholderActions;
-    std::unordered_map<XrAction, XrActionType> placeholderActionTypes;
+    std::map<std::pair<XrPath /* interaction profile */, XrPath /* full binding */>, std::pair<XrAction, XrActionType>> placeholderActionsByProfileAndFullBinding;
     std::unordered_map<XrPath, std::vector<XrActionSuggestedBinding>> bindingsByProfile;
     std::unordered_map<XrAction, XrPath> bindingsByAction;
-    std::unordered_map<XrAction, XrSpace> placeholderActionSpaces;
     std::vector<XrActiveActionSet> lastSyncedActiveActionSets;
     bool actionSetsWereAttached = false;
     std::set<XrPath> interactionProfiles;
@@ -664,138 +664,10 @@ add_to_handle_struct["XrAction"] = {
     ActionBindLocation bindLocation = BIND_PENDING;
     std::set<XrPath> subactionPaths;
     std::set<XrPath> suggestedBindings;
+    std::unordered_map<XrPath /* interaction Profile */, std::set<XrPath>> suggestedBindingsByProfile;
     std::unordered_map<XrPath, ActionStateUnion> stateBySubactionPath;
     XrAction localHandle;
 """,
-    "methods" : """
-    XrResult getBoolean(XrPath subactionPath, XrActionStateBoolean *state)
-    {
-        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
-            return XR_ERROR_PATH_UNSUPPORTED; 
-        }
-        state->type = XR_TYPE_ACTION_STATE_BOOLEAN;
-        state->next = nullptr;
-        state->currentState = XR_FALSE;
-        state->changedSinceLastSync = XR_FALSE;
-        state->lastChangeTime = 0;
-        state->isActive = XR_FALSE;
-        XrTime oldest = std::numeric_limits<XrTime>::max();
-        if(subactionPath == XR_NULL_PATH) {
-            for(const auto& pathAndState: stateBySubactionPath) {
-                const auto& syncedState = pathAndState.second.booleanState;
-                state->currentState |= syncedState.currentState;
-                if(syncedState.lastChangeTime < oldest) {
-                    state->changedSinceLastSync = syncedState.changedSinceLastSync;
-                    state->lastChangeTime = syncedState.lastChangeTime;
-                    oldest = syncedState.lastChangeTime;
-                }
-                state->isActive = XR_TRUE;
-            }
-        } else {
-            auto it = stateBySubactionPath.find(subactionPath);
-            if(it != stateBySubactionPath.end()) {
-                const auto& syncedState = it->second.booleanState;
-                state->currentState = syncedState.currentState;
-                state->changedSinceLastSync = syncedState.changedSinceLastSync;
-                state->lastChangeTime = syncedState.lastChangeTime;
-                state->isActive = XR_TRUE;
-            }
-        }
-        return XR_SUCCESS;
-    }
-    XrResult getFloat(XrPath subactionPath, XrActionStateFloat *state)
-    {
-        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
-            return XR_ERROR_PATH_UNSUPPORTED; 
-        }
-        state->type = XR_TYPE_ACTION_STATE_FLOAT;
-        state->next = nullptr;
-        state->currentState = std::numeric_limits<float>::lowest();
-        state->changedSinceLastSync = XR_FALSE;
-        state->lastChangeTime = 0;
-        state->isActive = XR_FALSE;
-        float largest = std::numeric_limits<float>::lowest();
-        if(subactionPath == XR_NULL_PATH) {
-            for(const auto& pathAndState: stateBySubactionPath) {
-                const auto& syncedState = pathAndState.second.floatState;
-                if(syncedState.currentState > largest) {
-                    state->currentState = syncedState.currentState;
-                    state->changedSinceLastSync = syncedState.changedSinceLastSync;
-                    state->lastChangeTime = syncedState.lastChangeTime;
-                }
-                state->isActive = XR_TRUE;
-            }
-        } else {
-            auto it = stateBySubactionPath.find(subactionPath);
-            if(it != stateBySubactionPath.end()) {
-                const auto& syncedState = it->second.floatState;
-                state->currentState = syncedState.currentState;
-                state->changedSinceLastSync = syncedState.changedSinceLastSync;
-                state->lastChangeTime = syncedState.lastChangeTime;
-                state->isActive = XR_TRUE;
-            }
-        }
-        return XR_SUCCESS;
-    }
-    XrResult getVector2f(XrPath subactionPath, XrActionStateVector2f *state)
-    {
-        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
-            return XR_ERROR_PATH_UNSUPPORTED; 
-        }
-        state->type = XR_TYPE_ACTION_STATE_VECTOR2F;
-        state->next = nullptr;
-        state->currentState = {0.0f, 0.0f};
-        state->changedSinceLastSync = XR_FALSE;
-        state->lastChangeTime = std::numeric_limits<XrTime>::max();
-        state->isActive = XR_FALSE;
-        float largestsq = std::numeric_limits<float>::lowest();
-        if(subactionPath == XR_NULL_PATH) {
-            for(const auto& pathAndState: stateBySubactionPath) {
-                const auto& syncedState = pathAndState.second.vector2fState;
-                float lengthsq = syncedState.currentState.x * syncedState.currentState.x + syncedState.currentState.y * syncedState.currentState.y;
-                if(lengthsq > largestsq) {
-                    state->currentState = syncedState.currentState;
-                    state->changedSinceLastSync = syncedState.changedSinceLastSync;
-                    state->lastChangeTime = syncedState.lastChangeTime;
-                }
-                state->isActive = XR_TRUE;
-            }
-        } else {
-            auto it = stateBySubactionPath.find(subactionPath);
-            if(it != stateBySubactionPath.end()) {
-                const auto& syncedState = it->second.vector2fState;
-                state->currentState = syncedState.currentState;
-                state->changedSinceLastSync = syncedState.changedSinceLastSync;
-                state->lastChangeTime = syncedState.lastChangeTime;
-                state->isActive = XR_TRUE;
-            }
-        }
-        return XR_SUCCESS;
-    }
-    XrResult getPose(XrPath subactionPath, XrActionStatePose *state)
-    {
-        if((subactionPath != XR_NULL_PATH) && (subactionPaths.count(subactionPath) == 0)) {
-            return XR_ERROR_PATH_UNSUPPORTED; 
-        }
-        state->type = XR_TYPE_ACTION_STATE_POSE;
-        state->next = nullptr;
-        state->isActive = XR_FALSE;
-        if(subactionPath == XR_NULL_PATH) {
-            // Punt and use first data, if any
-            if(stateBySubactionPath.size() > 0) {
-                state->isActive = XR_TRUE;
-            }
-        } else {
-            XrPath subactionPath = *(subactionPaths.begin());
-            auto it = stateBySubactionPath.find(subactionPath);
-            if(it != stateBySubactionPath.end()) {
-                const auto& syncedState = it->second.poseState;
-                state->isActive = XR_TRUE;
-            }
-        }
-        return XR_SUCCESS;
-    }
-"""
 }
 
 after_downchain_main["xrCreateAction"] = f"""
@@ -881,6 +753,8 @@ header_text = """
 #include <tuple>
 #include <vector>
 #include <set>
+#include <unordered_map>
+#include <map>
 
 #include "overlays.h"
 
@@ -900,6 +774,7 @@ source_text = """
 #include <sstream>
 #include <iomanip>
 #include <unordered_map>
+#include <map>
 #include <limits>
 
 std::unordered_map<XrPath, XrInteractionProfileSuggestedBinding*> gPathToSuggestedInteractionProfileBinding;
@@ -1771,41 +1646,48 @@ SyncActionsAndGetStateRPC = {
             "pod_type" : "XrSession",
         },
         {
-            "name" : "countBindings",
+            "name" : "countProfileAndBindings",
             "type" : "POD",
             "pod_type" : "uint32_t",
         },
         {
-            "name" : "bindings",
+            "name" : "profileStrings",
             "type" : "fixed_array",
             "base_type" : "WellKnownStringIndex",
-            "input_size" : "countBindings",
+            "input_size" : "countProfileAndBindings",
+            "is_const" : True
+        },
+        {
+            "name" : "bindingStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfileAndBindings",
             "is_const" : True
         },
         {
             "name" : "states",
             "type" : "fixed_array",
             "base_type" : "ActionStateUnion",
-            "input_size" : "countBindings",
+            "input_size" : "countProfileAndBindings",
             "is_const" : False
         },
         {
-            "name" : "countProfiles",
+            "name" : "countSubactionStrings",
             "type" : "POD",
             "pod_type" : "uint32_t",
         },
         {
-            "name" : "topLevelStrings",
+            "name" : "subactionStrings",
             "type" : "fixed_array",
             "base_type" : "WellKnownStringIndex",
-            "input_size" : "countProfiles",
+            "input_size" : "countSubactionStrings",
             "is_const" : True
         },
         {
             "name" : "interactionProfileStrings",
             "type" : "fixed_array",
             "base_type" : "WellKnownStringIndex",
-            "input_size" : "countProfiles",
+            "input_size" : "countSubactionStrings",
             "is_const" : False
         },
     ),
@@ -1819,6 +1701,11 @@ CreateActionSpaceFromBindingRPC = {
             "name" : "session",
             "type" : "POD",
             "pod_type" : "XrSession",
+        },
+        {
+            "name" : "profileString",
+            "type" : "POD",
+            "pod_type" : "WellKnownStringIndex",
         },
         {
             "name" : "bindingString",
