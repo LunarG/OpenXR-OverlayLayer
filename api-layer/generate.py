@@ -689,6 +689,7 @@ add_to_handle_struct["XrSpace"] = {
     OverlaysLayerXrActionHandleInfo::Ptr action;
     XrAction placeholderAction;
     std::shared_ptr<const XrActionSpaceCreateInfo> actionSpaceCreateInfo;
+    XrPath createdWithInteractionProfile = XR_NULL_PATH;
 """,
 }
 
