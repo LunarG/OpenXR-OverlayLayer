@@ -2080,50 +2080,59 @@ XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connecti
     return result;
 }
 
+// XXX PUNT - if space was created with subactionPath NULL_PATH, this will probably fail or crash.
+bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
+{
+    auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
 
-#if 0
-    for(auto space: sessionInfo->childSpaces) {
+    XrPath currentInteractionProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(spaceInfo->actionSpaceCreateInfo->subactionPath);
 
-        // Determine placeholder action to use as pose
-        
-        if(space->spaceType == SPACE_ACTION) {
+    if((spaceInfo->actualHandle == XR_NULL_HANDLE) || (spaceInfo->createdWithInteractionProfile != currentInteractionProfile)) {
 
-            auto actionInfo = space->action;
-			
-            // XXX what if SuggestProfileBindings was never called?  It's not an error.
-            // XXX XXX Space created on placeholder action needs to change if interaction profile changes.  :-/  So this is only changed to compile, but is incorrect
-            XrPath matchingBinding = XR_NULL_PATH;
-            bool found = false;
-            for(auto [profile, bindings] : actionInfo->suggestedBindingsByProfile) {
-                for(auto binding: bindings) {
-                XrPath subactionPath = OverlaysLayerBindingToSubaction.at(binding);
-                if(subactionPath == space->actionSpaceCreateInfo->subactionPath) {
-                    matchingBinding = binding;
-                    found = true;
-                    }
-                }
-            }
+        if(spaceInfo->actualHandle != XR_NULL_HANDLE) {
+            RPCCallDestroySpace(instance, spaceInfo->actualHandle);
+        }
 
-            if(!found) {
+        auto actionInfo = spaceInfo->action;
 
-                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrAttachSessionActionSets",
-                    OverlaysLayerNoObjectInfo, "Couldn't find a suggested binding matching the subaction with which an XrSpace was created; XrSpace will not be locatable");
-
-            } else {
-
-                WellKnownStringIndex bindingString = OverlaysLayerPathToWellKnownString.at(matchingBinding);
-
-                result = RPCCallCreateActionSpaceFromBinding(parentInstance, sessionInfo->actualHandle, bindingString, &space->actionSpaceCreateInfo->poseInActionSpace, &space->actualHandle);
-                if(result != XR_SUCCESS) {
-                    OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
-                        OverlaysLayerNoObjectInfo, "Couldn't create XrSpace for Action from main placeholders");
-                    return XR_ERROR_RUNTIME_FAILURE;
-                }
+        // XXX what if SuggestProfileBindings was never called?  It's not an error.
+        XrPath matchingBinding = XR_NULL_PATH;
+        XrPath matchingProfile = currentInteractionProfile;
+        bool found = false;
+        for(XrPath binding : actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
+            XrPath subactionPath = OverlaysLayerBindingToSubaction.at(binding);
+            if(subactionPath == spaceInfo->actionSpaceCreateInfo->subactionPath) {
+                matchingBinding = binding;
+                found = true;
             }
         }
-    }
-#endif
 
+        if(!found) {
+
+            OverlaysLayerLogMessage(spaceInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrAttachSessionActionSets",
+                OverlaysLayerNoObjectInfo, "Couldn't find a suggested binding matching the subaction with which an XrSpace was created; XrSpace will not be locatable");
+
+            return false;
+
+        }
+
+        WellKnownStringIndex bindingString = OverlaysLayerPathToWellKnownString.at(matchingBinding);
+        WellKnownStringIndex profileString = OverlaysLayerPathToWellKnownString.at(matchingProfile);
+
+        XrResult result = RPCCallCreateActionSpaceFromBinding(spaceInfo->parentInstance, sessionInfo->actualHandle, profileString, bindingString, &spaceInfo->actionSpaceCreateInfo->poseInActionSpace, &spaceInfo->actualHandle);
+
+        if(result != XR_SUCCESS) {
+            OverlaysLayerLogMessage(spaceInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
+                OverlaysLayerNoObjectInfo, "Couldn't create XrSpace for Action from main placeholders");
+            return false;
+        }
+
+		spaceInfo->createdWithInteractionProfile = matchingProfile;
+    }
+
+    return true;
+}
 
 XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
@@ -2139,6 +2148,11 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
         case SPACE_ACTION:
             if(spaceInfo->action->bindLocation == BIND_PENDING) {
                 // This isn't bound anywhere yet, so we return not locatable
+                location->locationFlags = 0;
+                return XR_SUCCESS;
+            }
+
+            if(!SynchronizeActionSpaceWithMain(instance, space)) {
                 location->locationFlags = 0;
                 return XR_SUCCESS;
             }
@@ -3976,7 +3990,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
             }
             MergeActionState(actionInfo->createInfo->actionType, &states[i], &actionInfo->stateBySubactionPath.at(XR_NULL_PATH));
 
-            if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_BOOLEAN_INPUT) { // XXX debug
+            if(false) if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_BOOLEAN_INPUT) { // XXX debug
                 XrActionStateBoolean* boolean = (XrActionStateBoolean*)&actionInfo->stateBySubactionPath.at(subactionPath);
                 printf("for action \"%s\", subactionPath \"%s\", merged state is now currentState is %s, active is %s\n",
                     actionInfo->createInfo->actionName,
@@ -3993,7 +4007,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
                     if(previousStates.count(subactionPath) != 0) {
                         auto previousState = previousStates.at(subactionPath);
                         UpdateActionStateLastChange(actionInfo->createInfo->actionType, &previousState, &actionInfo->stateBySubactionPath.at(subactionPath));
-                        if(true) if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_FLOAT_INPUT) { // XXX debug
+                        if(false) if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_FLOAT_INPUT) { // XXX debug
                             XrActionStateFloat* floatState = &actionInfo->stateBySubactionPath.at(subactionPath).floatState;
                             printf("for action \"%s\", subactionPath \"%s\"; changedSinceLastSync is %d, last time is %lld\n",
                                 actionInfo->createInfo->actionName,
