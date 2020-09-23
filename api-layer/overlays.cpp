@@ -3750,7 +3750,6 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
         XrPath subactionPath = OverlaysLayerBindingToSubaction.at(bindingPath);
         actionsToGet.push_back({ action, type, subactionPath });
 
-        // XXX debug
         if(false) printf("for %s%s, I think I'm getting action %s\n",
             PathToString(sessionInfo->parentInstance, profilePath).c_str(),
             PathToString(sessionInfo->parentInstance, bindingPath).c_str(),
@@ -4491,6 +4490,54 @@ XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticAction
 
     }
 }
+
+XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance, XrSession session, const XrBoundSourcesForActionEnumerateInfo* enumerateInfo, uint32_t sourceCapacityInput, uint32_t* sourceCountOutput, XrPath* sources)
+{
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(enumerateInfo->action);
+
+    std::set<XrPath> boundSourcesForAction;
+
+    for(auto subactionPath: actionInfo->subactionPaths) {
+
+        if(subactionPath != XR_NULL_PATH) {
+            XrPath currentInteractionProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(subactionPath);
+
+            for(auto fullBindingPath: actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
+
+                // XXX really should find() this - could be path from an extension
+                XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath);
+
+                if(subactionPath == bindingSubactionPath) {
+
+                    boundSourcesForAction.insert(fullBindingPath);
+                }
+            }
+        }
+    }
+
+    if(sourceCapacityInput == 0) {
+
+        if(sourceCountOutput) {
+            *sourceCountOutput = (uint32_t)boundSourcesForAction.size();
+        }
+
+    } else {
+
+        if(!sources) {
+            return XR_ERROR_VALIDATION_FAILURE;
+        }
+
+        if(sourceCapacityInput < boundSourcesForAction.size()) {
+            return XR_ERROR_SIZE_INSUFFICIENT;
+        }
+            
+        std::copy(boundSourcesForAction.begin(), boundSourcesForAction.end(), sources);
+    }
+
+    return XR_SUCCESS;
+}
+
 
 extern "C" {
 

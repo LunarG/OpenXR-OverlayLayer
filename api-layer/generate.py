@@ -2064,7 +2064,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "EnumerateBoundSourcesForAction",
     "GetInputSourceLocalizedName",
     "ApplyHapticFeedback",
     "StopHapticFeedback",
