@@ -3416,7 +3416,7 @@ XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr conn
         spaceInfo->placeholderAction = actualActionHandle;
         // spaceInfo->isProxied; // Should never be accessed from MainAsOverlay
 
-         OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
+        OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
     }
 
     return result;
@@ -4489,6 +4489,32 @@ XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticAction
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
+}
+
+XrResult OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrInputSourceLocalizedNameGetInfo* getInfo /* sourcePath ignored */, WellKnownStringIndex sourceString, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer)
+{
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+    OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    XrInputSourceLocalizedNameGetInfo getInfoCopy = *getInfo;
+
+    getInfoCopy.sourcePath = OverlaysLayerWellKnownStringToPath.at(sourceString);
+
+	std::unique_lock<std::recursive_mutex> HapticQuirkLock(HapticQuirkMutex);
+    return sessionInfo->downchain->GetInputSourceLocalizedName(sessionInfo->actualHandle, &getInfoCopy, bufferCapacityInput, bufferCountOutput, buffer);
+}
+
+XrResult OverlaysLayerGetInputSourceLocalizedNameOverlay( XrInstance instance, XrSession session, const XrInputSourceLocalizedNameGetInfo* getInfo, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer)
+{
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    if(OverlaysLayerPathToWellKnownString.count(getInfo->sourcePath) == 0) {
+        return XR_ERROR_PATH_UNSUPPORTED;
+    }
+
+    WellKnownStringIndex sourceString = OverlaysLayerPathToWellKnownString.at(getInfo->sourcePath);
+
+    return RPCCallGetInputSourceLocalizedName(sessionInfo->parentInstance, sessionInfo->actualHandle, getInfo, sourceString, bufferCapacityInput, bufferCountOutput, buffer);
 }
 
 XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance, XrSession session, const XrBoundSourcesForActionEnumerateInfo* enumerateInfo, uint32_t sourceCapacityInput, uint32_t* sourceCountOutput, XrPath* sources)

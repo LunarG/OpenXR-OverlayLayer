@@ -1729,8 +1729,50 @@ CreateActionSpaceFromBindingRPC = {
     "function" : "OverlaysLayerCreateActionSpaceFromBinding",
 }
 
+GetInputSourceLocalizedNameRPC = {
+    "command_name" : "GetInputSourceLocalizedName",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "getInfo",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrInputSourceLocalizedNameGetInfo",
+            "is_const" : True
+        },
+        {
+            "name" : "sourceString",
+            "type" : "POD",
+            "pod_type" : "WellKnownStringIndex",
+        },
+        {
+            "name" : "bufferCapacityInput",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "bufferCountOutput",
+            "type" : "pointer_to_pod",
+            "pod_type" : "uint32_t",
+            "is_const" : False
+        },
+        {
+            "name" : "buffer",
+            "type" : "fixed_array",
+            "base_type" : "char",
+            "input_size" : "bufferCapacityInput",
+            "output_size" : "bufferCountOutput",
+            "is_const" : False
+        },
+    ),
+    "function" : "OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay"
+}
 
 rpcs = (
+    GetInputSourceLocalizedNameRPC,
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
@@ -2064,7 +2106,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "GetInputSourceLocalizedName",
     "ApplyHapticFeedback",
     "StopHapticFeedback",
     "DestroyActionSet",
