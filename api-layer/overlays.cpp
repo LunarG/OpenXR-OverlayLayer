@@ -1300,10 +1300,6 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
                     return XR_ERROR_INITIALIZATION_FAILED;
                 }
 
-                if(other->device != d3dbinding->device) {
-                    OverlaysLayerLogMessage(gMainSessionInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrCreateSession",
-                        OverlaysLayerNoObjectInfo, fmt("xrCreateSession for overlay session used different D3D11 Device (%08X) than that with which main session was created (%08X). Effect is unknown, proceeding anyway.", d3dbinding->device, other->device).c_str());
-                }
                 break;
             }
 
@@ -1401,26 +1397,12 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcess
         if(result == RPCChannels::WaitResult::OVERLAY_PROCESS_TERMINATED_UNEXPECTEDLY) {
 
             OutputDebugStringA("**OVERLAY** other process terminated\n");
-#if 0 // XXX this should happen through graceful dtor on connection
-            if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
-                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
-                gMainSession->overlaySession->swapchainMap.clear();
-                gMainSession->ClearOverlayLayers();
-            }
-#endif
             connectionLost = true;
 
         } else if(result == RPCChannels::WaitResult::WAIT_ERROR) {
 
             OutputDebugStringA("**OVERLAY** IPC Wait Error\n");
-            DebugBreak();
-#if 0 // XXX
-            if(gMainSession && gMainSession->overlaySession) { // Might have LOST SESSION
-                ScopedMutex scopedMutex(gOverlayCallMutex, INFINITE, "overlay layer command mutex", __FILE__, __LINE__);
-                gMainSession->overlaySession->swapchainMap.clear();
-                gMainSession->ClearOverlayLayers();
-            }
-#endif
+            // DebugBreak();
             connectionLost = true;
 
         } else {
@@ -1439,12 +1421,6 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcess
                 connectionLost = true;
             }
         }
-
-#if 0 // XXX
-        if(connectionLost && gMainSession && gMainSession->overlaySession) {
-            gMainSession->DestroyOverlaySession();
-        }
-#endif
 
     } while(!connectionLost && !connection->closed);
 
@@ -1723,7 +1699,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     XrFormFactor formFactor;
 
     {
-        // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN SUBSTITUTE THAT IN THE OVERLAY BEFORE THE RPC.
+        // XXX REALLY SHOULD RPC TO GET THE REMOTE SYSTEMID HERE AND THEN RESTORE THAT IN THE OVERLAY BEFORE THE RPC.
         std::unique_lock<std::recursive_mutex> m(gOverlaysLayerSystemIdToAtomInfoMutex);
         const XrSystemGetInfo* systemGetInfo = gOverlaysLayerSystemIdToAtomInfo[createInfo->systemId]->getInfo;
         formFactor = systemGetInfo->formFactor;
@@ -2263,6 +2239,56 @@ XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
     XrResult result = RPCCallDestroySpace(instance, spaceInfo->actualHandle);
 
     OverlaysLayerRemoveXrSpaceHandleInfo(space);
+
+    return result;
+}
+
+XrResult OverlaysLayerDestroyActionSetMainAsOverlay(ConnectionToOverlay::Ptr connection, XrActionSet actionSet)
+{
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
+    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
+
+    XrResult result = actionSetInfo->downchain->DestroyActionSet(actionSetInfo->actualHandle);
+    OverlaysLayerRemoveXrActionSetFromHandleInfoMap(actionSet);
+
+    return result;
+}
+
+XrResult OverlaysLayerDestroyActionSetOverlay(XrInstance instance, XrActionSet actionSet)
+{
+    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
+
+    XrResult result = RPCCallDestroyActionSet(instance, actionSetInfo->actualHandle);
+
+    OverlaysLayerRemoveXrActionSetFromHandleInfoMap(actionSet);
+
+    return result;
+}
+
+XrResult OverlaysLayerDestroyActionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrAction action)
+{
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
+    OverlaysLayerXrActionHandleInfo::Ptr actionInfo = OverlaysLayerGetHandleInfoFromXrAction(action);
+
+    XrResult result = actionInfo->downchain->DestroyAction(actionInfo->actualHandle);
+    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionInfo->parentHandle);
+    actionSetInfo->childActions.erase(info);
+    OverlaysLayerRemoveXrActionFromHandleInfoMap(action);
+
+    return result;
+}
+
+XrResult OverlaysLayerDestroyActionOverlay(XrInstance instance, XrAction action)
+{
+    OverlaysLayerXrActionHandleInfo::Ptr actionInfo = OverlaysLayerGetHandleInfoFromXrAction(action);
+
+    XrResult result = RPCCallDestroyAction(instance, actionInfo->actualHandle);
+
+    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionInfo->parentHandle);
+    actionSetInfo->childActions.erase(info);
+    OverlaysLayerRemoveXrActionFromHandleInfoMap(action);
 
     return result;
 }
@@ -2958,7 +2984,7 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
     XrResult result = RPCCallReleaseSwapchainImage(instance, swapchainInfo->actualHandle, releaseInfoCopy.get(), sourceImage);
 
     if(!XR_SUCCEEDED(result)) {
-		DebugBreak(); // XXX
+        DebugBreak(); // XXX
         return result;
     }
 
@@ -3834,38 +3860,11 @@ void GetPreviousActionStates(XrInstance parentInstance, XrSession session, const
     }
 }
 
-#if 0
-void UpdateSyncActionStateLastChange(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo, const std::unordered_map <XrAction, std::unordered_map<XrPath, ActionStateUnion>> &previousActionStates)
-{
-    for(uint32_t i = 0; i < syncInfo->countActiveActionSets; i++) {
-        auto actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(syncInfo->activeActionSets[i].actionSet);
-        XrPath subactionPath = syncInfo->activeActionSets[i].subactionPath;
-        for(auto actionInfo: actionSetInfo->childActions) {
-            if(subactionPath == XR_NULL_PATH) {
-                for(XrPath subactionPath: actionInfo->subactionPaths) {
-                    if(previousActionStates.at(actionInfo->localHandle).count(subactionPath) > 0) {
-                        UpdateActionStateLastChange(actionInfo->createInfo->actionType, &previousActionStates.at(actionInfo->localHandle).at(subactionPath), &actionInfo->stateBySubactionPath.at(subactionPath));
-                    }
-                }
-            } else {
-                if(actionInfo->stateBySubactionPath.count(subactionPath) > 0) {
-                    if(previousActionStates.count(subactionPath) > 0) {
-                        UpdateActionStateLastChange(actionInfo->createInfo->actionType, &previousActionStates.at(actionInfo->localHandle).at(subactionPath), &actionInfo->stateBySubactionPath.at(subactionPath));
-                    }
-                }
-            }
-        }
-    }
-}
-#endif
-
 XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
 {
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
-
-    //DebugBreak();
 
     // Make queryable data structures for data spread across activeActionSets
     std::set<OverlaysLayerXrActionSetHandleInfo::Ptr> actionSetInfos;
@@ -3884,14 +3883,10 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
         for(auto actionInfo: actionSetInfo->childActions) {
             actionInfos.insert(actionInfo);
             for(auto subactionPath: subactionPaths) {
-                if(subactionPath != XR_NULL_PATH) {
-                    if(actionInfo->subactionPaths.count(subactionPath) == 0) {
-                        return XR_ERROR_PATH_UNSUPPORTED;
-                    }
-                    actionInfoSubactionPaths[actionInfo].insert(subactionPath);
-                } else {
-                    actionInfoSubactionPaths[actionInfo].insert(actionInfo->subactionPaths.begin(), actionInfo->subactionPaths.end());
+                if((subactionPath != XR_NULL_PATH) && (actionInfo->subactionPaths.count(subactionPath) == 0)) {
+                    return XR_ERROR_PATH_UNSUPPORTED;
                 }
+                actionInfoSubactionPaths[actionInfo].insert(subactionPath);
             }
         }
     }

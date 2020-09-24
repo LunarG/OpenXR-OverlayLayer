@@ -1771,8 +1771,31 @@ GetInputSourceLocalizedNameRPC = {
     "function" : "OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay"
 }
 
+DestroyActionRPC = {
+    "command_name" : "DestroyAction",
+    "args" : (
+        {
+            "name" : "action",
+            "type" : "POD",
+            "pod_type" : "XrAction",
+        },
+    ),
+    "function" : "OverlaysLayerDestroyActionMainAsOverlay"
+}
+
+DestroyActionSetRPC = {
+    "command_name" : "DestroyActionSet",
+    "args" : (
+        {
+            "name" : "actionSet",
+            "type" : "POD",
+            "pod_type" : "XrActionSet",
+        },
+    ),
+    "function" : "OverlaysLayerDestroyActionSetMainAsOverlay"
+}
+
 rpcs = (
-    GetInputSourceLocalizedNameRPC,
     CreateSessionRPC,
     DestroySessionRPC,
     EnumerateSwapchainFormatsRPC,
@@ -1796,6 +1819,9 @@ rpcs = (
     ReleaseSwapchainImageRPC,
     SyncActionsAndGetStateRPC,
     CreateActionSpaceFromBindingRPC,
+    GetInputSourceLocalizedNameRPC,
+    DestroyActionSetRPC,
+    DestroyActionRPC,
 )
 
 
@@ -2108,8 +2134,6 @@ source_text += f"""
 stub_em = (
     "ApplyHapticFeedback",
     "StopHapticFeedback",
-    "DestroyActionSet",
-    "DestroyAction",
 
     "SessionBeginDebugUtilsLabelRegionEXT",
     "SessionEndDebugUtilsLabelRegionEXT",
