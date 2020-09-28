@@ -221,6 +221,7 @@ struct action_state_t {
     XrActionSet actionSet;
     XrAction poseAction;
     XrAction selectAction;
+    XrAction vibrateAction;
     XrPath handSubactionPath[2];
     XrSpace handSpace[2];
     XrPosef handPose[2];
@@ -252,7 +253,7 @@ public:
     }
     ~OpenXRProgram()
     {
-        if(false) {
+        if(true) {
             // These are destroyed by xrDestroySession but written here for clarity
             for(int eye = 0; eye < 2; eye++) {
                 if(mSwapchains[eye] != XR_NULL_HANDLE) {
@@ -280,9 +281,9 @@ public:
     void CreateSwapChainsAndGetImages(DXGI_FORMAT format);
     void CreateContentSpace();
     void RequestExitSession();
-    void ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame);
+    void ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame, action_state_t& actionState);
     void ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bool& quit, bool& doFrame);
-    void ProcessEvents(bool& quit, bool &doFrame);
+    void ProcessEvents(bool& quit, bool &doFrame, action_state_t& actionState);
     void GetActionState(action_state_t& actionState);
     uint32_t AcquireAndWaitSwapchainImage(int eye);
     void ReleaseSwapchainImage(int eye);
@@ -303,6 +304,8 @@ public:
     bool IsDebugUtilsAvailable() const { return mDebugUtilsAvailable; }
     bool IsPermissionsSupportAvailable() const { return mPermissionsSupportAvailable; }
     bool IsRunning();
+
+    XrFrameState GetWaitFrameState() { return mWaitFrameState; }
 
 private:
     bool        mRequestOverlaySession = false;
@@ -357,9 +360,15 @@ void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersi
 
     std::vector<const char*> requiredExtensionNames;
     requiredExtensionNames.push_back("XR_KHR_D3D11_enable");
+
+    if (mRequestOverlaySession) {
+        requiredExtensionNames.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
+    }
+
     if(mDebugUtilsAvailable) {
         requiredExtensionNames.push_back("XR_EXT_debug_utils");
     }
+
     if(mPermissionsSupportAvailable) {
         requiredExtensionNames.push_back("XR_EXT_permissions_support");
     }
@@ -400,7 +409,6 @@ void OpenXRProgram::GetSystem()
 
 void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlaySession, bool requestPosePermission)
 {
-
     void* chain = nullptr;
 
     XrGraphicsBindingD3D11KHR d3dBinding{XR_TYPE_GRAPHICS_BINDING_D3D11_KHR};
@@ -408,9 +416,12 @@ void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlay
     chain = &d3dBinding;
 
     if(requestOverlaySession) {
-        std::cerr << "An overlay session was requested but the overlay extension is not available.\n";
-        exit(EXIT_FAILURE);
-    }  
+        XrSessionCreateInfoOverlayEXTX sessionCreateInfoOverlay{ XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX };
+        sessionCreateInfoOverlay.next = chain;
+        sessionCreateInfoOverlay.createFlags = 0;
+        sessionCreateInfoOverlay.sessionLayersPlacement = 1;
+        chain = &sessionCreateInfoOverlay;
+    }
 
     if(requestPosePermission) {
     }
@@ -545,30 +556,67 @@ void OpenXRProgram::CreateActions(action_state_t& actionState)
     strcpy_s(actionInfo.localizedActionName, "Select");
     CHECK_XR(xrCreateAction(actionState.actionSet, &actionInfo, &actionState.selectAction));
 
+    actionInfo.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
+    strcpy_s(actionInfo.actionName, "vibrate");
+    strcpy_s(actionInfo.localizedActionName, "Vibrate");
+    CHECK_XR(xrCreateAction(actionState.actionSet, &actionInfo, &actionState.vibrateAction));
+
     XrPath profilePath;
     XrPath posePath[2];
     XrPath selectPath[2];
-    CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/aim/pose", &posePath[0]));
-    CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/aim/pose", &posePath[1]));
-    CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/select/click", &selectPath[0]));
-    CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/select/click", &selectPath[1]));
-    CHECK_XR(xrStringToPath(mInstance, "/interaction_profiles/khr/simple_controller", &profilePath));
+    XrPath vibrationPath[2];
+    if(true) {
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/aim/pose", &posePath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/aim/pose", &posePath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/select/click", &selectPath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/select/click", &selectPath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/output/haptic", &vibrationPath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/output/haptic", &vibrationPath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/interaction_profiles/khr/simple_controller", &profilePath));
 
-    XrActionSuggestedBinding bindings[] = {
-        {actionState.poseAction, posePath[0]},
-        {actionState.poseAction, posePath[1]},
-        {actionState.selectAction, selectPath[0]},
-        {actionState.selectAction, selectPath[1]},
-    };
+        XrActionSuggestedBinding khr_bindings[] = {
+            {actionState.poseAction, posePath[0]},
+            {actionState.poseAction, posePath[1]},
+            {actionState.selectAction, selectPath[0]},
+            {actionState.selectAction, selectPath[1]},
+            {actionState.vibrateAction, vibrationPath[0]},
+            {actionState.vibrateAction, vibrationPath[1]},
+        };
 
-    XrInteractionProfileSuggestedBinding suggestedBinding{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
-    suggestedBinding.interactionProfile = profilePath;
-    suggestedBinding.suggestedBindings = &bindings[0];
-    suggestedBinding.countSuggestedBindings = _countof(bindings);
-    CHECK_XR(xrSuggestInteractionProfileBindings(mInstance, &suggestedBinding));
+        XrInteractionProfileSuggestedBinding suggestedBinding_khr{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        suggestedBinding_khr.interactionProfile = profilePath;
+        suggestedBinding_khr.suggestedBindings = &khr_bindings[0];
+        suggestedBinding_khr.countSuggestedBindings = _countof(khr_bindings);
+        CHECK_XR(xrSuggestInteractionProfileBindings(mInstance, &suggestedBinding_khr));
+    }
+
+    if(true) {
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/aim/pose", &posePath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/aim/pose", &posePath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/x/click", &selectPath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/a/click", &selectPath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/output/haptic", &vibrationPath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/output/haptic", &vibrationPath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/interaction_profiles/oculus/touch_controller", &profilePath));
+
+        XrActionSuggestedBinding ovr_bindings[] = {
+            {actionState.poseAction, posePath[0]},
+            {actionState.poseAction, posePath[1]},
+            {actionState.selectAction, selectPath[0]},
+            {actionState.selectAction, selectPath[1]},
+            {actionState.vibrateAction, vibrationPath[0]},
+            {actionState.vibrateAction, vibrationPath[1]},
+        };
+
+        XrInteractionProfileSuggestedBinding suggestedBinding_ovr{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        suggestedBinding_ovr.interactionProfile = profilePath;
+        suggestedBinding_ovr.suggestedBindings = &ovr_bindings[0];
+        suggestedBinding_ovr.countSuggestedBindings = _countof(ovr_bindings);
+        CHECK_XR(xrSuggestInteractionProfileBindings(mInstance, &suggestedBinding_ovr));
+    }
 
     for (int32_t i = 0; i < 2; i++) {
-        XrActionSpaceCreateInfo actionSpaceInfo{ XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        XrActionSpaceCreateInfo actionSpaceInfo{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
         actionSpaceInfo.action = actionState.poseAction;
         actionSpaceInfo.poseInActionSpace = {{0,0,0,1}, {0,0,0}};
         actionSpaceInfo.subactionPath = actionState.handSubactionPath[i];
@@ -594,23 +642,23 @@ void OpenXRProgram::GetActionState(action_state_t& actionState)
     syncInfo.activeActionSets = &actionSet;
     CHECK_XR(xrSyncActions(mSession, &syncInfo));
 
-    for (uint32_t hand = 0; hand < 2; hand++) {
+     for (uint32_t hand = 0; hand < 2; hand++) {
         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
         getInfo.subactionPath = actionState.handSubactionPath[hand];
 
-        XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
-        getInfo.action = actionState.poseAction;
-        CHECK_XR(xrGetActionStatePose(mSession, &getInfo, &poseState));
-        XrSpaceLocation spaceLocation = { XR_TYPE_SPACE_LOCATION };
-        XrResult res = xrLocateSpace(actionState.handSpace[hand], mContentSpace, mWaitFrameState.predictedDisplayTime, &spaceLocation);
+            XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
+            getInfo.action = actionState.poseAction;
+            CHECK_XR(xrGetActionStatePose(mSession, &getInfo, &poseState));
+            XrSpaceLocation spaceLocation = { XR_TYPE_SPACE_LOCATION };
+            XrResult res = xrLocateSpace(actionState.handSpace[hand], mContentSpace, mWaitFrameState.predictedDisplayTime, &spaceLocation);
 
-        if (XR_UNQUALIFIED_SUCCESS(res) &&
-            (spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
-            (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
-            actionState.handPose[hand] = spaceLocation.pose;
-        }
+            if (XR_UNQUALIFIED_SUCCESS(res) &&
+                (spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
+                (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+                actionState.handPose[hand] = spaceLocation.pose;
+			}
+            actionState.handActive[hand] = poseState.isActive;
 
-        actionState.handActive[hand] = poseState.isActive;
         XrActionStateBoolean selectState{XR_TYPE_ACTION_STATE_BOOLEAN};
         getInfo.action = actionState.selectAction;
         CHECK_XR(xrGetActionStateBoolean(mSession, &getInfo, &selectState));
@@ -691,7 +739,7 @@ void OpenXRProgram::ProcessSessionStateChangedEvent(XrEventDataBuffer* event, bo
     }
 }
 
-void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame)
+void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doFrame, action_state_t& actionState)
 {
     switch(event->type) {
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
@@ -701,7 +749,7 @@ void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doF
         }
         case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED: {
             ProcessSessionStateChangedEvent(event, quit, doFrame);
-			break;
+            break;
         }
         case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING: {
             // const auto& e = *reinterpret_cast<const XrEventDataReferenceSpaceChangePending*>(event);
@@ -714,8 +762,47 @@ void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doF
             break;
         }
         case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED: {
-            // const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(event);
-            // Handle data interaction profile changed
+            const auto& e = *reinterpret_cast<const XrEventDataInteractionProfileChanged*>(event);
+            if(e.session == mSession) {
+                std::cout << "Interaction profile Changed for our session.\n";
+
+                if (true) {
+                    std::vector<std::pair<std::string, XrAction>> actions = {
+                        {"select", actionState.selectAction,},
+                        {"pose", actionState.poseAction,},
+                    };
+
+                    for (auto a : actions) {
+                        XrBoundSourcesForActionEnumerateInfo enumerateInfo = {XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO, nullptr,
+                            a.second};
+                        uint32_t capacity;
+                        CHECK_XR(xrEnumerateBoundSourcesForAction(mSession, &enumerateInfo, 0, &capacity, nullptr));
+                        std::vector<XrPath> sources(capacity);
+                        CHECK_XR(xrEnumerateBoundSourcesForAction(mSession, &enumerateInfo, capacity, &capacity, sources.data()));
+                        static char str1[512], str2[512];
+                        uint32_t str1cap = 512, str2cap;
+                        printf("bound \"%s\" to %d sources... \n", a.first.c_str(), capacity);
+                        for (unsigned int i = 0; i < capacity; i++) {
+                            XrResult result = xrPathToString(mInstance, sources[i], 0, &str1cap, nullptr);
+                            if (result != XR_SUCCESS) {
+                                sprintf(str1, "(null path)");
+                            } else {
+                                xrPathToString(mInstance, sources[i], str1cap, &str1cap, str1);
+                            }
+                            XrInputSourceLocalizedNameGetInfo getInfo = {XR_TYPE_INPUT_SOURCE_LOCALIZED_NAME_GET_INFO, nullptr,
+                                sources[i],
+                                XR_INPUT_SOURCE_LOCALIZED_NAME_USER_PATH_BIT |
+                                    XR_INPUT_SOURCE_LOCALIZED_NAME_INTERACTION_PROFILE_BIT |
+                                    XR_INPUT_SOURCE_LOCALIZED_NAME_COMPONENT_BIT};
+                            CHECK_XR(xrGetInputSourceLocalizedName(mSession, &getInfo, 0, &str2cap, nullptr));
+                            CHECK_XR(xrGetInputSourceLocalizedName(mSession, &getInfo, str2cap, &str2cap, str2));
+                            printf("    \"%s\"(\"%s\")\n", str1, str2);
+                        }
+                    }
+
+                    fflush(stdout);
+        }
+            }
             break;
         }
         default: {
@@ -725,14 +812,14 @@ void OpenXRProgram::ProcessEvent(XrEventDataBuffer *event, bool& quit, bool& doF
     }
 }
 
-void OpenXRProgram::ProcessEvents(bool& quit, bool &doFrame)
+void OpenXRProgram::ProcessEvents(bool& quit, bool &doFrame, action_state_t& actionState)
 {
     bool getAnotherEvent = true;
     while (getAnotherEvent && !quit) {
         XrEventDataBuffer event {XR_TYPE_EVENT_DATA_BUFFER, nullptr};
         XrResult result = xrPollEvent(mInstance, &event);
         if(result == XR_SUCCESS) {
-            ProcessEvent(&event, quit, doFrame);
+            ProcessEvent(&event, quit, doFrame, actionState);
         } else {
             if (result != XR_EVENT_UNAVAILABLE) {
                 CHECK_XR(result);
@@ -922,7 +1009,7 @@ int main( void )
     //----------------------------------------------------------------------
     // Create OpenXR Instance and Session
 
-    bool createOverlaySession = false;
+    bool createOverlaySession = true;
     OpenXRProgram program(createOverlaySession);
 
     program.CreateInstance("Overlay Sample", 0, "none", 0);
@@ -971,6 +1058,8 @@ int main( void )
     program.CreateContentSpace();
     program.CreateActions(actionState);
 
+
+
     //----------------------------------------------------------------------
     // Spawn a thread to wait for a keypress to exit
 
@@ -1002,6 +1091,8 @@ int main( void )
     XrPosef layerImagePose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -2.0f}};
     XrExtent2Df layerImageExtent {1.0f * imageAspectRatios[hoverImageIdx], 1.0f};
 
+    bool hadVibrated = false;
+
     do {
         //----------------------------------------------------------------------
         // OpenXR Event Management
@@ -1018,7 +1109,7 @@ int main( void )
                 exitRequested = true;
             }
         }
-        program.ProcessEvents(quit, doFrame);
+        program.ProcessEvents(quit, doFrame, actionState);
 
         //----------------------------------------------------------------------
         // OpenXR frame loop
@@ -1062,7 +1153,22 @@ int main( void )
                 }
 
                 if (hoverActive) { // display hovered image if there is an intersection
+                    if(!hadVibrated) {
+                        XrHapticVibration vibration{XR_TYPE_HAPTIC_VIBRATION};
+                        vibration.amplitude = 1;
+                        vibration.duration = 500000000;
+                        vibration.frequency = XR_FREQUENCY_UNSPECIFIED;
+
+                        XrHapticActionInfo hapticActionInfo{XR_TYPE_HAPTIC_ACTION_INFO};
+                        hapticActionInfo.action = actionState.vibrateAction;
+                        hapticActionInfo.subactionPath = actionState.handSubactionPath[1];
+
+                        CHECK_XR(xrApplyHapticFeedback(program.GetSession(), &hapticActionInfo, (XrHapticBaseHeader*)&vibration));
+                    }
+                    hadVibrated = true;
                     whichImage = hoverImageIdx;
+                } else {
+                    hadVibrated = false;
                 }
 
                 if (toggledImage) { // display toggled image if there is an active select (only valid during intersection)
@@ -1075,6 +1181,8 @@ int main( void )
                 program.BeginFrame();
 
                 if(shouldRender) {
+
+
                     for(int eye = 0; eye < 2; eye++) {
                         uint32_t index;
                         index = program.AcquireAndWaitSwapchainImage(eye);
@@ -1124,6 +1232,10 @@ int main( void )
             }
         }
     } while(!quit);
+
+    CHECK_XR(xrDestroyAction(actionState.poseAction));
+    CHECK_XR(xrDestroyAction(actionState.selectAction));
+    CHECK_XR(xrDestroyActionSet(actionState.actionSet));
 
     return 0;
 }
