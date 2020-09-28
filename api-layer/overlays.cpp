@@ -2274,7 +2274,7 @@ XrResult OverlaysLayerDestroyActionMainAsOverlay(ConnectionToOverlay::Ptr connec
 
     XrResult result = actionInfo->downchain->DestroyAction(actionInfo->actualHandle);
     OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionInfo->parentHandle);
-    actionSetInfo->childActions.erase(info);
+    actionSetInfo->childActions.erase(actionInfo);
     OverlaysLayerRemoveXrActionFromHandleInfoMap(action);
 
     return result;
@@ -2287,7 +2287,7 @@ XrResult OverlaysLayerDestroyActionOverlay(XrInstance instance, XrAction action)
     XrResult result = RPCCallDestroyAction(instance, actionInfo->actualHandle);
 
     OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionInfo->parentHandle);
-    actionSetInfo->childActions.erase(info);
+    actionSetInfo->childActions.erase(actionInfo);
     OverlaysLayerRemoveXrActionFromHandleInfoMap(action);
 
     return result;
@@ -3913,7 +3913,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
                         WellKnownStringIndex fullBindingString = OverlaysLayerPathToWellKnownString.at(fullBindingPath);
                         WellKnownStringIndex profileString = OverlaysLayerPathToWellKnownString.at(profilePath);
 
-                        // get profile and full path which the main process side of the API layer maps to an action
+                        // get profile and full path which the main process side of the API layer maps to a placeholder action
 
                         profileStrings.push_back(profileString);
                         fullBindingStrings.push_back(fullBindingString);
@@ -4379,6 +4379,118 @@ XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateG
     }
 }
 
+void GetBindingPathsForActionAndSubactionPath(XrSession session, XrAction action, XrPath requestedSubactionPath, std::vector<std::pair<XrPath, XrPath>>& profileAndBindingPaths)
+{
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(action);
+
+    std::set<XrPath> subactionPaths;
+
+    if(requestedSubactionPath == XR_NULL_PATH) {
+        subactionPaths = actionInfo->subactionPaths;
+        subactionPaths.erase(XR_NULL_PATH); // in case it was in there
+    } else {
+        subactionPaths.insert(requestedSubactionPath);
+    }
+
+    for(auto subactionPath: subactionPaths) {
+        XrPath currentInteractionProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(subactionPath);
+
+        if(actionInfo->suggestedBindingsByProfile.count(currentInteractionProfile) > 0) {
+            for(auto fullBindingPath: actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
+
+                // XXX really should find() this - could be path from an extension
+                XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath);
+
+                if(subactionPath == bindingSubactionPath) {
+                    // get profile and full path which the main process side of the API layer maps to a placeholder action
+                    profileAndBindingPaths.push_back({currentInteractionProfile, fullBindingPath});
+                }
+            }
+        }
+    }
+}
+
+XrResult OverlaysLayerApplyHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t profileStringCount, const WellKnownStringIndex *profileStrings, const WellKnownStringIndex *bindingStrings, const XrHapticBaseHeader* hapticFeedback)
+{
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto hapticFeedbackCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrStopHapticFeedback", hapticFeedback);
+
+    for(uint32_t i = 0; i < profileStringCount; i++) {
+        XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]);
+        XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]);
+
+        XrAction actualActionHandle = sessionInfo->placeholderActionsByProfileAndFullBinding.at({profilePath, bindingPath}).first;
+
+        XrHapticActionInfo hapticActionInfo { XR_TYPE_HAPTIC_ACTION_INFO, nullptr, actualActionHandle, XR_NULL_PATH };
+
+        XrResult result = sessionInfo->downchain->ApplyHapticFeedback(sessionInfo->actualHandle, &hapticActionInfo, hapticFeedbackCopy.get());
+
+        if(result != XR_SUCCESS) {
+            return result;
+        }
+    }
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerStopHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t profileStringCount, const WellKnownStringIndex *profileStrings, const WellKnownStringIndex *bindingStrings)
+{
+    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
+
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    for(uint32_t i = 0; i < profileStringCount; i++) {
+        XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]);
+        XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]);
+
+        XrAction actualActionHandle = sessionInfo->placeholderActionsByProfileAndFullBinding.at({profilePath, bindingPath}).first;
+
+        XrHapticActionInfo hapticActionInfo { XR_TYPE_HAPTIC_ACTION_INFO, nullptr, actualActionHandle, XR_NULL_PATH };
+
+        XrResult result = sessionInfo->downchain->StopHapticFeedback(sessionInfo->actualHandle, &hapticActionInfo);
+    }
+
+    return XR_SUCCESS;
+}
+
+XrResult OverlaysLayerApplyHapticFeedbackOverlay(XrInstance instance, XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
+{
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(hapticActionInfo->action);
+
+    if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_VIBRATION_OUTPUT) {
+        return XR_ERROR_ACTION_TYPE_MISMATCH; 
+    }
+
+    if((hapticActionInfo->subactionPath != XR_NULL_PATH) && (actionInfo->subactionPaths.count(hapticActionInfo->subactionPath) == 0)) {
+        return XR_ERROR_PATH_UNSUPPORTED;
+    }
+
+    std::vector<std::pair<XrPath, XrPath>> profileAndBindingPaths;
+    GetBindingPathsForActionAndSubactionPath(session, hapticActionInfo->action, hapticActionInfo->subactionPath, profileAndBindingPaths);
+
+    if(profileAndBindingPaths.size() == 0) {
+        return XR_SUCCESS; // Spec says "If an appropriate device is unavailable the runtime may ignore this request for haptic feedback."
+    }
+
+    auto hapticFeedbackCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrStopHapticFeedback", hapticFeedback);
+
+    std::vector<WellKnownStringIndex> profileStrings;
+    std::vector<WellKnownStringIndex> bindingStrings;
+    for(auto profileAndBindingPath: profileAndBindingPaths) {
+        profileStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.first));
+        bindingStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.second));
+    }
+
+    XrResult result = RPCCallApplyHapticFeedback(sessionInfo->parentInstance, sessionInfo->actualHandle, (uint32_t)profileStrings.size(), profileStrings.data(), bindingStrings.data(), hapticFeedbackCopy.get());
+
+    return result;
+}
+
 XrResult OverlaysLayerApplyHapticFeedbackMain(XrInstance parentInstance, XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
 {
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
@@ -4416,7 +4528,7 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
         bool isProxied = sessionInfo->isProxied;
         XrResult result;
         if(isProxied) {
-            result = XR_SUCCESS; // OverlaysLayerApplyHapticFeedbackOverlay(sessionInfo->parentInstance, session, hapticActionInfo, hapticFeedback);
+            result = OverlaysLayerApplyHapticFeedbackOverlay(sessionInfo->parentInstance, session, hapticActionInfo, hapticFeedback);
         } else {
             result = OverlaysLayerApplyHapticFeedbackMain(sessionInfo->parentInstance, session, hapticActionInfo, hapticFeedback);
         }
@@ -4433,6 +4545,39 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
         return XR_ERROR_OUT_OF_MEMORY;
 
     }
+}
+
+XrResult OverlaysLayerStopHapticFeedbackOverlay(XrInstance instance, XrSession session, const XrHapticActionInfo* hapticActionInfo)
+{
+    auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(hapticActionInfo->action);
+
+    if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_VIBRATION_OUTPUT) {
+        return XR_ERROR_ACTION_TYPE_MISMATCH; 
+    }
+
+    if((hapticActionInfo->subactionPath != XR_NULL_PATH) && (actionInfo->subactionPaths.count(hapticActionInfo->subactionPath) == 0)) {
+        return XR_ERROR_PATH_UNSUPPORTED;
+    }
+
+    std::vector<std::pair<XrPath, XrPath>> profileAndBindingPaths;
+    GetBindingPathsForActionAndSubactionPath(session, hapticActionInfo->action, hapticActionInfo->subactionPath, profileAndBindingPaths);
+
+    if(profileAndBindingPaths.size() == 0) {
+        return XR_SUCCESS; // Spec says "If an appropriate device is unavailable the runtime may ignore this request for haptic feedback."
+    }
+
+    std::vector<WellKnownStringIndex> profileStrings;
+    std::vector<WellKnownStringIndex> bindingStrings;
+    for(auto profileAndBindingPath: profileAndBindingPaths) {
+        profileStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.first));
+        bindingStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.second));
+    }
+
+    XrResult result = RPCCallStopHapticFeedback(sessionInfo->parentInstance, sessionInfo->actualHandle, (uint32_t)profileStrings.size(), profileStrings.data(), bindingStrings.data());
+
+    return result;
 }
 
 XrResult OverlaysLayerStopHapticFeedbackMain(XrInstance parentInstance, XrSession session, const XrHapticActionInfo* hapticActionInfo)

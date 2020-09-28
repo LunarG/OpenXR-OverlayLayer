@@ -1795,6 +1795,74 @@ DestroyActionSetRPC = {
     "function" : "OverlaysLayerDestroyActionSetMainAsOverlay"
 }
 
+ApplyHapticFeedbackRPC = {
+    "command_name" : "ApplyHapticFeedback",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "countProfileAndBindings",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "profileStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfileAndBindings",
+            "is_const" : True
+        },
+        {
+            "name" : "bindingStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfileAndBindings",
+            "is_const" : True
+        },
+        {
+            "name" : "hapticFeedback",
+            "type" : "xr_struct_pointer",
+            "struct_type" : "XrHapticBaseHeader",
+            "is_const" : True
+        },
+    ),
+    "function" : "OverlaysLayerApplyHapticFeedbackMainAsOverlay"
+}
+
+StopHapticFeedbackRPC = {
+    "command_name" : "StopHapticFeedback",
+    "args" : (
+        {
+            "name" : "session",
+            "type" : "POD",
+            "pod_type" : "XrSession",
+        },
+        {
+            "name" : "countProfileAndBindings",
+            "type" : "POD",
+            "pod_type" : "uint32_t",
+        },
+        {
+            "name" : "profileStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfileAndBindings",
+            "is_const" : True
+        },
+        {
+            "name" : "bindingStrings",
+            "type" : "fixed_array",
+            "base_type" : "WellKnownStringIndex",
+            "input_size" : "countProfileAndBindings",
+            "is_const" : True
+        },
+    ),
+    "function" : "OverlaysLayerStopHapticFeedbackMainAsOverlay"
+}
+
 rpcs = (
     CreateSessionRPC,
     DestroySessionRPC,
@@ -1822,6 +1890,8 @@ rpcs = (
     GetInputSourceLocalizedNameRPC,
     DestroyActionSetRPC,
     DestroyActionRPC,
+    ApplyHapticFeedbackRPC,
+    StopHapticFeedbackRPC,
 )
 
 
@@ -2132,8 +2202,6 @@ source_text += f"""
 
 # XXX temporary stubs
 stub_em = (
-    "ApplyHapticFeedback",
-    "StopHapticFeedback",
 
     "SessionBeginDebugUtilsLabelRegionEXT",
     "SessionEndDebugUtilsLabelRegionEXT",
