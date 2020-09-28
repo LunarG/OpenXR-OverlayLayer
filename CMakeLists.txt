@@ -29,8 +29,6 @@ find_package(PythonInterp 3)
 
 project(XR_overlay)
 
-add_subdirectory(XR_overlay_ext)
-add_subdirectory(OverlayUser_Remote)
 add_subdirectory(overlay-sample)
 add_subdirectory(api-layer)
 
