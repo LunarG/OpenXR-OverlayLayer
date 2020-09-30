@@ -1235,8 +1235,24 @@ bool OpenRPCChannels(XrInstance instance, DWORD otherProcessId, DWORD overlayId,
 }
 
 
-std::unordered_map<DWORD, std::shared_ptr<ConnectionToOverlay>> gConnectionsToOverlayByProcessId;
+std::unordered_map<DWORD, ConnectionToOverlay::Ptr> gConnectionsToOverlayByProcessId;
+std::vector<ConnectionToOverlay::Ptr> gConnectionsToOverlayInDepthOrder;
 std::recursive_mutex gConnectionsToOverlayByProcessIdMutex;
+
+// Assumes exclusive access to parameters, so lock around this if necessary
+void SortOverlaysByPriority(const std::unordered_map<DWORD, ConnectionToOverlay::Ptr>& connectionsToOverlayByProcessId, 
+    std::vector<ConnectionToOverlay::Ptr>& connectionsToOverlayInDepthOrder)
+{
+    connectionsToOverlayInDepthOrder.clear();
+    for(auto [processId, conn]: connectionsToOverlayByProcessId) {
+        auto l = conn->GetLock();
+        if(conn->ctx) {
+            connectionsToOverlayInDepthOrder.push_back(conn);
+        }
+    }
+
+    std::sort(connectionsToOverlayInDepthOrder.begin(), connectionsToOverlayInDepthOrder.end(), [](const ConnectionToOverlay::Ptr &a, const ConnectionToOverlay::Ptr &b){ auto la = a->GetLock(); auto la2 = a->ctx->GetLock(); auto lb = b->GetLock(); auto lb2 = b->ctx->GetLock(); return a->ctx->sessionLayersPlacement < b->ctx->sessionLayersPlacement; });
+}
 
 
 XrBaseInStructure* IPCSerialize(XrInstance instance, IPCBuffer& ipcbuf, IPCHeader* header, const XrBaseInStructure* srcbase, CopyType copyType)
@@ -1375,6 +1391,7 @@ XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connec
     {
         auto l = connection->GetLock();
         connection->ctx = std::make_shared<MainAsOverlaySessionContext>(createInfoOverlay);
+        SortOverlaysByPriority(gConnectionsToOverlayByProcessId, gConnectionsToOverlayInDepthOrder);
     }
 
     *session = mainSession;
@@ -1427,6 +1444,7 @@ void MainRPCThreadBody(ConnectionToOverlay::Ptr connection, DWORD overlayProcess
     {
         std::unique_lock<std::recursive_mutex> m(gConnectionsToOverlayByProcessIdMutex);
         gConnectionsToOverlayByProcessId.erase(connection->conn.otherProcessId);
+        SortOverlaysByPriority(gConnectionsToOverlayByProcessId, gConnectionsToOverlayInDepthOrder);
     }
 }
 
@@ -2076,6 +2094,12 @@ bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
         XrPath matchingBinding = XR_NULL_PATH;
         XrPath matchingProfile = currentInteractionProfile;
         bool found = false;
+        if (actionInfo->suggestedBindingsByProfile.count(currentInteractionProfile) == 0) {
+            OverlaysLayerLogMessage(spaceInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrLocateSpace",
+                OverlaysLayerNoObjectInfo, "Couldn't find a suggested binding matching the interaction profile for an Action; XrSpace will not be locatable; are controllers turned on?");
+            return false;
+        }
+
         for(XrPath binding : actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
             XrPath subactionPath = OverlaysLayerBindingToSubaction.at(binding);
             if(subactionPath == spaceInfo->actionSpaceCreateInfo->subactionPath) {
@@ -2104,7 +2128,7 @@ bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
             return false;
         }
 
-		spaceInfo->createdWithInteractionProfile = matchingProfile;
+        spaceInfo->createdWithInteractionProfile = matchingProfile;
     }
 
     return true;
@@ -2129,6 +2153,7 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
             }
 
             if(!SynchronizeActionSpaceWithMain(instance, space)) {
+                // We couldn't get a placeholderAction in Main for this ActionSpace, so return not locatable
                 location->locationFlags = 0;
                 return XR_SUCCESS;
             }
@@ -3103,16 +3128,15 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 
     {
         std::unique_lock<std::recursive_mutex> connectionLock(gConnectionsToOverlayByProcessIdMutex);
-        if(!gConnectionsToOverlayByProcessId.empty()) {
-            for(auto& overlayconn: gConnectionsToOverlayByProcessId) {
-                auto conn = overlayconn.second;
+        if(!gConnectionsToOverlayInDepthOrder.empty()) {
+            for(auto& overlayconn: gConnectionsToOverlayInDepthOrder) {
                 connectionLock.unlock();
-                auto lock = conn->GetLock();
-                if(conn->ctx) {
-                    auto lock2 = conn->ctx->GetLock();
-                    for(uint32_t i = 0; i < conn->ctx->overlayLayers.size(); i++) {
-                        AddSwapchainsFromLayers(sessionInfo, conn->ctx->overlayLayers[i], swapchainsInFlight);
-                        layersMerged.push_back(conn->ctx->overlayLayers[i].get());
+                auto lock = overlayconn->GetLock();
+                if(overlayconn->ctx) {
+                    auto lock2 = overlayconn->ctx->GetLock();
+                    for(uint32_t i = 0; i < overlayconn->ctx->overlayLayers.size(); i++) {
+                        AddSwapchainsFromLayers(sessionInfo, overlayconn->ctx->overlayLayers[i], swapchainsInFlight);
+                        layersMerged.push_back(overlayconn->ctx->overlayLayers[i].get());
                     }
                 }
                 connectionLock.lock();
