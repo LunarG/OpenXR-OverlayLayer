@@ -646,24 +646,31 @@ void OpenXRProgram::GetActionState(action_state_t& actionState)
         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
         getInfo.subactionPath = actionState.handSubactionPath[hand];
 
-            XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
-            getInfo.action = actionState.poseAction;
-            CHECK_XR(xrGetActionStatePose(mSession, &getInfo, &poseState));
-            XrSpaceLocation spaceLocation = { XR_TYPE_SPACE_LOCATION };
-            XrResult res = xrLocateSpace(actionState.handSpace[hand], mContentSpace, mWaitFrameState.predictedDisplayTime, &spaceLocation);
+        XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
+        getInfo.action = actionState.poseAction;
+        CHECK_XR(xrGetActionStatePose(mSession, &getInfo, &poseState));
+        XrSpaceLocation spaceLocation = { XR_TYPE_SPACE_LOCATION };
+        XrResult res = xrLocateSpace(actionState.handSpace[hand], mContentSpace, mWaitFrameState.predictedDisplayTime, &spaceLocation);
 
-            if (XR_UNQUALIFIED_SUCCESS(res) &&
-                (spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
-                (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
-                actionState.handPose[hand] = spaceLocation.pose;
-			}
-            actionState.handActive[hand] = poseState.isActive;
+        if (XR_UNQUALIFIED_SUCCESS(res) &&
+            (spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
+            (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
+            actionState.handPose[hand] = spaceLocation.pose;
+		}
+        actionState.handActive[hand] = poseState.isActive;
 
         XrActionStateBoolean selectState{XR_TYPE_ACTION_STATE_BOOLEAN};
         getInfo.action = actionState.selectAction;
         CHECK_XR(xrGetActionStateBoolean(mSession, &getInfo, &selectState));
 
         actionState.handSelect[hand] = selectState.currentState && selectState.changedSinceLastSync;
+        static XrBool32 oldstate = false;
+        if(false) {
+            if((hand == 1) && (oldstate != selectState.currentState)) {
+                printf("%s, %schanged since last sync\n", selectState.currentState ? "pressed" : "released", selectState.changedSinceLastSync ? "" : "not ");
+                oldstate = selectState.currentState;
+            }
+        }
     }
 }
 
