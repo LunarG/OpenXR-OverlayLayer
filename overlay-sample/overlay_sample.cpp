@@ -631,7 +631,9 @@ void OpenXRProgram::CreateActions(action_state_t& actionState)
 
 void OpenXRProgram::GetActionState(action_state_t& actionState)
 {
-    if (mSessionState != XR_SESSION_STATE_FOCUSED) return;
+    if (mSessionState != XR_SESSION_STATE_FOCUSED) {
+        return;
+    }
 
     XrActiveActionSet actionSet{};
     actionSet.actionSet = actionState.actionSet;
@@ -640,9 +642,13 @@ void OpenXRProgram::GetActionState(action_state_t& actionState)
     XrActionsSyncInfo syncInfo{XR_TYPE_ACTIONS_SYNC_INFO};
     syncInfo.countActiveActionSets = 1;
     syncInfo.activeActionSets = &actionSet;
-    CHECK_XR(xrSyncActions(mSession, &syncInfo));
+    XrResult result = xrSyncActions(mSession, &syncInfo);
 
-     for (uint32_t hand = 0; hand < 2; hand++) {
+    if(result == XR_SESSION_NOT_FOCUSED) {
+        return;
+    }
+
+    for (uint32_t hand = 0; hand < 2; hand++) {
         XrActionStateGetInfo getInfo{XR_TYPE_ACTION_STATE_GET_INFO};
         getInfo.subactionPath = actionState.handSubactionPath[hand];
 
@@ -656,7 +662,7 @@ void OpenXRProgram::GetActionState(action_state_t& actionState)
             (spaceLocation.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0 &&
             (spaceLocation.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0) {
             actionState.handPose[hand] = spaceLocation.pose;
-		}
+        }
         actionState.handActive[hand] = poseState.isActive;
 
         XrActionStateBoolean selectState{XR_TYPE_ACTION_STATE_BOOLEAN};
