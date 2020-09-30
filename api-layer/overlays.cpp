@@ -3985,11 +3985,12 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
                 const std::string& profile = OverlaysLayerWellKnownStrings.at(profileStrings.at(i));
                 const std::string& fullBinding = OverlaysLayerWellKnownStrings.at(fullBindingStrings.at(i));
                 XrActionStateBoolean* boolean = (XrActionStateBoolean*)&states[i];
-                printf("for action \"%s\", subactionPath \"%s\" I fetched %s%s; currentState is %s, active is %s\n",
+                printf("for action \"%s\", subactionPath \"%s\" I fetched %s%s; currentState is %s, active is %s, changedSinceLastSync is %d\n",
                     actionInfo->createInfo->actionName,
                     PathToString(sessionInfo->parentInstance, subactionPath).c_str(),
                     profile.c_str(), fullBinding.c_str(),
-                    boolean->currentState ? "true" : "false", boolean->isActive ? "true" : "false");
+                    boolean->currentState ? "true" : "false", boolean->isActive ? "true" : "false",
+                    boolean->changedSinceLastSync);
             } 
 
             /* merge all states that are represented under this subactionPath */
@@ -4010,27 +4011,38 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
 
             if(false) if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_BOOLEAN_INPUT) { // XXX debug
                 XrActionStateBoolean* boolean = (XrActionStateBoolean*)&actionInfo->stateBySubactionPath.at(subactionPath);
-                printf("for action \"%s\", subactionPath \"%s\", merged state is now currentState is %s, active is %s\n",
+                printf("for action \"%s\", subactionPath \"%s\", merged state is now currentState is %s, active is %s, changedSinceLastSync is %d\n",
                     actionInfo->createInfo->actionName,
                     PathToString(sessionInfo->parentInstance, subactionPath).c_str(),
-                    boolean->currentState ? "true" : "false", boolean->isActive ? "true" : "false");
+                    boolean->currentState ? "true" : "false", boolean->isActive ? "true" : "false",
+                    boolean->changedSinceLastSync);
             } 
         }
 
         // On all actions in current state and all subactionPaths, set lastSyncTime and changedSinceLastSync 
         for(const auto& [actionInfo, subactionPaths] : actionInfoSubactionPaths) {
-            for(auto subactionPath: subactionPaths) {
+
+            std::set<XrPath> subactionPathsToUpdate;
+
+            if(subactionPaths.count(XR_NULL_PATH) != 0) {
+                subactionPathsToUpdate = actionInfo->subactionPaths;
+                subactionPathsToUpdate.insert(XR_NULL_PATH);
+            } else {
+                subactionPathsToUpdate = subactionPaths;
+            }
+
+            for(auto subactionPath: subactionPathsToUpdate) {
                 if(previousActionStates.count(actionInfo) != 0) {
                     auto previousStates = previousActionStates.at(actionInfo);
                     if(previousStates.count(subactionPath) != 0) {
                         auto previousState = previousStates.at(subactionPath);
                         UpdateActionStateLastChange(actionInfo->createInfo->actionType, &previousState, &actionInfo->stateBySubactionPath.at(subactionPath));
-                        if(false) if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_FLOAT_INPUT) { // XXX debug
-                            XrActionStateFloat* floatState = &actionInfo->stateBySubactionPath.at(subactionPath).floatState;
+                        if(false) if(actionInfo->createInfo->actionType == XR_ACTION_TYPE_BOOLEAN_INPUT) { // XXX debug
+                            XrActionStateBoolean* booleanState = &actionInfo->stateBySubactionPath.at(subactionPath).booleanState;
                             printf("for action \"%s\", subactionPath \"%s\"; changedSinceLastSync is %d, last time is %lld\n",
                                 actionInfo->createInfo->actionName,
                                 PathToString(sessionInfo->parentInstance, subactionPath).c_str(),
-                                floatState->changedSinceLastSync, floatState->lastChangeTime);
+                                booleanState->changedSinceLastSync, booleanState->lastChangeTime);
                         } 
                     }
                 }
