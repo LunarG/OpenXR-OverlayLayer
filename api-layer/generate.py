@@ -89,15 +89,16 @@ commands = {}
 reg_commands = root.find("commands")
 
 for reg_command in reg_commands:
-    # print("%s" % (reg_command.find("proto").find("name").text))
-    command = {}
-    command["return_type"] = reg_command.find("proto").find("type").text
-    command_name = reg_command.find("proto").find("name").text
-    command["name"] = command_name
-    command["parameters"] = []
-    for reg_parameter in reg_command.findall("param"):
-        command["parameters"].append(parse_parameter(reg_parameter))
-    commands[command_name] = command
+    # if it's an alias (e.g. xrGetVulkanGraphicsRequirements2KHR), skip it for now
+    if not "alias" in reg_command.keys():
+        command = {}
+        command["return_type"] = reg_command.find("proto").find("type").text
+        command_name = reg_command.find("proto").find("name").text
+        command["name"] = command_name
+        command["parameters"] = []
+        for reg_parameter in reg_command.findall("param"):
+            command["parameters"].append(parse_parameter(reg_parameter))
+        commands[command_name] = command
 
 reg_types = root.find("types")
 
@@ -133,8 +134,9 @@ for reg_type in reg_types:
     if protect and not protect in have_protection:
         continue
 
-    if reg_type.attrib.get("category", "") == "struct":
+    if reg_type.attrib.get("category", "") == "struct" and not "alias" in reg_type.keys():
         struct_name = reg_type.attrib["name"]
+        print("%s" % struct_name)
         extends = reg_type.attrib.get("structextends", "")
         typeenum = reg_type.findall("member")[0].attrib.get("values", "")
         members = []
