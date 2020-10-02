@@ -615,6 +615,31 @@ void OpenXRProgram::CreateActions(action_state_t& actionState)
         CHECK_XR(xrSuggestInteractionProfileBindings(mInstance, &suggestedBinding_ovr));
     }
 
+    if (true) {
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/aim/pose", &posePath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/aim/pose", &posePath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/input/thumbstick/click", &selectPath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/input/trackpad/click", &selectPath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/left/output/haptic", &vibrationPath[0]));
+        CHECK_XR(xrStringToPath(mInstance, "/user/hand/right/output/haptic", &vibrationPath[1]));
+        CHECK_XR(xrStringToPath(mInstance, "/interaction_profiles/microsoft/motion_controller", &profilePath));
+
+        XrActionSuggestedBinding wmr_bindings[] = {
+            {actionState.poseAction, posePath[0]},
+            {actionState.poseAction, posePath[1]},
+            {actionState.selectAction, selectPath[0]},
+            {actionState.selectAction, selectPath[1]},
+            {actionState.vibrateAction, vibrationPath[0]},
+            {actionState.vibrateAction, vibrationPath[1]},
+        };
+
+        XrInteractionProfileSuggestedBinding suggestedBinding_wmr{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+        suggestedBinding_wmr.interactionProfile = profilePath;
+        suggestedBinding_wmr.suggestedBindings = &wmr_bindings[0];
+        suggestedBinding_wmr.countSuggestedBindings = _countof(wmr_bindings);
+        CHECK_XR(xrSuggestInteractionProfileBindings(mInstance, &suggestedBinding_wmr));
+    }
+
     for (int32_t i = 0; i < 2; i++) {
         XrActionSpaceCreateInfo actionSpaceInfo{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
         actionSpaceInfo.action = actionState.poseAction;
