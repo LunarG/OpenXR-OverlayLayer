@@ -1706,7 +1706,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
 
     // Only on Overlay XrSession Creation, connect to the main app.
     if(!ConnectToMain(instance)) {
-        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "XrCreateSession",
+        OverlaysLayerLogMessage(gNegotiationChannels.instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateSession",
             OverlaysLayerNoObjectInfo, "Couldn't connect to main app.");
         return XR_ERROR_INITIALIZATION_FAILED;
     }
@@ -3102,7 +3102,7 @@ void AddSwapchainsFromLayers(OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo, 
                 sprintf(structureTypeName, "(type %08X)", p->type);
             }
 
-            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "XrEndFrame",
+            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrEndFrame",
                 OverlaysLayerNoObjectInfo, fmt("a compositiion layer was provided of a type (%s) which the Overlay API Layer does not know how to check; will not be added to swapchains protected while submitted.  A crash may result.", structureTypeName).c_str());
             break;
         }
@@ -3838,7 +3838,7 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
         XrResult result2 = sessionInfo->downchain->GetCurrentInteractionProfile(sessionInfo->actualHandle, p, &interactionProfile);
 
         if(result2 != XR_SUCCESS) {
-            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
+            OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrSyncActions",
                 OverlaysLayerNoObjectInfo,
                 fmt("Couldn't get current interaction profile for top-level path \"%s\" in OverlaysLayerSyncActionsAndGetStateMainAsOverlay", PathToString(sessionInfo->parentInstance, p).c_str()).c_str());
             interactionProfileStrings[i] = WellKnownStringIndex::NULL_PATH;
@@ -4202,7 +4202,7 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
             result = sessionInfo->downchain->GetCurrentInteractionProfile(sessionInfo->actualHandle, p, &interactionProfile);
 
             if(result != XR_SUCCESS) {
-                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "XrSyncActions",
+                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrSyncActions",
                     OverlaysLayerNoObjectInfo,
                     fmt("Couldn't get current interaction profile for top-level path \"%s\" in order to possibly synthesize a profile change event", PathToString(sessionInfo->parentInstance, p).c_str()).c_str());
                 return XR_ERROR_RUNTIME_FAILURE;
@@ -4705,14 +4705,22 @@ XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance,
         if(subactionPath != XR_NULL_PATH) {
             XrPath currentInteractionProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(subactionPath);
 
-            for(auto fullBindingPath: actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
+            if(actionInfo->suggestedBindingsByProfile.count(currentInteractionProfile) == 0) {
+                OverlaysLayerLogMessage(sessionInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrEnumerateBoundSourcesForAction",
+                    OverlaysLayerNoObjectInfo,
+                    fmt("Couldn't get current interaction profile for action \"%s\" for top-level path \"%s\". It's possible Main App has suggested bindings for a profile for which this Overlay App didn't.  EnumerateBoundSourcesForAction may incorrectly return 0 sources.", actionInfo->createInfo->actionName, PathToString(sessionInfo->parentInstance, subactionPath).c_str()).c_str());
 
-                // XXX really should find() this - could be path from an extension
-                XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath);
+            } else {
 
-                if(subactionPath == bindingSubactionPath) {
+                for(auto fullBindingPath: actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
 
-                    boundSourcesForAction.insert(fullBindingPath);
+                    // XXX really should find() this - could be path from an extension
+                    XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath);
+
+                    if(subactionPath == bindingSubactionPath) {
+
+                        boundSourcesForAction.insert(fullBindingPath);
+                    }
                 }
             }
         }
