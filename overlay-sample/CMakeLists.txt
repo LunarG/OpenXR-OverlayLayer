@@ -27,6 +27,14 @@ cmake_minimum_required(VERSION 3.12.2)
 
 project(OverlaySample)
 
+if(NOT DEFINED OPENXR_LIB_DIR OR
+   NOT DEFINED OPENXR_INCLUDE_DIR)
+    message(
+        FATAL_ERROR
+            "Please generate projects from parent directory"
+    )
+endif()
+
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release"
     CACHE STRING "Configuration types" FORCE)
 
@@ -37,8 +45,6 @@ find_package(FreeImage)
 
 set(FREEIMAGEPLUS_FIND_REQUIRED, TRUE)
 find_package(FreeImagePlus)
-
-set(OPENXR_LOADER_LIB ${CMAKE_SOURCE_DIR}/vendored/openxr_loader.lib CACHE STRING "OpenXR loader .lib")
 
 add_executable(OverlaySample
   overlay_sample.cpp
@@ -113,7 +119,7 @@ set_property(TARGET OverlaySample
   "$<$<CONFIG:Release>:d3d11>"
   "$<$<CONFIG:Debug>:dxgi>"
   "$<$<CONFIG:Release>:dxgi>"
-  ${OPENXR_LOADER_LIB}
+  ${OPENXR_LIB_DIR}/openxr_loader.lib
 )
 
 if(WIN32)

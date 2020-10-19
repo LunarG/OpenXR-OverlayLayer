@@ -28,10 +28,11 @@
 cmake_minimum_required(VERSION 3.12.2)
 
 # find openxr - OPENXR_SDK_SOURCE_ROOT
-if(NOT OPENXR_SDK_SOURCE_ROOT)
+if(NOT DEFINED OPENXR_SDK_SOURCE_ROOT OR
+   NOT DEFINED OPENXR_INCLUDE_DIR)
     message(
         FATAL_ERROR
-            "Set OPENXR_SDK_SOURCE_ROOT to root of OpenXR-SDK-Source 1.0.9 tree with built header and global_generaed_files"
+            "Please generate projects from parent directory"
     )
 endif()
 
@@ -111,7 +112,7 @@ target_include_directories(xr_extx_overlay
     # for OpenXR headers
     # ${OPENXR_SDK_SOURCE_ROOT}/build/include/openxr
     ${OPENXR_SDK_SOURCE_ROOT}/build/include
-    ${OPENXR_SDK_SOURCE_ROOT}/include/openxr
+    ${OPENXR_INCLUDE_DIR}
 
     # for generated dispatch table
     ${OPENXR_SDK_SOURCE_ROOT}/build/src

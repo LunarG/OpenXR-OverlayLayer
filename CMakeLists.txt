@@ -27,6 +27,23 @@ cmake_minimum_required(VERSION 3.12.2)
 
 find_package(PythonInterp 3)
 
+# find openxr - OPENXR_SDK_SOURCE_ROOT
+# TODO: move this as well as library related vars to a find module
+if(NOT DEFINED OPENXR_SDK_SOURCE_ROOT)
+    message(
+        FATAL_ERROR
+            "Set OPENXR_SDK_SOURCE_ROOT to root of OpenXR-SDK-Source 1.0.9 tree with built header and global_generaed_files"
+    )
+endif()
+
+if(NOT OPENXR_LIB_DIR)
+    message(
+        FATAL_ERROR
+            "Set OPENXR_LIB_DIR to desired built openxr loader"
+    )
+endif()
+set(OPENXR_INCLUDE_DIR ${OPENXR_SDK_SOURCE_ROOT}/include/openxr)
+
 project(XR_overlay)
 
 add_subdirectory(overlay-sample)
