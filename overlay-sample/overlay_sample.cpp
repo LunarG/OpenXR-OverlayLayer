@@ -81,6 +81,8 @@ constexpr uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 
 constexpr int gFudgeMinAlpha = 128;
 
+int gLayerPlacement = 0;
+
 // OpenXR will give us a LUID.  This function will walk adapters to find
 // the adapter matching that LUID, then create an ID3D11Device* from it so
 // we can issue D3D11 commands.
@@ -419,7 +421,7 @@ void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlay
         XrSessionCreateInfoOverlayEXTX sessionCreateInfoOverlay{ XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX };
         sessionCreateInfoOverlay.next = chain;
         sessionCreateInfoOverlay.createFlags = 0;
-        sessionCreateInfoOverlay.sessionLayersPlacement = 1;
+        sessionCreateInfoOverlay.sessionLayersPlacement = gLayerPlacement;
         chain = &sessionCreateInfoOverlay;
     }
 
@@ -1014,9 +1016,31 @@ bool Intersects(const XrPosef& source, const XrPosef& planePose, const XrExtent2
 
 //----------------------------------------------------------------------------
 // Main
-
-int main( void )
+//
+void usage(const char *programName)
 {
+    std::cerr << "usage: overlay-sample [options]\n";
+    std::cerr << "options:\n";
+    std::cerr << "    --placement #          Set overlay layer level to # [default 0]\n";
+}
+
+int main( int argc, char **argv )
+{
+    for (int arg = 1; arg < argc; arg++) {
+        if (strcmp(argv[arg], "--placement") == 0) {
+            if (arg + 1 >= argc) {
+                std::cerr << "expected level for --placement option\n";
+                usage(argv[0]);
+                exit(1);
+            }
+            gLayerPlacement = atoi(argv[arg + 1]);
+            arg += 2;
+        } else {
+            std::cerr << "unknown option\n";
+            usage(argv[0]);
+            exit(1);
+        }
+    }
     // Set console unbuffered so we don't miss any output
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
