@@ -374,6 +374,10 @@ struct RPCChannels
 
 void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle);
 void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle);
+void OverlaysLayerRemoveXrActionHandleInfo(XrAction localHandle);
+void OverlaysLayerRemoveXrActionSetHandleInfo(XrActionSet actionSet);
+void OverlaysLayerRemoveXrSessionHandleInfo(XrSession session);
+void OverlaysLayerRemoveXrInstanceHandleInfo(XrInstance instance);
 
 enum OpenXRCommand {
     BEGIN_SESSION,

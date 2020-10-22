@@ -862,7 +862,7 @@ ID3D11Texture2D* SwapchainCachedData::getSharedTexture(ID3D11Device *d3d11Device
 }
 
 
-// XXX could generate
+// LATER could generate
 void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
 {
     {
@@ -874,7 +874,7 @@ void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
     OverlaysLayerRemoveXrSpaceFromHandleInfoMap(localHandle);
 }
 
-// XXX could generate
+// LATER could generate
 void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle)
 {
     {
@@ -886,7 +886,7 @@ void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle)
     OverlaysLayerRemoveXrSwapchainFromHandleInfoMap(localHandle);
 }
 
-// XXX could generate
+// LATER could generate
 void OverlaysLayerRemoveXrActionHandleInfo(XrAction localHandle)
 {
     {
@@ -898,7 +898,7 @@ void OverlaysLayerRemoveXrActionHandleInfo(XrAction localHandle)
     OverlaysLayerRemoveXrActionFromHandleInfoMap(localHandle);
 }
 
-// XXX could generate
+// LATER could generate
 void OverlaysLayerRemoveXrActionSetHandleInfo(XrActionSet actionSet)
 {
     OverlaysLayerXrActionSetHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
@@ -908,10 +908,39 @@ void OverlaysLayerRemoveXrActionSetHandleInfo(XrActionSet actionSet)
         OverlaysLayerRemoveXrActionFromHandleInfoMap(action->handle);
     }
 
+    // remove self from Instance childActionSets
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(info->parentHandle);
+    instanceInfo->childActionSets.erase(info);
+
+
     OverlaysLayerRemoveXrActionSetFromHandleInfoMap(actionSet);
 }
 
-// XXX could generate
+// LATER could generate
+void OverlaysLayerRemoveXrSessionHandleInfo(XrSession session)
+{
+    OverlaysLayerXrSessionHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrSession(session);
+
+    /* remove all XrSwapchain children of this XrSession */
+    for(auto swapchain: info->childSwapchains) {
+        OverlaysLayerRemoveXrSwapchainFromHandleInfoMap(swapchain->localHandle);
+    }
+
+    /* remove all XrSpace children of this XrSession */
+    for(auto space: info->childSpaces) {
+        OverlaysLayerRemoveXrSpaceFromHandleInfoMap(space->localHandle);
+    }
+
+    // remove self from Instance childSessions
+    OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(info->parentHandle);
+    instanceInfo->childSessions.erase(info);
+
+    OverlaysLayerRemoveXrSessionFromHandleInfoMap(session);
+}
+
+// XXX need OverlaysLayerRemoveXrSessionHandleInfo
+
+// LATER could generate
 void OverlaysLayerRemoveXrInstanceHandleInfo(XrInstance instance)
 {
     OverlaysLayerXrInstanceHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrInstance(instance);
@@ -1674,6 +1703,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
     }
 
     OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
+    instanceInfo->childSessions.insert(info);
 
     bool result = CreateMainSessionNegotiateThread(instance, localHandle);
 
@@ -1823,6 +1853,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     }
 
     OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
+    instanceInfo->childSessions.insert(info);
 
     return result;
 }
@@ -1923,6 +1954,7 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
     swapchainInfo->mainAsOverlaySwapchain = std::make_shared<SwapchainCachedData>(*swapchain, swapchainTextures);
     swapchainInfo->actualHandle = actualHandle;
+    swapchainInfo->localHandle = localHandle;
 
     OverlaysLayerAddHandleInfoForXrSwapchain(*swapchain, swapchainInfo);
 
@@ -1955,6 +1987,7 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = std::make_shared<OverlaysLayerXrSwapchainHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
 
     swapchainInfo->actualHandle = actualHandle;
+    swapchainInfo->localHandle = localHandle;
     swapchainInfo->isProxied = true;
 
     OverlaySwapchain::Ptr overlaySwapchain = std::make_shared<OverlaySwapchain>(*swapchain, swapchainCount, createInfo);
@@ -2017,6 +2050,7 @@ XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr
 
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
     spaceInfo->actualHandle = actualHandle;
+    spaceInfo->localHandle = localHandle;
     spaceInfo->spaceType = SPACE_REFERENCE;
 
     OverlaysLayerAddHandleInfoForXrSpace(*space, spaceInfo);
@@ -2048,6 +2082,7 @@ XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
 
     spaceInfo->actualHandle = actualHandle;
+    spaceInfo->localHandle = localHandle;
     spaceInfo->spaceType = SPACE_REFERENCE;
     spaceInfo->isProxied = true;
 
@@ -2326,54 +2361,18 @@ XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
     return result;
 }
 
-XrResult OverlaysLayerDestroyActionSetMainAsOverlay(ConnectionToOverlay::Ptr connection, XrActionSet actionSet)
-{
-    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
-
-    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
-
-    XrResult result = actionSetInfo->downchain->DestroyActionSet(actionSetInfo->handle);
-    OverlaysLayerRemoveXrActionSetHandleInfo(actionSet);
-
-    return result;
-}
-
 XrResult OverlaysLayerDestroyActionSetOverlay(XrInstance instance, XrActionSet actionSet)
 {
-    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
-
-    XrResult result = RPCCallDestroyActionSet(instance, actionSetInfo->handle);
-
     OverlaysLayerRemoveXrActionSetHandleInfo(actionSet);
 
-    return result;
-}
-
-XrResult OverlaysLayerDestroyActionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrAction action)
-{
-    auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
-
-    OverlaysLayerXrActionHandleInfo::Ptr actionInfo = OverlaysLayerGetHandleInfoFromXrAction(action);
-
-    XrResult result = actionInfo->downchain->DestroyAction(actionInfo->handle);
-    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionInfo->parentHandle);
-    actionSetInfo->childActions.erase(actionInfo);
-    OverlaysLayerRemoveXrActionFromHandleInfoMap(action);
-
-    return result;
+    return XR_SUCCESS;
 }
 
 XrResult OverlaysLayerDestroyActionOverlay(XrInstance instance, XrAction action)
 {
-    OverlaysLayerXrActionHandleInfo::Ptr actionInfo = OverlaysLayerGetHandleInfoFromXrAction(action);
+    OverlaysLayerRemoveXrActionHandleInfo(action);
 
-    XrResult result = RPCCallDestroyAction(instance, actionInfo->handle);
-
-    OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(actionInfo->parentHandle);
-    actionSetInfo->childActions.erase(actionInfo);
-    OverlaysLayerRemoveXrActionFromHandleInfoMap(action);
-
-    return result;
+    return XR_SUCCESS;
 }
 
 XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
@@ -2435,6 +2434,8 @@ XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession sessi
     if(!XR_SUCCEEDED(result)) {
         return result;
     }
+
+    OverlaysLayerRemoveXrSessionHandleInfo(session);
 
     return result;
 }
@@ -3390,6 +3391,7 @@ XrResult OverlaysLayerCreateActionSpaceOverlay(XrInstance parentInstance, XrSess
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
     spaceInfo->spaceType = SPACE_ACTION;
     spaceInfo->actualHandle = XR_NULL_HANDLE; // There is no remote XrSpace created yet
+    spaceInfo->localHandle = *space;
     spaceInfo->action = actionInfo;
     spaceInfo->isProxied = true;
 
@@ -3437,6 +3439,7 @@ XrResult OverlaysLayerCreateActionSpaceMain(XrInstance parentInstance, XrSession
         OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = std::make_shared<OverlaysLayerXrSpaceHandleInfo>(session, sessionInfo->parentInstance, sessionInfo->downchain);
         spaceInfo->spaceType = SPACE_ACTION;
         spaceInfo->actualHandle = actualHandle;
+        spaceInfo->localHandle = *space;
         spaceInfo->action = actionInfo;
         spaceInfo->isProxied = false;
         spaceInfo->actionSpaceCreateInfo = createInfoCopy;

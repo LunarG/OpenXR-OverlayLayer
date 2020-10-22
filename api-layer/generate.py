@@ -233,7 +233,7 @@ for reg_type in reg_types:
             else:
                 print("didn't parse %s" % (", ".join((reg_member_text, type_text, type_tail, name_text, name_tail, enum_text, enum_tail, reg_member_tail))))
                 dump(sys.stdout, 4, 100, reg_member)
-                sys.exit(-1)
+                sys.exit(1)
 
             members.append(member)
         structs[struct_name] = (struct_name, typeenum, extends, members)
@@ -563,23 +563,17 @@ in_destroy["XrSession"] = """
     childSpaces.clear();
 """
 
-
-# XrSwapchain
-
-add_to_handle_struct["XrSwapchain"] = {
-    "members" : """
-    OverlaySwapchain::Ptr overlaySwapchain;             // Swapchain data on Overlay side
-    SwapchainCachedData::Ptr mainAsOverlaySwapchain;   // Swapchain data on Main side
-
-""",
-}
-
 after_downchain_main["xrBeginSession"] = """
     auto mainSession = gMainSessionContext;
     if(mainSession) {
         auto l = mainSession->GetLock();
         mainSession->sessionState.DoCommand(OpenXRCommand::BEGIN_SESSION);
     }
+"""
+
+after_downchain_main["xrDestroySession"] = """
+    // XXX tell overlay app that session was lost
+
 """
 
 after_downchain_main["xrEndSession"] = """
@@ -596,6 +590,25 @@ after_downchain_main["xrRequestExitSession"] = """
         auto l = mainSession->GetLock();
         mainSession->sessionState.DoCommand(OpenXRCommand::REQUEST_EXIT_SESSION);
     }
+"""
+
+# XrSwapchain
+
+add_to_handle_struct["XrSwapchain"] = {
+    "members" : """
+    OverlaySwapchain::Ptr overlaySwapchain;             // Swapchain data on Overlay side
+    SwapchainCachedData::Ptr mainAsOverlaySwapchain;   // Swapchain data on Main side
+    XrSwapchain localHandle;
+""",
+}
+
+after_downchain_main["xrCreateSwapchain"] = """
+    auto info = OverlaysLayerGetHandleInfoFromXrSwapchain(*swapchain));
+    info->localHandle = *swapchain;
+"""
+
+after_downchain_main["xrCreateSwapchain"] = """
+    sessionInfo->childSwapchains.insert(OverlaysLayerGetHandleInfoFromXrSwapchain(*swapchain));
 """
 
 after_downchain_main["xrWaitFrame"] = """
@@ -621,14 +634,6 @@ after_downchain_main["xrWaitFrame"] = """
         }
 }
 """
-
-after_downchain_main["xrCreateSwapchain"] = """
-    sessionInfo->childSwapchains.insert(OverlaysLayerGetHandleInfoFromXrSwapchain(*swapchain));
-"""
-
-in_constructor["XrSwapchain"] = """
-"""
-
 
 # XrDebugUtilsMessenger
 
@@ -663,7 +668,9 @@ add_to_handle_struct["XrActionSet"] = {
 
 in_destructor["XrActionSet"] = "    if(createInfo) { FreeXrStructChainWithFree(parentInstance, createInfo); }\n"
 
-after_downchain_main["xrCreateActionSet"] = f"""
+# left here as breadcrumbs - CreateActionSet is completely hand-written
+if False:
+    after_downchain_main["xrCreateActionSet"] = f"""
     OverlaysLayerXrActionSetHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionSetHandleInfo>(instance, instance, instanceInfo->downchain);
     info->createInfo = reinterpret_cast<XrActionSetCreateInfo*>(CopyXrStructChainWithMalloc(instance, createInfo));
     OverlaysLayerAddHandleInfoForXrActionSet(*actionSet, info);
@@ -683,7 +690,9 @@ add_to_handle_struct["XrAction"] = {
 """,
 }
 
-after_downchain_main["xrCreateAction"] = f"""
+# left here as breadcrumbs - CreateAction is completely hand-written
+if False:
+    after_downchain_main["xrCreateAction"] = f"""
     OverlaysLayerXrActionHandleInfo::Ptr info = std::make_shared<OverlaysLayerXrActionHandleInfo>(actionSet, actionSetInfo->parentInstance, actionSetInfo->downchain);
     info->createInfo = reinterpret_cast<XrActionCreateInfo*>(CopyXrStructChainWithMalloc(actionSetInfo->parentInstance, createInfo));
     info->subactionPaths.insert(info->createInfo->subactionPaths, info->createInfo->subactionPaths + info->createInfo->countSubactionPaths);
@@ -698,6 +707,7 @@ in_destructor["XrAction"] = "    if(createInfo) { FreeXrStructChainWithFree(pare
 
 add_to_handle_struct["XrSpace"] = {
     "members" : """
+    XrSpace localHandle;
     SpaceType spaceType;
     OverlaysLayerXrActionHandleInfo::Ptr action;
     XrAction placeholderAction;
@@ -707,15 +717,21 @@ add_to_handle_struct["XrSpace"] = {
 }
 
 after_downchain_main["xrCreateReferenceSpace"] = """
-    sessionInfo->childSpaces.insert(OverlaysLayerGetHandleInfoFromXrSpace(*space));
+    auto info = OverlaysLayerGetHandleInfoFromXrSpace(*space);
+    sessionInfo->childSpaces.insert(info);
+    info->localHandle = *space;
 """
 
-after_downchain_main["xrCreateActionSpace"] = """
+# left here as breadcrumbs - CreateActionSpace is completely hand-written because of proxying complexity related to XrAction
+if False:
+    after_downchain_main["xrCreateActionSpace"] = """
     {
         std::unique_lock<std::recursive_mutex> mlock2(gOverlaysLayerXrSpaceToHandleInfoMutex);
         gOverlaysLayerXrSpaceToHandleInfo[*space].spaceType = SPACE_REFERENCE;
     }
-    sessionInfo->childSpaces.insert(OverlaysLayerGetHandleInfoFromXrSpace(*space));
+    auto info = OverlaysLayerGetHandleInfoFromXrSpace(*space);
+    sessionInfo->childSpaces.insert(info);
+    info->localHandle = localHandle;
 """
 
 
@@ -741,7 +757,9 @@ after_downchain_main["xrGetSystem"] = """
 
 # XrSuggestedInteractionProfileBinding
 
-after_downchain_main["xrSuggestInteractionProfileBindings"] = """
+# left here as breadcrumbs - xrSuggestInteractionProfileBindings is completely hand-written
+if False:
+    after_downchain_main["xrSuggestInteractionProfileBindings"] = """
     auto search = gPathToSuggestedInteractionProfileBinding.find(suggestedBindings->interactionProfile);
     if(search != gPathToSuggestedInteractionProfileBinding.end()) {
         FreeXrStructChainWithFree(instance, search->second);
@@ -1783,30 +1801,6 @@ GetInputSourceLocalizedNameRPC = {
     "function" : "OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay"
 }
 
-DestroyActionRPC = {
-    "command_name" : "DestroyAction",
-    "args" : (
-        {
-            "name" : "action",
-            "type" : "POD",
-            "pod_type" : "XrAction",
-        },
-    ),
-    "function" : "OverlaysLayerDestroyActionMainAsOverlay"
-}
-
-DestroyActionSetRPC = {
-    "command_name" : "DestroyActionSet",
-    "args" : (
-        {
-            "name" : "actionSet",
-            "type" : "POD",
-            "pod_type" : "XrActionSet",
-        },
-    ),
-    "function" : "OverlaysLayerDestroyActionSetMainAsOverlay"
-}
-
 ApplyHapticFeedbackRPC = {
     "command_name" : "ApplyHapticFeedback",
     "args" : (
@@ -1900,8 +1894,6 @@ rpcs = (
     SyncActionsAndGetStateRPC,
     CreateActionSpaceFromBindingRPC,
     GetInputSourceLocalizedNameRPC,
-    DestroyActionSetRPC,
-    DestroyActionRPC,
     ApplyHapticFeedbackRPC,
     StopHapticFeedbackRPC,
 )
@@ -2800,6 +2792,11 @@ source_text += """
 
 
 # make layer proc functions ----------------------------------------
+
+for command_name in [c for c in supported_commands if c in manually_implemented_commands]:
+    if command_name in after_downchain_main:
+        print("after_downchain_main was specified for %s but also is in manually_implemented_commands." % command_name)
+        sys.exit(1)
 
 for command_name in [c for c in supported_commands if c not in manually_implemented_commands]:
     command = commands[command_name]
