@@ -56,6 +56,8 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 typedef Eigen::Vector3f Vector3f;
+typedef Eigen::Affine3f Affine3f;
+typedef Eigen::AngleAxisf AngleAxisf;
 typedef Eigen::Quaternionf Quaternionf;
 typedef Eigen::ParametrizedLine<float, 3> Ray3f;
 typedef Eigen::Hyperplane<float, 3> Plane3f;
@@ -82,6 +84,7 @@ constexpr uint64_t ONE_SECOND_IN_NANOSECONDS = 1000000000;
 constexpr int gFudgeMinAlpha = 128;
 
 int gLayerPlacement = 0;
+float gLayerRotationalOffset = 0.f;
 
 // OpenXR will give us a LUID.  This function will walk adapters to find
 // the adapter matching that LUID, then create an ID3D11Device* from it so
@@ -1014,6 +1017,18 @@ bool Intersects(const XrPosef& source, const XrPosef& planePose, const XrExtent2
     return (planeExtents.width / 2.f) >= distance && (planeExtents.height / 2.f) >= distance;
 }
 
+XrPosef ApplyContentSpaceRotationalOffsetToPose(const XrPosef& Pose, const Vector3f& Axis, float Radians) {
+    Vector3f Position(Pose.position.x, Pose.position.y, Pose.position.z);
+    Quaternionf Orientation(Pose.orientation.w, Pose.orientation.x, Pose.orientation.y, Pose.orientation.z);
+    AngleAxisf Offset(Radians, Axis);
+    Vector3f OffsetPosition = Offset * Position;
+    Quaternionf OffsetOrientation = Quaternionf(Offset) * Orientation;
+    return XrPosef{
+        {OffsetOrientation.x(), OffsetOrientation.y(), OffsetOrientation.z(), OffsetOrientation.w()},
+        {OffsetPosition.x(), OffsetPosition.y(), OffsetPosition.z()}
+    };
+}
+
 //----------------------------------------------------------------------------
 // Main
 //
@@ -1021,7 +1036,8 @@ void usage(const char *programName)
 {
     std::cerr << "usage: overlay-sample [options]\n";
     std::cerr << "options:\n";
-    std::cerr << "    --placement #          Set overlay layer level to # [default 0]\n";
+    std::cerr << "    --placement #          Set overlay layer level to                                                           # [default 0]\n";
+    std::cerr << "    --rotational_offset #  Angle in radians to offset the layer clockwise about the stage space world up vector # [default 0]\n";
 }
 
 int main( int argc, char **argv )
@@ -1035,7 +1051,16 @@ int main( int argc, char **argv )
             }
             gLayerPlacement = atoi(argv[arg + 1]);
             arg += 2;
-        } else {
+        } else if (strcmp(argv[arg], "--rotational_offset") == 0) {
+            if (arg + 1 >= argc) {
+                std::cerr << "expected radians for --rotational_offset option\n";
+                usage(argv[0]);
+                exit(1);
+            }
+            gLayerRotationalOffset = atof(argv[arg + 1]);
+            arg += 2;
+        }
+        else {
             std::cerr << "unknown option\n";
             usage(argv[0]);
             exit(1);
@@ -1150,7 +1175,12 @@ int main( int argc, char **argv )
     bool exitRequested = false;         // We requested that OpenXR exit
     bool quit = false;                  // We set this to true when we may exit out of our frame loop
 
-    XrPosef layerImagePose = XrPosef{{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -2.0f}};
+    XrPosef layerImagePose = ApplyContentSpaceRotationalOffsetToPose(
+        {{0.0, 0.0, 0.0, 1.0}, {0.0f, 0.0f, -2.0f}}, // Pose
+        {0.0, 1.0, 0.0}, // Up
+        gLayerRotationalOffset
+    );
+    
     XrExtent2Df layerImageExtent {1.0f * imageAspectRatios[hoverImageIdx], 1.0f};
 
     bool hadVibrated = false;
