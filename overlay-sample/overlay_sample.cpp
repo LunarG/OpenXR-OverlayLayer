@@ -1036,8 +1036,9 @@ void usage(const char *programName)
 {
     std::cerr << "usage: overlay-sample [options]\n";
     std::cerr << "options:\n";
-    std::cerr << "    --placement #          Set overlay layer level to                                                           # [default 0]\n";
-    std::cerr << "    --rotational_offset #  Angle in radians to offset the layer clockwise about the stage space world up vector # [default 0]\n";
+    std::cerr << "    --placement N          Set overlay layer level to N    [default 0]\n";
+    std::cerr << "    --rotational_offset N  Angle in radians to offset the layer clockwise about\n";
+    std::cerr << "                           the stage space world up vector [default 0]\n";
 }
 
 int main( int argc, char **argv )
