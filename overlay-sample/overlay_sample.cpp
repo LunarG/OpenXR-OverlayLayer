@@ -1058,7 +1058,7 @@ int main( int argc, char **argv )
                 usage(argv[0]);
                 exit(1);
             }
-            gLayerRotationalOffset = atof(argv[arg + 1]);
+            gLayerRotationalOffset = (float)atof(argv[arg + 1]);
             arg += 2;
         }
         else {
