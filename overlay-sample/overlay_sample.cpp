@@ -1043,7 +1043,7 @@ void usage(const char *programName)
 
 int main( int argc, char **argv )
 {
-    for (int arg = 1; arg < argc; arg++) {
+    for (int arg = 1; arg < argc; ) {
         if (strcmp(argv[arg], "--placement") == 0) {
             if (arg + 1 >= argc) {
                 std::cerr << "expected level for --placement option\n";
