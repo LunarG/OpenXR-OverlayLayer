@@ -24,6 +24,7 @@
 
 
 #define _CRT_SECURE_NO_WARNINGS 1
+#define _USE_MATH_DEFINES
 
 #include <string>
 #include <iostream>
@@ -35,6 +36,7 @@
 #include <thread>
 #include <array>
 
+#include <cmath>
 #include <cassert>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -1037,7 +1039,7 @@ void usage(const char *programName)
     std::cerr << "usage: overlay-sample [options]\n";
     std::cerr << "options:\n";
     std::cerr << "    --placement N          Set overlay layer level to N    [default 0]\n";
-    std::cerr << "    --rotational_offset N  Angle in radians to offset the layer clockwise about\n";
+    std::cerr << "    --rotational-offset N  Angle in radians to offset the layer clockwise about\n";
     std::cerr << "                           the stage space world up vector [default 0]\n";
 }
 
@@ -1046,19 +1048,19 @@ int main( int argc, char **argv )
     for (int arg = 1; arg < argc; ) {
         if (strcmp(argv[arg], "--placement") == 0) {
             if (arg + 1 >= argc) {
-                std::cerr << "expected level for --placement option\n";
+                std::cerr << "expected level for " << argv[arg] << "\n";
                 usage(argv[0]);
                 exit(1);
             }
             gLayerPlacement = atoi(argv[arg + 1]);
             arg += 2;
-        } else if (strcmp(argv[arg], "--rotational_offset") == 0) {
+        } else if ((strcmp(argv[arg], "--rotational-offset") == 0) || (strcmp(argv[arg], "--rot") == 0)) {
             if (arg + 1 >= argc) {
-                std::cerr << "expected radians for --rotational_offset option\n";
+                std::cerr << "expected degrees for " << argv[arg] << "\n";
                 usage(argv[0]);
                 exit(1);
             }
-            gLayerRotationalOffset = (float)atof(argv[arg + 1]);
+            gLayerRotationalOffset = (float)(atof(argv[arg + 1]) / 180.0 * M_PI);
             arg += 2;
         }
         else {
