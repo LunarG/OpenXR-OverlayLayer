@@ -16,5 +16,12 @@
                "entrypoints": [ ]
            }
        ]
+       "enable_environment": {
+           "ENABLE_XR_API_LAYER_OVERLAYS": ""
+       }
+       "disable_environment": {
+           "DISABLE_XR_API_LAYER_OVERLAYS": ""
+       }
+
     }
 }
