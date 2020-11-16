@@ -237,13 +237,6 @@ std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStr
     {USER_HAND_RIGHT_INPUT_TRIGGER_TOUCH, "/user/hand/right/input/trigger/touch"},
 };
 
-// XXX These may be different by XrInstance
-std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
-std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
-std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
-std::map<std::pair<XrPath, XrPath>, XrPath> OverlaysLayerProfileAndBindingToFullProfilePath;
-std::set<XrPath> OverlaysLayerAllSubactionPaths;
-
 struct PlaceholderActionId
 {
     std::string name;
@@ -503,8 +496,8 @@ std::string PathToString(XrInstance instance, XrPath path)
     }
 
     if(result != XR_SUCCESS) {
-        if(OverlaysLayerPathToWellKnownString.count(path) > 0) {
-            auto index = OverlaysLayerPathToWellKnownString.at(path);
+        if(instanceInfo->OverlaysLayerPathToWellKnownString.count(path) > 0) {
+            auto index = instanceInfo->OverlaysLayerPathToWellKnownString.at(path);
             auto str = OverlaysLayerWellKnownStrings.at(index);
             sprintf(buffer, "<PathToString failed?! %08llX, \"%s\">", path, str);
             return buffer;
@@ -1115,38 +1108,33 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
     instanceInfo->createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
 
-    OverlaysLayerAddHandleInfoForXrInstance(*instance, instanceInfo);
-
     // Create XrPaths for well-known strings.  We can use the compile-time fixed string enums to pass strings and paths over RPC
     // XXX This should be on CreateInstance in the instance info
-    if(OverlaysLayerWellKnownStringToPath.size() == 0) { 
-        OverlaysLayerWellKnownStringToPath.insert({WellKnownStringIndex::NULL_PATH, XR_NULL_PATH});
-        OverlaysLayerPathToWellKnownString.insert({XR_NULL_PATH, WellKnownStringIndex::NULL_PATH});
-        for(auto& w : OverlaysLayerWellKnownStrings) {
-            XrPath path;
-            XrResult result2 = instanceInfo->downchain->StringToPath(*instance, w.second, &path);
-            if(result2 != XR_SUCCESS) {
-                OverlaysLayerLogMessage(*instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateInstance", 
-                    OverlaysLayerNoObjectInfo, fmt("Could not create path from \"%s\".", w.second).c_str());
-                return XR_ERROR_INITIALIZATION_FAILED;
-            }
-            OverlaysLayerWellKnownStringToPath.insert({w.first, path});
-            OverlaysLayerPathToWellKnownString.insert({path, w.first});
+    instanceInfo->OverlaysLayerWellKnownStringToPath.insert({WellKnownStringIndex::NULL_PATH, XR_NULL_PATH});
+    instanceInfo->OverlaysLayerPathToWellKnownString.insert({XR_NULL_PATH, WellKnownStringIndex::NULL_PATH});
+    for(auto& w : OverlaysLayerWellKnownStrings) {
+        XrPath path;
+        XrResult result2 = instanceInfo->downchain->StringToPath(*instance, w.second, &path);
+        if(result2 != XR_SUCCESS) {
+            OverlaysLayerLogMessage(*instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrCreateInstance", 
+                OverlaysLayerNoObjectInfo, fmt("Could not create path from \"%s\".", w.second).c_str());
+            return XR_ERROR_INITIALIZATION_FAILED;
         }
-        for(auto& id : PlaceholderActionIds) {
-            XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
-            XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
-            XrPath componentPath = OverlaysLayerWellKnownStringToPath.at(id.componentString);
-            XrPath fullBindingPath = OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
-
-            OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
-
-            OverlaysLayerAllSubactionPaths.insert(subactionPath);
-
-            OverlaysLayerProfileAndBindingToFullProfilePath.insert({{profilePath, componentPath}, fullBindingPath});
-        }
-
+        instanceInfo->OverlaysLayerWellKnownStringToPath.insert({w.first, path});
+        instanceInfo->OverlaysLayerPathToWellKnownString.insert({path, w.first});
     }
+    for(auto& id : PlaceholderActionIds) {
+        XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
+        XrPath subactionPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.subActionString);
+        XrPath componentPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.componentString);
+        XrPath fullBindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
+
+        instanceInfo->OverlaysLayerBindingToSubaction.insert({fullBindingPath, subactionPath});
+
+        instanceInfo->OverlaysLayerAllSubactionPaths.insert(subactionPath);
+    }
+
+    OverlaysLayerAddHandleInfoForXrInstance(*instance, instanceInfo);
 
     return result;
 }
@@ -1676,7 +1664,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         strcpy(createActionInfo.localizedActionName, placeholderNameString);
         createActionInfo.actionType = id.type;
         createActionInfo.countSubactionPaths = 1;
-        XrPath subactionPath = OverlaysLayerWellKnownStringToPath.at(id.subActionString);
+        XrPath subactionPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.subActionString);
         createActionInfo.subactionPaths = &subactionPath;
 
         XrAction action;
@@ -1687,8 +1675,8 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
             return XR_ERROR_INITIALIZATION_FAILED;
         }
 
-        XrPath fullBindingPath = OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
-        XrPath interactionProfilePath = OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
+        XrPath fullBindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.fullBindingString);
+        XrPath interactionProfilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(id.interactionProfileString);
 
         info->placeholderActions.insert({fullBindingPath, {action, id.type}});
         info->placeholderActionsByProfileAndFullBinding.insert({{interactionProfilePath, fullBindingPath}, {action, id.type}});
@@ -1698,7 +1686,7 @@ XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCrea
         info->bindingsByAction[action] = fullBindingPath;
     }
 
-    for(XrPath p: OverlaysLayerAllSubactionPaths) {
+    for(XrPath p: instanceInfo->OverlaysLayerAllSubactionPaths) {
         info->currentInteractionProfileBySubactionPath.insert({p, XR_NULL_PATH});
     }
 
@@ -1848,7 +1836,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     info->isProxied = true;
     info->d3d11Device = d3d11Device;
 
-    for(XrPath p: OverlaysLayerAllSubactionPaths) {
+    for(XrPath p: instanceInfo->OverlaysLayerAllSubactionPaths) {
         info->currentInteractionProfileBySubactionPath.insert({p, XR_NULL_PATH});
     }
 
@@ -2167,6 +2155,7 @@ bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
 {
     auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
 
     if(sessionInfo->currentInteractionProfileBySubactionPath.count(spaceInfo->actionSpaceCreateInfo->subactionPath) == 0) {
         OverlaysLayerLogMessage(spaceInfo->parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrLocateSpace",
@@ -2194,7 +2183,7 @@ bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
         }
 
         for(XrPath binding : actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
-            XrPath subactionPath = OverlaysLayerBindingToSubaction.at(binding); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+            XrPath subactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(binding); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
             if(subactionPath == spaceInfo->actionSpaceCreateInfo->subactionPath) {
                 matchingBinding = binding;
                 found = true;
@@ -2210,8 +2199,8 @@ bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
 
         }
 
-        WellKnownStringIndex bindingString = OverlaysLayerPathToWellKnownString.at(matchingBinding); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-        WellKnownStringIndex profileString = OverlaysLayerPathToWellKnownString.at(matchingProfile);
+        WellKnownStringIndex bindingString = instanceInfo->OverlaysLayerPathToWellKnownString.at(matchingBinding); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        WellKnownStringIndex profileString = instanceInfo->OverlaysLayerPathToWellKnownString.at(matchingProfile);
 
         XrResult result = RPCCallCreateActionSpaceFromBinding(spaceInfo->parentInstance, sessionInfo->actualHandle, profileString, bindingString, &spaceInfo->actionSpaceCreateInfo->poseInActionSpace, &spaceInfo->actualHandle);
 
@@ -3357,8 +3346,8 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
             std::vector<XrActionSuggestedBinding>(suggestedBindings->suggestedBindings, suggestedBindings->suggestedBindings + suggestedBindings->countSuggestedBindings);
 
         for(auto it: instanceInfo->profilesToBindings[suggestedBindings->interactionProfile]) {
-            auto found = OverlaysLayerPathToWellKnownString.find(it.binding);
-            if(found == OverlaysLayerPathToWellKnownString.end()) {
+            auto found = instanceInfo->OverlaysLayerPathToWellKnownString.find(it.binding);
+            if(found == instanceInfo->OverlaysLayerPathToWellKnownString.end()) {
                 OverlaysLayerLogMessage(instance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT, "xrSuggestInteractionProfileBindings",
                     OverlaysLayerNoObjectInfo,
                     fmt("Application suggested binding \"%s\", which this API layer does not know; binding will be ignored", PathToString(instance, it.binding).c_str()).c_str());
@@ -3487,15 +3476,17 @@ XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr conn
 {
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
-    XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingString); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-    XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileString);
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
+
+    XrPath bindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(bindingString); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+    XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(profileString);
 
     XrAction actualActionHandle = sessionInfo->placeholderActionsByProfileAndFullBinding.at({profilePath, bindingPath}).first; // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
     XrActionSpaceCreateInfo createInfo { XR_TYPE_ACTION_SPACE_CREATE_INFO };
     createInfo.action = actualActionHandle;
-    createInfo.subactionPath = OverlaysLayerBindingToSubaction.at(bindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+    createInfo.subactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(bindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
     createInfo.poseInActionSpace = *poseInActionSpace; 
     XrResult result = sessionInfo->downchain->CreateActionSpace(sessionInfo->actualHandle, &createInfo, space);
 
@@ -3640,7 +3631,7 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
         if(result != XR_SUCCESS) {
             OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrAttachSessionActionSets",
                 OverlaysLayerNoObjectInfo,
-                fmt("Couldn't apply deferred suggested interaction profile bindings, SuggestInteractionProfileBindings returned %08llX", result).c_str());
+                fmt("Couldn't apply deferred suggested interaction profile bindings, SuggestInteractionProfileBindings returned %d", result).c_str());
             return XR_ERROR_HANDLE_INVALID;
         }
     }
@@ -3821,6 +3812,7 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
 
     XrActiveActionSet activeActionSet { sessionInfo->placeholderActionSet, XR_NULL_PATH };
     XrActionsSyncInfo syncInfo { XR_TYPE_ACTIONS_SYNC_INFO, nullptr, 1, &activeActionSet };
@@ -3838,8 +3830,8 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
     ActionGetInfoList actionsToGet;
 
     for(uint32_t i = 0; i < countProfileAndBindings; i++) {
-        XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // These two at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-        XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]);
+        XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // These two at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        XrPath bindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]);
         auto it = sessionInfo->placeholderActionsByProfileAndFullBinding.find({profilePath, bindingPath});
         if(it == sessionInfo->placeholderActionsByProfileAndFullBinding.end()) {
             DebugBreak();
@@ -3847,7 +3839,7 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
 			
         XrAction action = it->second.first;
         XrActionType type = it->second.second;
-        XrPath subactionPath = OverlaysLayerBindingToSubaction.at(bindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        XrPath subactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(bindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
         actionsToGet.push_back({ action, type, subactionPath });
 
         if(false) printf("for %s%s, I think I'm getting action %s\n",
@@ -3864,8 +3856,8 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
     // XXX debug
     for(uint32_t i = 0; i < countProfileAndBindings; i++) {
         auto got = actionsToGet[i];
-        XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
-        XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
+        XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
+        XrPath bindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
         if(got.actionType == XR_ACTION_TYPE_BOOLEAN_INPUT) {
             XrActionStateBoolean *boolean = (XrActionStateBoolean*)&states[i];
             if(false) printf("for %s%s, I got for action %s {state = %s, active = %s}\n",
@@ -3882,7 +3874,7 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
     }
 
     for(uint32_t i = 0; i < countSubactionStrings; i++) {
-        XrPath p = OverlaysLayerWellKnownStringToPath.at(subactionStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
+        XrPath p = instanceInfo->OverlaysLayerWellKnownStringToPath.at(subactionStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
         XrInteractionProfileState interactionProfile { XR_TYPE_INTERACTION_PROFILE_STATE };
 
         XrResult result2 = sessionInfo->downchain->GetCurrentInteractionProfile(sessionInfo->actualHandle, p, &interactionProfile);
@@ -3893,7 +3885,7 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
                 fmt("Couldn't get current interaction profile for top-level path \"%s\" in OverlaysLayerSyncActionsAndGetStateMainAsOverlay", PathToString(sessionInfo->parentInstance, p).c_str()).c_str());
             interactionProfileStrings[i] = WellKnownStringIndex::NULL_PATH;
         } else {
-            interactionProfileStrings[i] = OverlaysLayerPathToWellKnownString.at(interactionProfile.interactionProfile); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+            interactionProfileStrings[i] = instanceInfo->OverlaysLayerPathToWellKnownString.at(interactionProfile.interactionProfile); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
         }
     }
 
@@ -3939,6 +3931,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(parentInstance);
 
     // Make queryable data structures for data spread across activeActionSets
     std::set<OverlaysLayerXrActionSetHandleInfo::Ptr> actionSetInfos;
@@ -3978,14 +3971,14 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
             for(auto fullBindingPath: fullBindingPaths) {
 
                 // XXX really should find() this - could be path from an extension
-                XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+                XrPath bindingSubactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(fullBindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
                 for(auto subactionPath: subactionPaths) {
 
                     if((subactionPath == XR_NULL_PATH) || (subactionPath == bindingSubactionPath)) {
 
-                        WellKnownStringIndex fullBindingString = OverlaysLayerPathToWellKnownString.at(fullBindingPath); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-                        WellKnownStringIndex profileString = OverlaysLayerPathToWellKnownString.at(profilePath);
+                        WellKnownStringIndex fullBindingString = instanceInfo->OverlaysLayerPathToWellKnownString.at(fullBindingPath); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+                        WellKnownStringIndex profileString = instanceInfo->OverlaysLayerPathToWellKnownString.at(profilePath);
 
                         // get profile and full path which the main process side of the API layer maps to a placeholder action
 
@@ -4008,8 +4001,8 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
     std::vector<ActionStateUnion> states(fullBindingStrings.size());
 
     std::vector<WellKnownStringIndex> topLevelStrings;
-    for(XrPath subactionPath: OverlaysLayerAllSubactionPaths) {
-        topLevelStrings.push_back(OverlaysLayerPathToWellKnownString.at(subactionPath)); // This .at() must succeed, it was constructed by a table of known strings.
+    for(XrPath subactionPath: instanceInfo->OverlaysLayerAllSubactionPaths) {
+        topLevelStrings.push_back(instanceInfo->OverlaysLayerPathToWellKnownString.at(subactionPath)); // This .at() must succeed, it was constructed by a table of known strings.
     }
 
     std::vector<WellKnownStringIndex> currentInteractionProfileStrings(topLevelStrings.size());
@@ -4101,8 +4094,8 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
 
         // Store the interaction profiles current for allowlisted top-level paths
         for(uint32_t i = 0; i < topLevelStrings.size(); i++) {
-            XrPath topLevelPath = OverlaysLayerWellKnownStringToPath.at(topLevelStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-            XrPath interactionProfile = OverlaysLayerWellKnownStringToPath.at(currentInteractionProfileStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+            XrPath topLevelPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(topLevelStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+            XrPath interactionProfile = instanceInfo->OverlaysLayerWellKnownStringToPath.at(currentInteractionProfileStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
             XrPath previousProfile = sessionInfo->currentInteractionProfileBySubactionPath.at(topLevelPath); // This .at() must succeed because currentInteractionProfileBySubactionPath.at was filled with all possible topLevelPaths in CreateSessionMain()
             if(previousProfile != interactionProfile) {
                 auto l = sessionInfo->GetLock();
@@ -4124,6 +4117,7 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(parentInstance);
 
     // Sync all the actions requested by the Main app
     {
@@ -4241,7 +4235,7 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
         }
 
         // update interaction profiles and mark whether we need to synthesize an EVENT_DATA_INTERACTION_PROFILE_CHANGE
-        for(XrPath p: OverlaysLayerAllSubactionPaths) {
+        for(XrPath p: instanceInfo->OverlaysLayerAllSubactionPaths) {
 
             XrInteractionProfileState interactionProfile { XR_TYPE_INTERACTION_PROFILE_STATE };
             result = sessionInfo->downchain->GetCurrentInteractionProfile(sessionInfo->actualHandle, p, &interactionProfile);
@@ -4463,6 +4457,7 @@ XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateG
 void GetBindingPathsForActionAndSubactionPath(XrSession session, XrAction action, XrPath requestedSubactionPath, std::vector<std::pair<XrPath, XrPath>>& profileAndBindingPaths)
 {
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(action);
 
     std::set<XrPath> subactionPaths;
@@ -4480,7 +4475,7 @@ void GetBindingPathsForActionAndSubactionPath(XrSession session, XrAction action
         if(actionInfo->suggestedBindingsByProfile.count(currentInteractionProfile) > 0) {
             for(auto fullBindingPath: actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
 
-                XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath);
+                XrPath bindingSubactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(fullBindingPath);
 
                 if(subactionPath == bindingSubactionPath) {
                     // get profile and full path which the main process side of the API layer maps to a placeholder action
@@ -4496,12 +4491,13 @@ XrResult OverlaysLayerApplyHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr 
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
 
     auto hapticFeedbackCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrStopHapticFeedback", hapticFeedback);
 
     for(uint32_t i = 0; i < profileStringCount; i++) {
-        XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-        XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        XrPath bindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
         XrAction actualActionHandle = sessionInfo->placeholderActionsByProfileAndFullBinding.at({profilePath, bindingPath}).first; // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
@@ -4522,10 +4518,11 @@ XrResult OverlaysLayerStopHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr c
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
 
     for(uint32_t i = 0; i < profileStringCount; i++) {
-        XrPath bindingPath = OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-        XrPath profilePath = OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        XrPath bindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
         XrAction actualActionHandle = sessionInfo->placeholderActionsByProfileAndFullBinding.at({profilePath, bindingPath}).first; // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
@@ -4540,6 +4537,7 @@ XrResult OverlaysLayerStopHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr c
 XrResult OverlaysLayerApplyHapticFeedbackOverlay(XrInstance instance, XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
 {
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(hapticActionInfo->action);
 
     if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_VIBRATION_OUTPUT) {
@@ -4562,8 +4560,8 @@ XrResult OverlaysLayerApplyHapticFeedbackOverlay(XrInstance instance, XrSession 
     std::vector<WellKnownStringIndex> profileStrings;
     std::vector<WellKnownStringIndex> bindingStrings;
     for(auto profileAndBindingPath: profileAndBindingPaths) {
-        profileStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.first)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-        bindingStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.second)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        profileStrings.push_back(instanceInfo->OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.first)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        bindingStrings.push_back(instanceInfo->OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.second)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
     }
 
     XrResult result = RPCCallApplyHapticFeedback(sessionInfo->parentInstance, sessionInfo->actualHandle, (uint32_t)profileStrings.size(), profileStrings.data(), bindingStrings.data(), hapticFeedbackCopy.get());
@@ -4630,7 +4628,7 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
 XrResult OverlaysLayerStopHapticFeedbackOverlay(XrInstance instance, XrSession session, const XrHapticActionInfo* hapticActionInfo)
 {
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
-
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(hapticActionInfo->action);
 
     if(actionInfo->createInfo->actionType != XR_ACTION_TYPE_VIBRATION_OUTPUT) {
@@ -4651,8 +4649,8 @@ XrResult OverlaysLayerStopHapticFeedbackOverlay(XrInstance instance, XrSession s
     std::vector<WellKnownStringIndex> profileStrings;
     std::vector<WellKnownStringIndex> bindingStrings;
     for(auto profileAndBindingPath: profileAndBindingPaths) {
-        profileStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.first)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-        bindingStrings.push_back(OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.second)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        profileStrings.push_back(instanceInfo->OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.first)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+        bindingStrings.push_back(instanceInfo->OverlaysLayerPathToWellKnownString.at(profileAndBindingPath.second)); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
     }
 
     XrResult result = RPCCallStopHapticFeedback(sessionInfo->parentInstance, sessionInfo->actualHandle, (uint32_t)profileStrings.size(), profileStrings.data(), bindingStrings.data());
@@ -4715,10 +4713,11 @@ XrResult OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay(ConnectionToOverl
 {
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
 
     XrInputSourceLocalizedNameGetInfo getInfoCopy = *getInfo;
 
-    getInfoCopy.sourcePath = OverlaysLayerWellKnownStringToPath.at(sourceString); // This .at() must succeed; it was translated by the overlay side to a well-known string
+    getInfoCopy.sourcePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(sourceString); // This .at() must succeed; it was translated by the overlay side to a well-known string
 
 	std::unique_lock<std::recursive_mutex> HapticQuirkLock(HapticQuirkMutex);
     return sessionInfo->downchain->GetInputSourceLocalizedName(sessionInfo->actualHandle, &getInfoCopy, bufferCapacityInput, bufferCountOutput, buffer);
@@ -4727,12 +4726,13 @@ XrResult OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay(ConnectionToOverl
 XrResult OverlaysLayerGetInputSourceLocalizedNameOverlay( XrInstance instance, XrSession session, const XrInputSourceLocalizedNameGetInfo* getInfo, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer)
 {
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
-    if(OverlaysLayerPathToWellKnownString.count(getInfo->sourcePath) == 0) {
+    if(instanceInfo->OverlaysLayerPathToWellKnownString.count(getInfo->sourcePath) == 0) {
         return XR_ERROR_PATH_UNSUPPORTED;
     }
 
-    WellKnownStringIndex sourceString = OverlaysLayerPathToWellKnownString.at(getInfo->sourcePath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+    WellKnownStringIndex sourceString = instanceInfo->OverlaysLayerPathToWellKnownString.at(getInfo->sourcePath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
     return RPCCallGetInputSourceLocalizedName(sessionInfo->parentInstance, sessionInfo->actualHandle, getInfo, sourceString, bufferCapacityInput, bufferCountOutput, buffer);
 }
@@ -4740,6 +4740,7 @@ XrResult OverlaysLayerGetInputSourceLocalizedNameOverlay( XrInstance instance, X
 XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance, XrSession session, const XrBoundSourcesForActionEnumerateInfo* enumerateInfo, uint32_t sourceCapacityInput, uint32_t* sourceCountOutput, XrPath* sources)
 {
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
+    auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(enumerateInfo->action);
 
     std::set<XrPath> boundSourcesForAction;
@@ -4760,7 +4761,7 @@ XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance,
                     for(auto fullBindingPath: actionInfo->suggestedBindingsByProfile.at(currentInteractionProfile)) {
 
                         // XXX really should find() this - could be path from an extension
-                        XrPath bindingSubactionPath = OverlaysLayerBindingToSubaction.at(fullBindingPath);
+                        XrPath bindingSubactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(fullBindingPath);
 
                         if(subactionPath == bindingSubactionPath) {
 

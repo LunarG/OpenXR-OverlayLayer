@@ -531,6 +531,11 @@ add_to_handle_struct["XrInstance"] = {
     std::set<OverlaysLayerXrActionSetHandleInfo::Ptr> childActionSets;
     std::set<OverlaysLayerXrSessionHandleInfo::Ptr> childSessions;
     std::set<OverlaysLayerXrDebugUtilsMessengerEXTHandleInfo::Ptr> childDebugUtilsMessengerEXTs;
+    std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
+    std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
+    std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
+    std::set<XrPath> OverlaysLayerAllSubactionPaths;
+
 """,
 }
 
