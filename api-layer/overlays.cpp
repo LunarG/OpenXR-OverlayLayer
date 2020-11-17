@@ -2331,10 +2331,9 @@ XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connect
 
     // XXX This will need to be smart about ActionSpaces?
 
-    XrResult result = spaceInfo->downchain->DestroySpace(spaceInfo->actualHandle);
     OverlaysLayerRemoveXrSpaceHandleInfo(space);
 
-    return result;
+    return XR_SUCCESS;
 }
 
 XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
@@ -3854,13 +3853,13 @@ XrResult OverlaysLayerSyncActionsAndGetStateMainAsOverlay(
     }
 
     // XXX debug
-    for(uint32_t i = 0; i < countProfileAndBindings; i++) {
+    if(false) for(uint32_t i = 0; i < countProfileAndBindings; i++) {
         auto got = actionsToGet[i];
         XrPath profilePath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(profileStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
         XrPath bindingPath = instanceInfo->OverlaysLayerWellKnownStringToPath.at(bindingStrings[i]); // This .at() must succeed; it was translated by the overlay side to a well-known string
         if(got.actionType == XR_ACTION_TYPE_BOOLEAN_INPUT) {
             XrActionStateBoolean *boolean = (XrActionStateBoolean*)&states[i];
-            if(false) printf("for %s%s, I got for action %s {state = %s, active = %s}\n",
+            printf("for %s%s, I got for action %s {state = %s, active = %s}\n",
                 PathToString(sessionInfo->parentInstance, profilePath).c_str(),
                 PathToString(sessionInfo->parentInstance, bindingPath).c_str(),
                 sessionInfo->placeholderActionNames.at(got.action).c_str(),
