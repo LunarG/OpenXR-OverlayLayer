@@ -140,6 +140,31 @@ Path: pathname:/interaction_profiles/valve/index_controller
 * subpathname:/output/haptic
 """
 
+# From XR_EXT_hp_mixed_reality_controller (which the MSFT "Demo Scene"
+# provides profile bindings for and is chosen for the Samsung Odyssey
+# controllers, edited to match what this script expects
+path_specs = path_specs + """
+Path: pathname:/interaction_profiles/hp/mixed_reality_controller
+* pathname:/user/hand/left
+* pathname:/user/hand/right
+* On pathname:/user/hand/left only
+** subpathname:/input/x/click
+** subpathname:/input/y/click
+* On pathname:/user/hand/right only
+** subpathname:/input/a/click
+** subpathname:/input/b/click
+* On both hands
+* subpathname:/input/menu/click
+* subpathname:/input/squeeze/value
+* subpathname:/input/trigger/value
+* subpathname:/input/thumbstick/x
+* subpathname:/input/thumbstick/y
+* subpathname:/input/thumbstick/click
+* subpathname:/input/grip/pose
+* subpathname:/input/aim/pose
+* subpathname:/output/haptic
+"""
+
 placeholder_profiles = {}
 for l in path_specs.splitlines():
     if l.startswith("Path: pathname:"):
@@ -220,17 +245,11 @@ well_known = f"""
 enum WellKnownStringIndex {{
     NULL_PATH = 0,
 {well_known_enums}
-}}; // These will need to not change for subsequent versions for backward compatibility
+}}; // Existing entries will need to not change for subsequent versions for backward compatibility after the first public release
 
 std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStrings = {{
 {well_known_mappings}
 }};
-
-// XXX These may be different by XrInstance
-std::unordered_map<WellKnownStringIndex, XrPath> OverlaysLayerWellKnownStringToPath;
-std::unordered_map<XrPath, WellKnownStringIndex> OverlaysLayerPathToWellKnownString;
-std::unordered_map<XrPath, XrPath> OverlaysLayerBindingToSubaction;
-std::unordered_map<XrPath, XrPath> OverlaysLayerAllSubactionPaths;
 
 """
 
