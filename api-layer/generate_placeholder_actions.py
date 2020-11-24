@@ -12,6 +12,16 @@ Path: pathname:/interaction_profiles/khr/simple_controller
 * subpathname:/input/grip/pose
 * subpathname:/input/aim/pose
 * subpathname:/output/haptic
+Path: pathname:/interaction_profiles/google/daydream_controller
+* pathname:/user/hand/left
+* pathname:/user/hand/right
+* subpathname:/input/select/click
+* subpathname:/input/trackpad/x
+* subpathname:/input/trackpad/y
+* subpathname:/input/trackpad/click
+* subpathname:/input/trackpad/touch
+* subpathname:/input/grip/pose
+* subpathname:/input/aim/pose
 Path: pathname:/interaction_profiles/htc/vive_controller
 * pathname:/user/hand/left
 * pathname:/user/hand/right
