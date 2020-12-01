@@ -2014,8 +2014,8 @@ def rpc_arg_to_copyout(arg):
             return "" # input only
         else:
             return f"""
-    if(*src->{arg["output_size"]} > 0) {{
-        for(uint32_t i = 0; i < *src->{arg["output_size"]}; i++) {{
+    if(src->{arg["input_size"]} > 0) {{
+        for(uint32_t i = 0; i < src->{arg["input_size"]}; i++) {{
             IPCCopyOut(
                 reinterpret_cast<XrBaseOutStructure*>(&dst->{arg["name"]}[i]),
                 reinterpret_cast<const XrBaseOutStructure*>(&src->{arg["name"]}[i])

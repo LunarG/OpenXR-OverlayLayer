@@ -2594,7 +2594,7 @@ XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connecti
 
     if(result == XR_SUCCESS) {
         SubstituteLocalHandles(sessionInfo->parentInstance, (XrBaseOutStructure *)viewState);
-        if(views != nullptr) {
+        if((viewCapacityInput > 0) && (views != nullptr)) {
             for(uint32_t i = 0; i < *viewCountOutput; i++) {
                 SubstituteLocalHandles(sessionInfo->parentInstance, (XrBaseOutStructure *)&views[i]);
             }
@@ -2615,7 +2615,7 @@ XrResult OverlaysLayerLocateViewsOverlay(XrInstance instance, XrSession session,
 
     if(result == XR_SUCCESS) {
         SubstituteLocalHandles(instance, (XrBaseOutStructure *)viewState);
-        if(views != nullptr) {
+		if ((viewCapacityInput > 0) && (views != nullptr)) {
             for(uint32_t i = 0; i < *viewCountOutput; i++) {
                 SubstituteLocalHandles(instance, (XrBaseOutStructure *)&views[i]);
             }
