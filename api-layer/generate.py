@@ -815,6 +815,8 @@ source_text = """
 
 std::unordered_map<XrPath, XrInteractionProfileSuggestedBinding*> gPathToSuggestedInteractionProfileBinding;
 
+std::mutex gIPCMutex;
+
 // MUST BE DEFAULT ONLY FOR LEAF OBJECTS (no pointers in them)
 template <typename T>
 void IPCCopyOut(T* dst, const T* src)
@@ -2089,6 +2091,7 @@ void IPCCopyOut(RPCXr{command_name}* dst, const RPCXr{command_name}* src)
 {command_type} RPCCall{command_name}(XrInstance instance, {served_args_cdecls})
 {{
     // Create a header for RPC
+    std::unique_lock<std::mutex> ipcLock(gIPCMutex);
     IPCBuffer ipcbuf = gConnectionToMain->conn.GetIPCBuffer();
     IPCHeader* header = new(ipcbuf) IPCHeader{{ {rpc["command_enum"]} }};
 
