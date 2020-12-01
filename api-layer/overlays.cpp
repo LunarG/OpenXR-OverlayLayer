@@ -72,6 +72,8 @@ FILE *LogFile = nullptr;
 
 void LogToFile(const char *str)
 {
+    static std::mutex logMutex;
+    std::unique_lock<std::mutex> lock(logMutex);
     if(!LogFile) {
         LogFile = fopen("overlays_logfile.txt", "w");
 		setvbuf(LogFile, nullptr, _IONBF, 0);
@@ -730,6 +732,103 @@ void LogWindowsError(HRESULT result, const char *xrfunc, const char* what, const
     LocalFree(messageBuf);
 }
 
+static std::map<DXGI_FORMAT, DXGI_FORMAT> TypedFormatToTypelessFormat = {
+    { DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R32G32B32A32_TYPELESS },
+    { DXGI_FORMAT_R32G32B32A32_UINT, DXGI_FORMAT_R32G32B32A32_TYPELESS },
+    { DXGI_FORMAT_R32G32B32A32_SINT, DXGI_FORMAT_R32G32B32A32_TYPELESS },
+    { DXGI_FORMAT_R32G32B32_FLOAT, DXGI_FORMAT_R32G32B32_TYPELESS },
+    { DXGI_FORMAT_R32G32B32_UINT, DXGI_FORMAT_R32G32B32_TYPELESS },
+    { DXGI_FORMAT_R32G32B32_SINT, DXGI_FORMAT_R32G32B32_TYPELESS },
+    { DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_TYPELESS },
+    { DXGI_FORMAT_R16G16B16A16_UNORM, DXGI_FORMAT_R16G16B16A16_TYPELESS },
+    { DXGI_FORMAT_R16G16B16A16_UINT, DXGI_FORMAT_R16G16B16A16_TYPELESS },
+    { DXGI_FORMAT_R16G16B16A16_SNORM, DXGI_FORMAT_R16G16B16A16_TYPELESS },
+    { DXGI_FORMAT_R16G16B16A16_SINT, DXGI_FORMAT_R16G16B16A16_TYPELESS },
+    { DXGI_FORMAT_R32G32_FLOAT, DXGI_FORMAT_R32G32_TYPELESS },
+    { DXGI_FORMAT_R32G32_UINT, DXGI_FORMAT_R32G32_TYPELESS },
+    { DXGI_FORMAT_R32G32_SINT, DXGI_FORMAT_R32G32_TYPELESS },
+    { DXGI_FORMAT_D32_FLOAT_S8X24_UINT, DXGI_FORMAT_R32G8X24_TYPELESS },
+    { DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, DXGI_FORMAT_R32G8X24_TYPELESS },
+    { DXGI_FORMAT_X32_TYPELESS_G8X24_UINT, DXGI_FORMAT_R32G8X24_TYPELESS },
+    { DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R10G10B10A2_TYPELESS },
+    { DXGI_FORMAT_R10G10B10A2_UINT, DXGI_FORMAT_R10G10B10A2_TYPELESS },
+    { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_TYPELESS },
+    { DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_TYPELESS },
+    { DXGI_FORMAT_R8G8B8A8_UINT, DXGI_FORMAT_R8G8B8A8_TYPELESS },
+    { DXGI_FORMAT_R8G8B8A8_SNORM, DXGI_FORMAT_R8G8B8A8_TYPELESS },
+    { DXGI_FORMAT_R8G8B8A8_SINT, DXGI_FORMAT_R8G8B8A8_TYPELESS },
+    { DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R16G16_TYPELESS },
+    { DXGI_FORMAT_R16G16_UNORM, DXGI_FORMAT_R16G16_TYPELESS },
+    { DXGI_FORMAT_R16G16_UINT, DXGI_FORMAT_R16G16_TYPELESS },
+    { DXGI_FORMAT_R16G16_SNORM, DXGI_FORMAT_R16G16_TYPELESS },
+    { DXGI_FORMAT_R16G16_SINT, DXGI_FORMAT_R16G16_TYPELESS },
+    { DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_R32_TYPELESS },
+    { DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R32_TYPELESS },
+    { DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32_TYPELESS },
+    { DXGI_FORMAT_R32_SINT, DXGI_FORMAT_R32_TYPELESS },
+    { DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_R24G8_TYPELESS },
+    { DXGI_FORMAT_R24_UNORM_X8_TYPELESS, DXGI_FORMAT_R24G8_TYPELESS },
+    { DXGI_FORMAT_X24_TYPELESS_G8_UINT, DXGI_FORMAT_R24G8_TYPELESS },
+    { DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8G8_TYPELESS },
+    { DXGI_FORMAT_R8G8_UINT, DXGI_FORMAT_R8G8_TYPELESS },
+    { DXGI_FORMAT_R8G8_SNORM, DXGI_FORMAT_R8G8_TYPELESS },
+    { DXGI_FORMAT_R8G8_SINT, DXGI_FORMAT_R8G8_TYPELESS },
+    { DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R16_TYPELESS, },
+    { DXGI_FORMAT_D16_UNORM, DXGI_FORMAT_R16_TYPELESS, },
+    { DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16_TYPELESS, },
+    { DXGI_FORMAT_R16_UINT, DXGI_FORMAT_R16_TYPELESS, },
+    { DXGI_FORMAT_R16_SNORM, DXGI_FORMAT_R16_TYPELESS, },
+    { DXGI_FORMAT_R16_SINT, DXGI_FORMAT_R16_TYPELESS, },
+    { DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_TYPELESS },
+    { DXGI_FORMAT_R8_UINT, DXGI_FORMAT_R8_TYPELESS },
+    { DXGI_FORMAT_R8_SNORM, DXGI_FORMAT_R8_TYPELESS },
+    { DXGI_FORMAT_R8_SINT, DXGI_FORMAT_R8_TYPELESS },
+    { DXGI_FORMAT_A8_UNORM, DXGI_FORMAT_R8_TYPELESS },
+    { DXGI_FORMAT_BC1_UNORM, DXGI_FORMAT_BC1_TYPELESS },
+    { DXGI_FORMAT_BC1_UNORM_SRGB, DXGI_FORMAT_BC1_TYPELESS },
+    { DXGI_FORMAT_BC2_UNORM, DXGI_FORMAT_BC2_TYPELESS },
+    { DXGI_FORMAT_BC2_UNORM_SRGB, DXGI_FORMAT_BC2_TYPELESS },
+    { DXGI_FORMAT_BC3_UNORM, DXGI_FORMAT_BC3_TYPELESS },
+    { DXGI_FORMAT_BC3_UNORM_SRGB, DXGI_FORMAT_BC3_TYPELESS },
+    { DXGI_FORMAT_BC4_UNORM, DXGI_FORMAT_BC4_TYPELESS },
+    { DXGI_FORMAT_BC4_SNORM, DXGI_FORMAT_BC4_TYPELESS },
+    { DXGI_FORMAT_BC5_UNORM, DXGI_FORMAT_BC5_TYPELESS },
+    { DXGI_FORMAT_BC5_SNORM, DXGI_FORMAT_BC5_TYPELESS },
+    // DXGI_FORMAT_B5G6R5_UNORM,
+    // DXGI_FORMAT_B5G5R5A1_UNORM,
+    // DXGI_FORMAT_B8G8R8A8_UNORM,
+    // DXGI_FORMAT_B8G8R8X8_UNORM,
+    // DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM,
+    { DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_TYPELESS },
+    { DXGI_FORMAT_B8G8R8X8_UNORM_SRGB, DXGI_FORMAT_B8G8R8X8_TYPELESS },
+    { DXGI_FORMAT_BC6H_UF16, DXGI_FORMAT_BC6H_TYPELESS },
+    { DXGI_FORMAT_BC6H_SF16, DXGI_FORMAT_BC6H_TYPELESS },
+    { DXGI_FORMAT_BC7_UNORM, DXGI_FORMAT_BC7_TYPELESS },
+    { DXGI_FORMAT_BC7_UNORM_SRGB, DXGI_FORMAT_BC7_TYPELESS },
+    // DXGI_FORMAT_AYUV,
+    // DXGI_FORMAT_Y410,
+    // DXGI_FORMAT_Y416,
+    // DXGI_FORMAT_NV12,
+    // DXGI_FORMAT_P010,
+    // DXGI_FORMAT_P016,
+    // DXGI_FORMAT_420_OPAQUE,
+    // DXGI_FORMAT_YUY2,
+    // DXGI_FORMAT_Y210,
+    // DXGI_FORMAT_Y216,
+    // DXGI_FORMAT_NV11,
+    // DXGI_FORMAT_AI44,
+    // DXGI_FORMAT_IA44,
+    // DXGI_FORMAT_P8,
+    // DXGI_FORMAT_A8P8,
+    // DXGI_FORMAT_B4G4R4A4_UNORM,
+    // DXGI_FORMAT_P208,
+    // DXGI_FORMAT_V208,
+    // DXGI_FORMAT_V408,
+    // DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE,
+    // DXGI_FORMAT_SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE,
+    // DXGI_FORMAT_FORCE_UINT
+};
+
 bool OverlaySwapchain::CreateTextures(XrInstance instance, ID3D11Device *d3d11, DWORD mainProcessId)
 {
     for(int i = 0; i < swapchainTextures.size(); i++) {
@@ -737,13 +836,18 @@ bool OverlaySwapchain::CreateTextures(XrInstance instance, ID3D11Device *d3d11, 
         desc.Width = width;
         desc.Height = height;
         desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = format;
         desc.SampleDesc.Count = 1;
         desc.SampleDesc.Quality = 0;
         desc.Usage = D3D11_USAGE_DEFAULT;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
         desc.CPUAccessFlags = 0;
         desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+
+        if(TypedFormatToTypelessFormat.count(format) > 0) {
+            desc.Format = TypedFormatToTypelessFormat.at(format);
+        } else {
+            desc.Format = format;
+        }
 
         HRESULT result;
         if((result = d3d11->CreateTexture2D(&desc, NULL, &swapchainTextures[i])) != S_OK) {
@@ -918,6 +1022,7 @@ ID3D11Texture2D* SwapchainCachedData::getSharedTexture(ID3D11Device *d3d11Device
 // LATER could generate
 void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     {
         OverlaysLayerXrSpaceHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrSpace(localHandle);
         OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(info->parentHandle);
@@ -930,6 +1035,7 @@ void OverlaysLayerRemoveXrSpaceHandleInfo(XrSpace localHandle)
 // LATER could generate
 void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     {
         OverlaysLayerXrSwapchainHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrSwapchain(localHandle);
         OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(info->parentHandle);
@@ -942,6 +1048,7 @@ void OverlaysLayerRemoveXrSwapchainHandleInfo(XrSwapchain localHandle)
 // LATER could generate
 void OverlaysLayerRemoveXrActionHandleInfo(XrAction localHandle)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     {
         OverlaysLayerXrActionHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrAction(localHandle);
         OverlaysLayerXrActionSetHandleInfo::Ptr actionSetInfo = OverlaysLayerGetHandleInfoFromXrActionSet(info->parentHandle);
@@ -954,6 +1061,7 @@ void OverlaysLayerRemoveXrActionHandleInfo(XrAction localHandle)
 // LATER could generate
 void OverlaysLayerRemoveXrActionSetHandleInfo(XrActionSet actionSet)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrActionSetHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrActionSet(actionSet);
 
     /* remove all XrAction children of this XrActionSet */
@@ -972,6 +1080,7 @@ void OverlaysLayerRemoveXrActionSetHandleInfo(XrActionSet actionSet)
 // LATER could generate
 void OverlaysLayerRemoveXrSessionHandleInfo(XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     /* remove all XrSwapchain children of this XrSession */
@@ -994,6 +1103,7 @@ void OverlaysLayerRemoveXrSessionHandleInfo(XrSession session)
 // LATER could generate
 void OverlaysLayerRemoveXrInstanceHandleInfo(XrInstance instance)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrInstanceHandleInfo::Ptr info = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
     /* remove all XrActionSet children of this XrInstance */
@@ -1068,6 +1178,9 @@ void OverlaysLayerLogMessage(XrInstance instance,
                                                                            XR_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT,
                                                                            &callback_data, messenger_create_info->userData);
                 }
+            }
+            if(AlsoLogToFile) {
+                LogToFile(fmt("Overlays API Layer: %s, %s\n", command_name ? command_name : "null", message).c_str());
             }
         } else {
             if(command_name) {
@@ -1426,6 +1539,7 @@ bool FindExtensionInList(const char* extension, uint32_t extensionsCount, const 
 
 XrResult OverlaysLayerCreateSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrFormFactor formFactor, const XrInstanceCreateInfo *instanceCreateInfo, const XrSessionCreateInfo *createInfo, const XrSessionCreateInfoOverlayEXTX* createInfoOverlay, XrSession *session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     XrSession mainSession;
     {
         auto mainSessionContext = gMainSessionContext;
@@ -1682,6 +1796,7 @@ bool CreateMainSessionNegotiateThread(XrInstance instance, XrSession hostingSess
 
 XrResult OverlaysLayerCreateSessionMain(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session, ID3D11Device *d3d11Device)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
@@ -1842,6 +1957,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
     const XrSessionCreateInfoOverlayEXTX*       createInfoOverlay,
     ID3D11Device*   d3d11Device)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     XrResult result = XR_SUCCESS;
 
     // Only on Overlay XrSession Creation, connect to the main app.
@@ -1850,6 +1966,7 @@ XrResult OverlaysLayerCreateSessionOverlay(
             OverlaysLayerNoObjectInfo, "Couldn't connect to main app.");
         return XR_ERROR_INITIALIZATION_FAILED;
     }
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, "Connected to Main");
 
     // Get our tracked information on this XrInstance 
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
@@ -1880,11 +1997,16 @@ XrResult OverlaysLayerCreateSessionOverlay(
     createInfoMinusOverlays.enabledExtensionNames = extensionNamesMinusOverlay;
     createInfoMinusOverlays.enabledExtensionCount = extensionCountMinusOverlay;
 
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, "Call RPC");
+
     result = RPCCallCreateSession(instance, formFactor, &createInfoMinusOverlays, createInfo, createInfoOverlay, session);
+
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, fmt("Call to RPC resulted in %d", result).c_str());
 
     delete[] extensionNamesMinusOverlay;
 
     if (!XR_SUCCEEDED(result)) {
+        /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, fmt("Call to RPC failed, returning", result).c_str());
         return result;
     }
 
@@ -1912,12 +2034,15 @@ XrResult OverlaysLayerCreateSessionOverlay(
 
     OverlaysLayerAddHandleInfoForXrSession(localHandle, info);
     instanceInfo->childSessions.insert(info);
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, fmt("Call to RPC succeeded? %d", result).c_str());
 
     return result;
 }
 
 XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateInfo* createInfo, XrSession* session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
+    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, fmt("CreateSession called from thread %ld", GetCurrentThreadId()).c_str());  // XXX DEBUG
     try{
         XrResult result;
 
@@ -1947,9 +2072,13 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
         }
 
         if(!cio) {
+            if(PrintDebugInfo) OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, "Creating Main Session");  // XXX DEBUG
             result = OverlaysLayerCreateSessionMain(instance, createInfo, session, d3dbinding->device);
+            if(PrintDebugInfo) OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, fmt("result of Create Main Session is %d, session is %08X", result, *session).c_str());  // XXX DEBUG
         } else {
+            if(PrintDebugInfo) OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, "Creating Overlay Session");  // XXX DEBUG
             result = OverlaysLayerCreateSessionOverlay(instance, createInfo, session, cio, d3dbinding->device);
+            if(PrintDebugInfo) OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrCreateSession", OverlaysLayerNoObjectInfo, fmt("result of Create Overlay Session is %d, session is %08X", result, *session).c_str());  // XXX DEBUG
         }
 
         return result;
@@ -1966,6 +2095,7 @@ XrResult OverlaysLayerCreateSession(XrInstance instance, const XrSessionCreateIn
 
 XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain, uint32_t *swapchainCount)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2021,6 +2151,7 @@ XrResult OverlaysLayerCreateSwapchainMainAsOverlay(ConnectionToOverlay::Ptr conn
 
 XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession session, const XrSwapchainCreateInfo* createInfo, XrSwapchain* swapchain)
 {
+/* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     uint32_t swapchainCount;
@@ -2065,6 +2196,7 @@ XrResult OverlaysLayerCreateSwapchainOverlay(XrInstance instance, XrSession sess
 
 XrResult OverlaysLayerDestroySwapchainMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     OverlaysLayerRemoveXrSwapchainHandleInfo(swapchain);
@@ -2076,6 +2208,7 @@ XrResult OverlaysLayerDestroySwapchainMainAsOverlay(ConnectionToOverlay::Ptr con
 
 XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain swapchain)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     XrResult result = RPCCallDestroySwapchain(swapchainInfo->parentInstance, swapchainInfo->actualHandle);
@@ -2090,6 +2223,7 @@ XrResult OverlaysLayerDestroySwapchainOverlay(XrInstance instance, XrSwapchain s
 
 XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2118,6 +2252,7 @@ XrResult OverlaysLayerCreateReferenceSpaceMainAsOverlay(ConnectionToOverlay::Ptr
 
 XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession session, const XrReferenceSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto createInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrCreateSwapchain", createInfo);
@@ -2151,6 +2286,7 @@ XrResult OverlaysLayerCreateReferenceSpaceOverlay(XrInstance instance, XrSession
 
 XrResult OverlaysLayerEnumerateReferenceSpacesMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t spaceCapacityInput, uint32_t* spaceCountOutput, XrReferenceSpaceType* spaces)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2159,6 +2295,7 @@ XrResult OverlaysLayerEnumerateReferenceSpacesMainAsOverlay(ConnectionToOverlay:
 
 XrResult OverlaysLayerEnumerateReferenceSpacesOverlay(XrInstance instance, XrSession session, uint32_t spaceCapacityInput, uint32_t* spaceCountOutput, XrReferenceSpaceType* spaces)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     return RPCCallEnumerateReferenceSpaces(instance, sessionInfo->actualHandle, spaceCapacityInput, spaceCountOutput, spaces);
@@ -2166,6 +2303,7 @@ XrResult OverlaysLayerEnumerateReferenceSpacesOverlay(XrInstance instance, XrSes
 
 XrResult OverlaysLayerGetReferenceSpaceBoundsRectMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, XrReferenceSpaceType referenceSpaceType, XrExtent2Df* bounds)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2174,6 +2312,7 @@ XrResult OverlaysLayerGetReferenceSpaceBoundsRectMainAsOverlay(ConnectionToOverl
 
 XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, XrSession session, XrReferenceSpaceType referenceSpaceType, XrExtent2Df* bounds)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     return RPCCallGetReferenceSpaceBoundsRect(instance, sessionInfo->actualHandle, referenceSpaceType, bounds);
@@ -2181,6 +2320,7 @@ XrResult OverlaysLayerGetReferenceSpaceBoundsRectOverlay(XrInstance instance, Xr
 
 XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -2223,6 +2363,7 @@ XrResult OverlaysLayerLocateSpaceMainAsOverlay(ConnectionToOverlay::Ptr connecti
 // XXX PUNT - if space was created with subactionPath NULL_PATH, this will probably fail or crash.
 bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(spaceInfo->parentHandle);
     auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
@@ -2288,6 +2429,7 @@ bool SynchronizeActionSpaceWithMain(XrInstance instance, XrSpace space)
 
 XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
     auto baseSpaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(baseSpace);
 
@@ -2323,6 +2465,7 @@ XrResult OverlaysLayerLocateSpaceOverlay(XrInstance instance, XrSpace space, XrS
 
 XrResult OverlaysLayerLocateSpaceMain(XrInstance parentInstance, XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -2366,6 +2509,7 @@ XrResult OverlaysLayerLocateSpaceMain(XrInstance parentInstance, XrSpace space, 
 
 XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time, XrSpaceLocation* location)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
@@ -2395,6 +2539,7 @@ XrResult OverlaysLayerLocateSpace(XrSpace space, XrSpace baseSpace, XrTime time,
 
 XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSpace space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
@@ -2408,6 +2553,7 @@ XrResult OverlaysLayerDestroySpaceMainAsOverlay(ConnectionToOverlay::Ptr connect
 
 XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSpaceHandleInfo::Ptr spaceInfo = OverlaysLayerGetHandleInfoFromXrSpace(space);
 
     // XXX This will need to be smart about ActionSpaces?
@@ -2421,6 +2567,7 @@ XrResult OverlaysLayerDestroySpaceOverlay(XrInstance instance, XrSpace space)
 
 XrResult OverlaysLayerDestroyActionSetOverlay(XrInstance instance, XrActionSet actionSet)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerRemoveXrActionSetHandleInfo(actionSet);
 
     return XR_SUCCESS;
@@ -2428,6 +2575,7 @@ XrResult OverlaysLayerDestroyActionSetOverlay(XrInstance instance, XrActionSet a
 
 XrResult OverlaysLayerDestroyActionOverlay(XrInstance instance, XrAction action)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerRemoveXrActionHandleInfo(action);
 
     return XR_SUCCESS;
@@ -2435,6 +2583,7 @@ XrResult OverlaysLayerDestroyActionOverlay(XrInstance instance, XrAction action)
 
 XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2457,6 +2606,7 @@ XrResult OverlaysLayerLocateViewsMainAsOverlay(ConnectionToOverlay::Ptr connecti
 
 XrResult OverlaysLayerLocateViewsOverlay(XrInstance instance, XrSession session, const XrViewLocateInfo* viewLocateInfo, XrViewState* viewState, uint32_t viewCapacityInput, uint32_t* viewCountOutput, XrView* views)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto viewLocateInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrLocateViews", viewLocateInfo);
@@ -2476,6 +2626,7 @@ XrResult OverlaysLayerLocateViewsOverlay(XrInstance instance, XrSession session,
 
 XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     connection->closed = true;
@@ -2485,6 +2636,7 @@ XrResult OverlaysLayerDestroySessionMainAsOverlay(ConnectionToOverlay::Ptr conne
 
 XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     XrResult result = RPCCallDestroySession(instance, sessionInfo->actualHandle);
@@ -2500,6 +2652,7 @@ XrResult OverlaysLayerDestroySessionOverlay(XrInstance instance, XrSession sessi
 
 XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -2512,6 +2665,7 @@ XrResult OverlaysLayerEnumerateSwapchainFormatsMainAsOverlay(ConnectionToOverlay
 
 XrResult OverlaysLayerEnumerateSwapchainFormatsOverlay(XrInstance instance, XrSession session, uint32_t formatCapacityInput, uint32_t* formatCountOutput, int64_t* formats)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     XrResult result = RPCCallEnumerateSwapchainFormats(instance, sessionInfo->actualHandle, formatCapacityInput, formatCountOutput, formats);
@@ -2532,6 +2686,7 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
         uint32_t* imageCountOutput,
         XrSwapchainImageBaseHeader* images)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     auto& overlaySwapchain = swapchainInfo->overlaySwapchain;
@@ -2569,6 +2724,7 @@ XrResult OverlaysLayerEnumerateSwapchainImagesOverlay(
 
 XrResult OverlaysLayerPollEventMainAsOverlay(ConnectionToOverlay::Ptr connection, XrEventDataBuffer *eventData)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     XrResult result;
 
     OptionalSessionStateChange pendingStateChange;
@@ -2662,6 +2818,8 @@ void EnqueueEventToOverlay(XrInstance instance, XrEventDataBuffer *eventData, Ma
 
 XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventData)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
+    OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT, "XrPollEvent", OverlaysLayerNoObjectInfo, fmt("PollEvent called from thread %ld", GetCurrentThreadId()).c_str());
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     try {
@@ -2771,6 +2929,7 @@ XrResult OverlaysLayerPollEvent(XrInstance instance, XrEventDataBuffer* eventDat
 
 XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrSessionBeginInfo* beginInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
@@ -2784,6 +2943,7 @@ XrResult OverlaysLayerBeginSessionMainAsOverlay(ConnectionToOverlay::Ptr connect
 
 XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session, const XrSessionBeginInfo* beginInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto beginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginSession", beginInfo);
@@ -2799,6 +2959,7 @@ XrResult OverlaysLayerBeginSessionOverlay(XrInstance instance, XrSession session
 
 XrResult OverlaysLayerRequestExitSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
@@ -2813,6 +2974,7 @@ XrResult OverlaysLayerRequestExitSessionMainAsOverlay(ConnectionToOverlay::Ptr c
 
 XrResult OverlaysLayerRequestExitSessionOverlay(XrInstance instance, XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     XrResult result = RPCCallRequestExitSession(instance, sessionInfo->actualHandle);
@@ -2826,6 +2988,7 @@ XrResult OverlaysLayerRequestExitSessionOverlay(XrInstance instance, XrSession s
 
 XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
@@ -2843,6 +3006,7 @@ XrResult OverlaysLayerEndSessionMainAsOverlay(ConnectionToOverlay::Ptr connectio
 
 XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     XrResult result = RPCCallEndSession(instance, sessionInfo->actualHandle);
@@ -2856,6 +3020,7 @@ XrResult OverlaysLayerEndSessionOverlay(XrInstance instance, XrSession session)
 
 XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
 	{
 		auto l = connection->GetLock();
 		auto l2 = connection->ctx->GetLock();
@@ -2880,6 +3045,7 @@ XrResult OverlaysLayerWaitFrameMainAsOverlay(ConnectionToOverlay::Ptr connection
 
 XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, const XrFrameWaitInfo* frameWaitInfo, XrFrameState* frameState)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto frameWaitInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrWaitFrame", frameWaitInfo);
@@ -2895,6 +3061,7 @@ XrResult OverlaysLayerWaitFrameOverlay(XrInstance instance, XrSession session, c
 
 XrResult OverlaysLayerBeginFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameBeginInfo* frameBeginInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto l = connection->GetLock();
@@ -2907,6 +3074,7 @@ XrResult OverlaysLayerBeginFrameMainAsOverlay(ConnectionToOverlay::Ptr connectio
 
 XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, const XrFrameBeginInfo* frameBeginInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto frameBeginInfoCopy = GetSharedCopyHandlesRestored(sessionInfo->parentInstance, "xrBeginFrame", frameBeginInfo);
@@ -2922,6 +3090,7 @@ XrResult OverlaysLayerBeginFrameOverlay(XrInstance instance, XrSession session, 
 
 XrResult OverlaysLayerAcquireSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquireInfo, uint32_t *index)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
@@ -2941,6 +3110,7 @@ XrResult OverlaysLayerAcquireSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
 
 XrResult OverlaysLayerAcquireSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageAcquireInfo* acquireInfo, uint32_t *index)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     auto acquireInfoCopy = GetSharedCopyHandlesRestored(swapchainInfo->parentInstance, "xrAcquireSwapchainImage", acquireInfo);
@@ -2958,6 +3128,7 @@ XrResult OverlaysLayerAcquireSwapchainImageOverlay(XrInstance instance, XrSwapch
 
 XrResult OverlaysLayerWaitSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageWaitInfo* waitInfo, HANDLE sourceImage)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
@@ -3001,6 +3172,7 @@ XrResult OverlaysLayerWaitSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr c
 
 XrResult OverlaysLayerWaitSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageWaitInfo* waitInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     if(swapchainInfo->overlaySwapchain->waited) {
@@ -3041,6 +3213,7 @@ XrResult OverlaysLayerWaitSwapchainImageOverlay(XrInstance instance, XrSwapchain
 
 XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* releaseInfo, HANDLE sourceImage)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
@@ -3095,6 +3268,7 @@ XrResult OverlaysLayerReleaseSwapchainImageMainAsOverlay(ConnectionToOverlay::Pt
 
 XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapchain swapchain, const XrSwapchainImageReleaseInfo* releaseInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSwapchainHandleInfo::Ptr swapchainInfo = OverlaysLayerGetHandleInfoFromXrSwapchain(swapchain);
 
     if(!swapchainInfo->overlaySwapchain->waited) {
@@ -3137,6 +3311,7 @@ XrResult OverlaysLayerReleaseSwapchainImageOverlay(XrInstance instance, XrSwapch
 
 XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     std::unique_lock<std::recursive_mutex> EndFrameLock(EndFrameMutex);
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
@@ -3179,6 +3354,7 @@ XrResult OverlaysLayerEndFrameMainAsOverlay(ConnectionToOverlay::Ptr connection,
 
 XrResult OverlaysLayerEndFrameOverlay(XrInstance instance, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
 
     auto frameEndInfoCopy = GetSharedCopyHandlesRestored(instance, "xrEndFrame", frameEndInfo);
@@ -3228,6 +3404,7 @@ void AddSwapchainsFromLayers(OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo, 
 
 XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     std::unique_lock<std::recursive_mutex> EndFrameLock(EndFrameMutex);
@@ -3301,6 +3478,7 @@ XrResult OverlaysLayerEndFrameMain(XrInstance parentInstance, XrSession session,
 
 XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEndInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try { 
         auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
@@ -3331,6 +3509,7 @@ XrResult OverlaysLayerEndFrame(XrSession session, const XrFrameEndInfo* frameEnd
 // make it now as if it will be in main
 XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCreateInfo* createInfo, XrActionSet* actionSet)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
         auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
@@ -3366,6 +3545,7 @@ XrResult OverlaysLayerCreateActionSet(XrInstance instance, const XrActionSetCrea
 // make it now as if it will be in main
 XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateInfo* createInfo, XrAction* action)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
         auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
@@ -3406,6 +3586,7 @@ XrResult OverlaysLayerCreateAction(XrActionSet actionSet, const XrActionCreateIn
 
 XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, const XrInteractionProfileSuggestedBinding* suggestedBindings)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
@@ -3439,6 +3620,7 @@ XrResult OverlaysLayerSuggestInteractionProfileBindings(XrInstance instance, con
 
 XrResult OverlaysLayerCreateActionSpaceOverlay(XrInstance parentInstance, XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -3463,6 +3645,7 @@ XrResult OverlaysLayerCreateActionSpaceOverlay(XrInstance parentInstance, XrSess
 
 XrResult OverlaysLayerCreateActionSpaceMain(XrInstance parentInstance, XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -3510,6 +3693,7 @@ XrResult OverlaysLayerCreateActionSpaceMain(XrInstance parentInstance, XrSession
 
 XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCreateInfo* createInfo, XrSpace* space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -3543,6 +3727,7 @@ XrResult OverlaysLayerCreateActionSpace(XrSession session, const XrActionSpaceCr
 
 XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr connection, XrSession session, WellKnownStringIndex profileString, WellKnownStringIndex bindingString, const XrPosef* poseInActionSpace, XrSpace *space)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
@@ -3584,6 +3769,7 @@ XrResult OverlaysLayerCreateActionSpaceFromBinding(ConnectionToOverlay::Ptr conn
 
 XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session); 
@@ -3620,6 +3806,7 @@ XrResult OverlaysLayerAttachSessionActionSetsOverlay(XrInstance parentInstance, 
 
 XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -3744,6 +3931,7 @@ XrResult OverlaysLayerAttachSessionActionSetsMain(XrInstance parentInstance, XrS
 
 XrResult OverlaysLayerAttachSessionActionSets(XrSession session, const XrSessionActionSetsAttachInfo* attachInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -3845,6 +4033,7 @@ XrResult GetActionStates(XrSession session, const ActionGetInfoList& actionsToGe
 
 XrResult OverlaysLayerGetCurrentInteractionProfile(XrSession session, XrPath topLevelUserPath, XrInteractionProfileState* interactionProfile)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4002,6 +4191,7 @@ void GetPreviousActionStates(XrInstance parentInstance, XrSession session, const
 
 XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     XrResult result = XR_SUCCESS;
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4186,6 +4376,7 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
 
 XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession session, const XrActionsSyncInfo* syncInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -4336,6 +4527,7 @@ XrResult OverlaysLayerSyncActionsMain(XrInstance parentInstance, XrSession sessi
 
 XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* syncInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4365,6 +4557,7 @@ XrResult OverlaysLayerSyncActions(XrSession session, const XrActionsSyncInfo* sy
 
 XrResult OverlaysLayerGetActionStateBoolean(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateBoolean* state)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
         auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
 
@@ -4403,6 +4596,7 @@ XrResult OverlaysLayerGetActionStateBoolean(XrSession session, const XrActionSta
 
 XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateFloat* state)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
         auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
 
@@ -4453,6 +4647,7 @@ XrResult OverlaysLayerGetActionStateFloat(XrSession session, const XrActionState
 
 XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStateVector2f* state)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
         auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
 
@@ -4491,6 +4686,7 @@ XrResult OverlaysLayerGetActionStateVector2f(XrSession session, const XrActionSt
 
 XrResult OverlaysLayerGetActionStatePose(XrSession session, const XrActionStateGetInfo* getInfo, XrActionStatePose* state)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
         auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(getInfo->action);
 
@@ -4562,6 +4758,7 @@ void GetBindingPathsForActionAndSubactionPath(XrSession session, XrAction action
 
 XrResult OverlaysLayerApplyHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t profileStringCount, const WellKnownStringIndex *profileStrings, const WellKnownStringIndex *bindingStrings, const XrHapticBaseHeader* hapticFeedback)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4589,6 +4786,7 @@ XrResult OverlaysLayerApplyHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr 
 
 XrResult OverlaysLayerStopHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, uint32_t profileStringCount, const WellKnownStringIndex *profileStrings, const WellKnownStringIndex *bindingStrings)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4610,6 +4808,7 @@ XrResult OverlaysLayerStopHapticFeedbackMainAsOverlay(ConnectionToOverlay::Ptr c
 
 XrResult OverlaysLayerApplyHapticFeedbackOverlay(XrInstance instance, XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(hapticActionInfo->action);
@@ -4645,6 +4844,7 @@ XrResult OverlaysLayerApplyHapticFeedbackOverlay(XrInstance instance, XrSession 
 
 XrResult OverlaysLayerApplyHapticFeedbackMain(XrInstance parentInstance, XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -4673,6 +4873,7 @@ XrResult OverlaysLayerApplyHapticFeedbackMain(XrInstance parentInstance, XrSessi
 
 XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActionInfo* hapticActionInfo, const XrHapticBaseHeader* hapticFeedback)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4701,6 +4902,7 @@ XrResult OverlaysLayerApplyHapticFeedback(XrSession session, const XrHapticActio
 
 XrResult OverlaysLayerStopHapticFeedbackOverlay(XrInstance instance, XrSession session, const XrHapticActionInfo* hapticActionInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(hapticActionInfo->action);
@@ -4734,6 +4936,7 @@ XrResult OverlaysLayerStopHapticFeedbackOverlay(XrInstance instance, XrSession s
 
 XrResult OverlaysLayerStopHapticFeedbackMain(XrInstance parentInstance, XrSession session, const XrHapticActionInfo* hapticActionInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
 
     XrResult result = XR_SUCCESS;
@@ -4757,6 +4960,7 @@ XrResult OverlaysLayerStopHapticFeedbackMain(XrInstance parentInstance, XrSessio
 
 XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticActionInfo* hapticActionInfo)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     try {
 
         auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
@@ -4785,6 +4989,7 @@ XrResult OverlaysLayerStopHapticFeedback(XrSession session, const XrHapticAction
 
 XrResult OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay(ConnectionToOverlay::Ptr connection, XrSession session, const XrInputSourceLocalizedNameGetInfo* getInfo /* sourcePath ignored */, WellKnownStringIndex sourceString, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto synchronizeEveryProcLock = gSynchronizeEveryProc ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex) : std::unique_lock<std::recursive_mutex>();
     OverlaysLayerXrSessionHandleInfo::Ptr sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(sessionInfo->parentInstance);
@@ -4799,6 +5004,7 @@ XrResult OverlaysLayerGetInputSourceLocalizedNameMainAsOverlay(ConnectionToOverl
 
 XrResult OverlaysLayerGetInputSourceLocalizedNameOverlay( XrInstance instance, XrSession session, const XrInputSourceLocalizedNameGetInfo* getInfo, uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
 
@@ -4813,6 +5019,7 @@ XrResult OverlaysLayerGetInputSourceLocalizedNameOverlay( XrInstance instance, X
 
 XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance, XrSession session, const XrBoundSourcesForActionEnumerateInfo* enumerateInfo, uint32_t sourceCapacityInput, uint32_t* sourceCountOutput, XrPath* sources)
 {
+    /* XXX DEBUG REMOVE THIS */ OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, __func__, OverlaysLayerNoObjectInfo, "Enter");
     auto sessionInfo = OverlaysLayerGetHandleInfoFromXrSession(session);
     auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
     auto actionInfo = OverlaysLayerGetHandleInfoFromXrAction(enumerateInfo->action);
