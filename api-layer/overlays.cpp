@@ -4232,29 +4232,34 @@ XrResult OverlaysLayerSyncActionsOverlay(XrInstance parentInstance, XrSession se
 
             for(auto fullBindingPath: fullBindingPaths) {
 
-                // XXX really should find() this - could be path from an extension
-                XrPath bindingSubactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(fullBindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+                if(instanceInfo->OverlaysLayerBindingToSubaction.count(fullBindingPath) > 0) {
+                    XrPath bindingSubactionPath = instanceInfo->OverlaysLayerBindingToSubaction.at(fullBindingPath); // This .at() must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
 
-                for(auto subactionPath: subactionPaths) {
+                    for(auto subactionPath: subactionPaths) {
 
-                    if((subactionPath == XR_NULL_PATH) || (subactionPath == bindingSubactionPath)) {
+                        if((subactionPath == XR_NULL_PATH) || (subactionPath == bindingSubactionPath)) {
 
-                        WellKnownStringIndex fullBindingString = instanceInfo->OverlaysLayerPathToWellKnownString.at(fullBindingPath); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
-                        WellKnownStringIndex profileString = instanceInfo->OverlaysLayerPathToWellKnownString.at(profilePath);
+                            WellKnownStringIndex fullBindingString = instanceInfo->OverlaysLayerPathToWellKnownString.at(fullBindingPath); // These two .at()s must succeed; adding new binding paths would require enabling an extension which API Layer doesn't support
+                            WellKnownStringIndex profileString = instanceInfo->OverlaysLayerPathToWellKnownString.at(profilePath);
 
-                        // get profile and full path which the main process side of the API layer maps to a placeholder action
+                            // get profile and full path which the main process side of the API layer maps to a placeholder action
 
-                        profileStrings.push_back(profileString);
-                        fullBindingStrings.push_back(fullBindingString);
-                        bindingAppliesToActionInfo.push_back(actionInfo);
-                        bindingMergesToSubactionPath.push_back(bindingSubactionPath);
+                            profileStrings.push_back(profileString);
+                            fullBindingStrings.push_back(fullBindingString);
+                            bindingAppliesToActionInfo.push_back(actionInfo);
+                            bindingMergesToSubactionPath.push_back(bindingSubactionPath);
 
-                        if(PrintDebugInfo) {
-                            OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrSyncActions",
-                                OverlaysLayerNoObjectInfo,
-                                fmt("I think I'm probing placeholder \"%s%s\" for an action", OverlaysLayerWellKnownStrings.at(profileString), OverlaysLayerWellKnownStrings.at(fullBindingString)).c_str());
+                            if(PrintDebugInfo) {
+                                OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT, "xrSyncActions",
+                                    OverlaysLayerNoObjectInfo,
+                                    fmt("I think I'm probing placeholder \"%s%s\" for an action", OverlaysLayerWellKnownStrings.at(profileString), OverlaysLayerWellKnownStrings.at(fullBindingString)).c_str());
+                            }
                         }
                     }
+                } else {
+                    OverlaysLayerLogMessage(parentInstance, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrSyncActions",
+                        OverlaysLayerNoObjectInfo,
+                        fmt("OverlaysLayerSyncActionsOverlay: unknown suggested binding \"%s\" for action \"%s\"", PathToString(sessionInfo->parentInstance, fullBindingPath).c_str(), actionInfo->createInfo->actionName).c_str());
                 }
             }
         }
