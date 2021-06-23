@@ -524,7 +524,6 @@ typedef std::shared_ptr<XrEventDataBuffer> EventDataBufferPtr;
 struct MainAsOverlaySessionContext
 {
     uint32_t sessionLayersPlacement;
-    bool relaxedDisplayTime;
     // local handles so they can be looked up in our tracking maps
     std::set<XrSpace> localSpaces; // use swapchainMap? 
     std::set<XrSwapchain> localSwapchains;
@@ -549,10 +548,7 @@ struct MainAsOverlaySessionContext
         return std::unique_lock<std::recursive_mutex>(mutex);
     }
 
-    MainAsOverlaySessionContext(const XrSessionCreateInfoOverlayEXTX* createInfoOverlay) :
-        sessionLayersPlacement(createInfoOverlay->sessionLayersPlacement),
-        relaxedDisplayTime(createInfoOverlay->createFlags & XR_OVERLAY_SESSION_CREATE_RELAXED_DISPLAY_TIME_BIT_EXTX)
-    {}
+    MainAsOverlaySessionContext(const XrSessionCreateInfoOverlayEXTX* createInfoOverlay) : sessionLayersPlacement(createInfoOverlay->sessionLayersPlacement) {}
 
     ~MainAsOverlaySessionContext()
     {
