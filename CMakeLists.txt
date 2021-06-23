@@ -42,6 +42,24 @@ if(NOT OPENXR_LIB_DIR)
             "Set OPENXR_LIB_DIR to desired built openxr loader"
     )
 endif()
+
+if(NOT DEFINED OPENXR_SDK_BUILD_SUBDIR)
+    message(
+        FATAL_ERROR
+        "Set OPENXR_SDK_BUILD_SUBDIR to build subdirectory"
+    )
+endif()
+
+
+# Duplicate rules from OpenXR-SDK-Source CMake
+if(WIN32)
+    set(OPENXR_DEBUG_POSTFIX d CACHE STRING "OpenXR loader debug postfix.")
+else()
+    set(OPENXR_DEBUG_POSTFIX "" CACHE STRING "OpenXR loader debug postfix.")
+endif()
+
+link_directories( ${OPENXR_LIB_DIR})
+
 set(OPENXR_INCLUDE_DIR ${OPENXR_SDK_SOURCE_ROOT}/include/openxr)
 
 project(XR_overlay)
