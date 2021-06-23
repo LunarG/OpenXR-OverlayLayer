@@ -58,6 +58,7 @@ target_link_libraries(OverlaySample PRIVATE ${FREEIMAGEPLUS_LIBRARIES})
 
 set_target_properties(OverlaySample PROPERTIES FOLDER "Sample")
 set_target_properties(OverlaySample PROPERTIES CXX_STANDARD 17)
+target_link_libraries(OverlaySample PRIVATE debug openxr_loader${OPENXR_DEBUG_POSTFIX} optimized openxr)
 
 # Additional include directories
 set_property(TARGET OverlaySample
@@ -119,7 +120,6 @@ set_property(TARGET OverlaySample
   "$<$<CONFIG:Release>:d3d11>"
   "$<$<CONFIG:Debug>:dxgi>"
   "$<$<CONFIG:Release>:dxgi>"
-  ${OPENXR_LIB_DIR}/openxr_loader.lib
 )
 
 if(WIN32)
