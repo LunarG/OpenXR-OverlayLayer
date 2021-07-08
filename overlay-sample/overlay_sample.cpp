@@ -275,7 +275,7 @@ public:
 
         if(mSession != XR_NULL_HANDLE) {
             CHECK_XR(xrDestroySession(mSession));
-		}
+        }
     }
 
     void CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion);
@@ -397,9 +397,9 @@ void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersi
     XrInstanceProperties instanceProperties{XR_TYPE_INSTANCE_PROPERTIES, nullptr};
     CHECK_XR(xrGetInstanceProperties(mInstance, &instanceProperties));
     std::cout << "Runtime \"" << instanceProperties.runtimeName << "\", version " <<
-	XR_VERSION_MAJOR(instanceProperties.runtimeVersion) << "." <<
-	XR_VERSION_MINOR(instanceProperties.runtimeVersion) << "p" <<
-	XR_VERSION_PATCH(instanceProperties.runtimeVersion) << "\n";
+    XR_VERSION_MAJOR(instanceProperties.runtimeVersion) << "." <<
+    XR_VERSION_MINOR(instanceProperties.runtimeVersion) << "p" <<
+    XR_VERSION_PATCH(instanceProperties.runtimeVersion) << "\n";
 }
 
 void OpenXRProgram::GetSystem()
@@ -1038,6 +1038,7 @@ void usage(const char *programName)
 {
     std::cerr << "usage: overlay-sample [options]\n";
     std::cerr << "options:\n";
+    std::cerr << "    --main                 Create a main session, not an overlay session\n";
     std::cerr << "    --placement N          Set overlay layer level to N    [default 0]\n";
     std::cerr << "    --rotational-offset N  Angle in radians to offset the layer clockwise about\n";
     std::cerr << "                           the stage space world up vector [default 0]\n";
@@ -1045,6 +1046,8 @@ void usage(const char *programName)
 
 int main( int argc, char **argv )
 {
+    bool createOverlaySession = true;
+
     for (int arg = 1; arg < argc; ) {
         if (strcmp(argv[arg], "--placement") == 0) {
             if (arg + 1 >= argc) {
@@ -1054,6 +1057,10 @@ int main( int argc, char **argv )
             }
             gLayerPlacement = atoi(argv[arg + 1]);
             arg += 2;
+        } else if (strcmp(argv[arg], "--main") == 0) {
+            createOverlaySession = false;
+            arg += 1;
+
         } else if ((strcmp(argv[arg], "--rotational-offset") == 0) || (strcmp(argv[arg], "--rot") == 0)) {
             if (arg + 1 >= argc) {
                 std::cerr << "expected degrees for " << argv[arg] << "\n";
@@ -1099,7 +1106,6 @@ int main( int argc, char **argv )
     //----------------------------------------------------------------------
     // Create OpenXR Instance and Session
 
-    bool createOverlaySession = true;
     OpenXRProgram program(createOverlaySession);
 
     program.CreateInstance("Overlay Sample", 0, "none", 0);
