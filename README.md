@@ -1,3 +1,7 @@
+<!-- Copyright 2020-2021 LunarG, Inc. -->
+<!-- Copyright 2020-2021 PlutoVR Inc. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # OpenXR `XR_EXTX_overlay` Test Implementation
 
 ## Introduction 
