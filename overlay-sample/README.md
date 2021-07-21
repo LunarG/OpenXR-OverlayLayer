@@ -1,3 +1,6 @@
+<!-- Copyright 2020-2021 LunarG, Inc. -->
+<!-- Copyright 2020-2021 PlutoVR Inc. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Sample Overlay app for v2 of the api
 
 This is a overlay sample that is meant to run as similarly as possible in a role as main app or as an overlay app as well as do some basic input processing.

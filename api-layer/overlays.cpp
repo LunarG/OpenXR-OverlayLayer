@@ -1,6 +1,7 @@
 // Copyright (c) 2017-2020 The Khronos Group Inc.
 // Copyright (c) 2017-2019 Valve Corporation
-// Copyright (c) 2017-2020 LunarG, Inc.
+// Copyright (c) 2017-2021 LunarG, Inc.
+// Copyright (c) 2017-2021 PlutoVR Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -19,6 +20,7 @@
 // Author: Mark Young <marky@lunarg.com>
 // Author: Dave Houlton <daveh@lunarg.com>
 // Author: Brad Grantham <brad@lunarg.com>
+// Author: John Zulauf <jzulauf@lunarg.com>
 
 
 #ifndef NOMINMAX
