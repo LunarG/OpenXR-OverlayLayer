@@ -3064,29 +3064,46 @@ header_text += f"XrResult {layer_name}XrGetInstanceProcAddr( XrInstance instance
 source_text += f"""
 XrResult {layer_name}XrGetInstanceProcAddr( XrInstance instance, const char* name, PFN_xrVoidFunction* function)
 {{
-    // Set the function pointer to NULL so that the fall-through below actually works:
-    *function = nullptr;
-
+    const static std::unordered_map<std::string, PFN_xrVoidFunction> pfn_map = {{
 """
+
 first = True
 for command_name in supported_commands:
     command = commands[command_name]
     layer_command = api_layer_name_for_command(command_name)
     if not first:
-        source_text += "    } else "
-    source_text += f"    if (strcmp(name, \"{command_name}\") == 0) " + "{\n"
-    source_text += f"        *function = reinterpret_cast<PFN_xrVoidFunction>({layer_command});\n"
+        source_text += ",\n"
+    source_text += f"""        {{ \"{command_name}\", reinterpret_cast<PFN_xrVoidFunction>({layer_command}) }}"""
     first = False
 
+source_text += """
+    };
+
+    // Unsupported Commands:
+"""
 unsupported_command_names = [c for c in commands.keys() if not c in supported_commands]
 
-for command_name in unsupported_command_names:
-    command = commands[command_name]
-    layer_command = api_layer_name_for_command(command_name)
-    source_text += "    } else " + f"if (strcmp(name, \"{command_name}\") == 0) " + "{\n"
-    source_text += f"        *function = nullptr;\n"
+known_ext = ("KHR", "EXT", "FB", "MSFT", "Oculus", "VARJO", "EXTX")
+ext_commands = { }
+ext_found = set()
+for suffix in known_ext:
+    ext_commands[suffix] = [ name for name in unsupported_command_names if name.endswith(suffix)]
+    ext_found.update(ext_commands[suffix])
+
+comment_prefix = "    //      "
+source_text += "\n".join([ f"{comment_prefix}{name}" for name in unsupported_command_names if name not in ext_found])
+for suffix in known_ext:
+    if len(ext_commands[suffix]):
+        source_text += f"\n    //    {suffix} extensions\n"
+        source_text += "\n".join([ f"{comment_prefix}{name}" for name in ext_commands[suffix]])
 
 source_text += """
+
+    const auto found = pfn_map.find(std::string(name));
+    if (found != pfn_map.cend()) {
+        *function = found->second;
+    } else {
+        *function = nullptr;
     }
 
     // If we set up the function, just return
