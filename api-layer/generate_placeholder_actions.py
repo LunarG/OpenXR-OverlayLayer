@@ -245,16 +245,18 @@ def to_upper_snake(str) :
 num = 1
 well_known_enums = ""
 well_known_mappings = ""
-for str in well_known_strings:
+for str in sorted(well_known_strings):
     well_known_enums += "    " + to_upper_snake(str) + " = %d,\n" % num
     well_known_mappings += "    {" + to_upper_snake(str) + ', "' + str + '"},\n'
     num += 1
 
 placeholder_ids = ""
 
-for (profile, top_levels) in placeholder_profiles.items():
-    for (top_level, components) in top_levels.items():
-        for component in components:
+for profile in sorted(placeholder_profiles.keys()):
+    top_levels = placeholder_profiles[profile]
+    for top_level in sorted(top_levels.keys()):
+        components = top_levels[top_level]
+        for component in sorted(components):
             if component.endswith("value") or component.endswith("x") or component.endswith("y") or component.endswith("force") or component.endswith("touch"):
                 type = "XR_ACTION_TYPE_FLOAT_INPUT"
             elif component.endswith("click"):
@@ -272,10 +274,12 @@ for (profile, top_levels) in placeholder_profiles.items():
 
 
 well_known = f"""
+// All applications within an overlay session must use the same version of the overlay layer to ensure compatibility, or the some
+// RPC to share the main overlay's enum -> string map must be added.
 enum WellKnownStringIndex {{
     NULL_PATH = 0,
 {well_known_enums}
-}}; // Existing entries will need to not change for subsequent versions for backward compatibility after the first public release
+}};
 
 std::unordered_map<WellKnownStringIndex, const char *> OverlaysLayerWellKnownStrings = {{
 {well_known_mappings}
