@@ -186,11 +186,9 @@ for reg_type in reg_types:
             if type_tail:
                 member_type += " " + type_tail
 
-            if type_text == "char" and name_tail == "[" and enum_tail == "]":
-                # member["type"] = "char_array"
-                # member["size"] = enum_text
+            if name_tail == "[" and enum_tail == "]":
                 member["type"] = "fixed_array"
-                member["base_type"] = "char"
+                member["base_type"] = type_text
                 member["size"] = enum_text
 
             elif member_type == "char * const*":
@@ -3118,7 +3116,7 @@ source_text += """
 }
 """
 
-if outputFilename == "xr_generated_overlays.cpp":
+if outputFilename.endswith("cpp"):
     open(outputFilename, "w").write(source_text)
 else:
     open(outputFilename, "w").write(header_text)
