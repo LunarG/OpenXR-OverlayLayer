@@ -5422,6 +5422,64 @@ XrResult OverlaysLayerEnumerateBoundSourcesForActionOverlay(XrInstance instance,
     return XR_SUCCESS;
 }
 
+// WIP: We're lying s.t. any client to the overlay service thinks the overlay service is an AR physical reality...
+// WIP: However we're always returning the extra blendmode without regard to wheter this is the main or overlay session because
+// WIP: the way overlay is define currently we don't know if the application is going to function in the main or overlay mode
+// WIP: isn't until CreateSession time, which makes it too late to know wheter to lie or not.
+// WIP: Need to control this behavior in some safe way.  Also, caching the enumeration downchaing.
+XrResult OverlaysLayerEnumerateEnvironmentBlendModes(XrInstance instance, XrSystemId systemId,
+                                                     XrViewConfigurationType viewConfigurationType,
+                                                     uint32_t environmentBlendModeCapacityInput,
+                                                     uint32_t* environmentBlendModeCountOutput,
+                                                     XrEnvironmentBlendMode* environmentBlendModes) {
+    try {
+        XrResult result;
+        std::vector<XrEnvironmentBlendMode> blendModes;
+        uint32_t numBlendModes = *environmentBlendModeCountOutput;
+        {
+            auto instanceInfo = OverlaysLayerGetHandleInfoFromXrInstance(instance);
+            auto synchronizeEveryProcLock = gSynchronizeEveryProc
+                                                ? std::unique_lock<std::recursive_mutex>(gSynchronizeEveryProcMutex)
+                                                : std::unique_lock<std::recursive_mutex>();
+            result = instanceInfo->downchain->EnumerateEnvironmentBlendModes(instance, systemId, viewConfigurationType, 0,
+                                                                             &numBlendModes, nullptr);
+            if (XR_FAILED(result)) {
+                return result;
+            }
+
+            blendModes.resize(numBlendModes);
+            result = instanceInfo->downchain->EnumerateEnvironmentBlendModes(instance, systemId, viewConfigurationType,
+                                                                             numBlendModes, &numBlendModes, blendModes.data());
+        }
+        if (XR_FAILED(result)) {
+            return result;
+        }
+
+        // Add blend mode if not already on the list
+        auto is_blend = [](XrEnvironmentBlendMode mode) { return mode == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND; };
+        if (!std::any_of(blendModes.begin(), blendModes.end(), is_blend)) {
+            blendModes.push_back(XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND);
+        }
+
+        *environmentBlendModeCountOutput = static_cast<uint32_t>(blendModes.size());
+        // Copy whatever results
+        if (environmentBlendModes) {
+            if (environmentBlendModeCapacityInput < blendModes.size()) {
+                result = XR_ERROR_SIZE_INSUFFICIENT;
+            } else {
+                std::copy(blendModes.begin(), blendModes.end(), environmentBlendModes);
+            }
+        }
+
+        return result;
+    } catch (const OverlaysLayerXrException exc) {
+        return exc.result();
+    } catch (const std::bad_alloc& e) {
+        OverlaysLayerLogMessage(XR_NULL_HANDLE, XR_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT, "xrEnumerateEnvironmentBlendModes",
+                                OverlaysLayerNoObjectInfo, e.what());
+        return XR_ERROR_OUT_OF_MEMORY;
+    }
+}
 
 extern "C" {
 
