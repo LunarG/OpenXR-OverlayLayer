@@ -85,6 +85,13 @@ constexpr int gFudgeMinAlpha = 128;
 
 int gLayerPlacement = 0;
 float gLayerRotationalOffset = 0.f;
+bool gEmptyFrame = false;
+bool gAllInputExtensions = false;
+
+std::vector<const char*> gInputExtensionList{
+    XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME,
+    XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME, XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME,
+    XR_MSFT_HAND_INTERACTION_EXTENSION_NAME};
 
 // OpenXR will give us a LUID.  This function will walk adapters to find
 // the adapter matching that LUID, then create an ID3D11Device* from it so
@@ -333,6 +340,7 @@ private:
 void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersion, const std::string& engineName, uint32_t engineVersion)
 {
     std::map<std::string, uint32_t> extensions;
+    auto HasExtension = [&extensions](const char* extName) { return extensions.find(std::string(extName)) != extensions.end(); };
 
     uint32_t extPropCount;
     CHECK_XR(xrEnumerateInstanceExtensionProperties(nullptr, 0, &extPropCount, nullptr));
@@ -352,30 +360,41 @@ void OpenXRProgram::CreateInstance(const std::string& appName, uint32_t appVersi
         std::cout << "Extensions supported:\n";
         for(const auto& p: extensions) {
             std::cout << "    " << p.first << ", version " << p.second << "\n";
-            if(std::string(p.first) == "XR_EXT_debug_utils") {
-                mDebugUtilsAvailable = true;
-            }
-            if(std::string(p.first) == "XR_EXT_permissions_support") {
-                mPermissionsSupportAvailable = true;
-            }
         }
     } else {
         std::cout << "Warning: No extensions supported.\n";
     }
 
     std::vector<const char*> requiredExtensionNames;
-    requiredExtensionNames.push_back("XR_KHR_D3D11_enable");
+
+    auto RequestExtension = [&HasExtension, &requiredExtensionNames](const char* extName) {
+        if (HasExtension(extName)) {
+            requiredExtensionNames.push_back(extName);
+            return true;
+        }
+        return false;
+    };
+
+    if (!RequestExtension("XR_KHR_D3D11_enable")) {
+        // Fatal error to not have graphics support
+        std::cerr << "Error: required D3D11 extension not present" << std::endl;
+        exit(1);
+    }
 
     if (mRequestOverlaySession) {
-        requiredExtensionNames.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
+        if (!RequestExtension(XR_EXTX_OVERLAY_EXTENSION_NAME)) {
+            // Fatal error to not have graphics support
+            std::cerr << "Error: cannot start overlay session without overlay extension" << std::endl;
+            exit(1);
+        }
     }
-
-    if(mDebugUtilsAvailable) {
-        requiredExtensionNames.push_back("XR_EXT_debug_utils");
-    }
-
-    if(mPermissionsSupportAvailable) {
-        requiredExtensionNames.push_back("XR_EXT_permissions_support");
+    RequestExtension("XR_EXT_debug_utils");
+    RequestExtension("XR_EXT_permissions_support");
+    if (gAllInputExtensions) {
+        // Enable all input extensions that are *present* -- typically when as service
+        for (auto& ext : gInputExtensionList) {
+            RequestExtension(ext);
+        }
     }
 
     XrInstanceCreateInfo createInstance{XR_TYPE_INSTANCE_CREATE_INFO};
@@ -420,8 +439,8 @@ void OpenXRProgram::CreateSession(ID3D11Device* d3d11Device, bool requestOverlay
     d3dBinding.device = d3d11Device;
     chain = &d3dBinding;
 
+    XrSessionCreateInfoOverlayEXTX sessionCreateInfoOverlay{ XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX };
     if(requestOverlaySession) {
-        XrSessionCreateInfoOverlayEXTX sessionCreateInfoOverlay{ XR_TYPE_SESSION_CREATE_INFO_OVERLAY_EXTX };
         sessionCreateInfoOverlay.next = chain;
         sessionCreateInfoOverlay.createFlags = 0;
         sessionCreateInfoOverlay.sessionLayersPlacement = gLayerPlacement;
@@ -1037,6 +1056,7 @@ void usage(const char *programName)
     std::cerr << "usage: overlay-sample [options]\n";
     std::cerr << "options:\n";
     std::cerr << "    --main                 Create a main session, not an overlay session\n";
+    std::cerr << "    --service              Create a main session with no content\n";
     std::cerr << "    --placement N          Set overlay layer level to N    [default 0]\n";
     std::cerr << "    --rotational-offset N  Angle in radians to offset the layer clockwise about\n";
     std::cerr << "                           the stage space world up vector [default 0]\n";
@@ -1057,6 +1077,12 @@ int main( int argc, char **argv )
             arg += 2;
         } else if (strcmp(argv[arg], "--main") == 0) {
             createOverlaySession = false;
+            gAllInputExtensions = true;  // Need to support anything an overlay session *could* ask for
+            arg += 1;
+        } else if (strcmp(argv[arg], "--service") == 0) {
+            createOverlaySession = false;
+            gEmptyFrame = true;
+            gAllInputExtensions = true;  // Need to support anything an overlay session *could* ask for
             arg += 1;
 
         } else if ((strcmp(argv[arg], "--rotational-offset") == 0) || (strcmp(argv[arg], "--rot") == 0)) {
@@ -1279,7 +1305,7 @@ int main( int argc, char **argv )
 
                 program.BeginFrame();
 
-                if(shouldRender) {
+                if(shouldRender && !gEmptyFrame) {
 
 
                     for(int eye = 0; eye < 2; eye++) {

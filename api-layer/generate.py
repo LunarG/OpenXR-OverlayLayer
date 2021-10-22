@@ -359,6 +359,7 @@ manually_implemented_commands = [
     "xrSuggestInteractionProfileBindings",
     "xrAttachSessionActionSets",
     "xrGetCurrentInteractionProfile",
+    "xrEnumerateEnvironmentBlendModes",
 ]
 
 supported_commands = [
