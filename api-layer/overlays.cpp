@@ -31,6 +31,7 @@
 #include "platform_utils.hpp"
 
 #include "overlays.h"
+#include "adjusted_ref_space.h"
 
 #include "xr_generated_overlays.hpp"
 #include "xr_generated_dispatch_table.h"
@@ -1693,17 +1694,19 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     new_api_layer_info.nextInfo = apiLayerInfo->nextInfo->next;
 
     // Remove XR_EXTX_overlay from the extension list if requested
-    const char** extensionNamesMinusOverlay = new const char*[instanceCreateInfo->enabledExtensionCount];
-    uint32_t extensionCountMinusOverlay = 0;
-    for(uint32_t i = 0; i < instanceCreateInfo->enabledExtensionCount; i++) {
-        if(strncmp(instanceCreateInfo->enabledExtensionNames[i], XR_EXTX_OVERLAY_EXTENSION_NAME, strlen(XR_EXTX_OVERLAY_EXTENSION_NAME)) != 0) {
-            extensionNamesMinusOverlay[extensionCountMinusOverlay++] = instanceCreateInfo->enabledExtensionNames[i];
-        }
-    }
+    std::vector<const char*> extensionNamesMinusExcluded;
+    extensionNamesMinusExcluded.reserve(instanceCreateInfo->enabledExtensionCount);
+    const char* const* begin_ext_name = instanceCreateInfo->enabledExtensionNames;
+    const char* const* end_ext_name = begin_ext_name + instanceCreateInfo->enabledExtensionCount;
+    std::copy_if(begin_ext_name, end_ext_name, extensionNamesMinusExcluded.begin(), [](const char* elem) {
+        static const std::set<const std::string> exclude = {XR_EXTX_OVERLAY_EXTENSION_NAME,
+                                                            XR_EXTX_ADJUST_REFERENCE_SPACE_EXTENSION_NAME};
+        return exclude.find(std::string(elem)) == exclude.cend();
+    });
 
     XrInstanceCreateInfo createInfoMinusOverlays = *instanceCreateInfo;
-    createInfoMinusOverlays.enabledExtensionNames = extensionNamesMinusOverlay;
-    createInfoMinusOverlays.enabledExtensionCount = extensionCountMinusOverlay;
+    createInfoMinusOverlays.enabledExtensionNames = extensionNamesMinusExcluded.data();
+    createInfoMinusOverlays.enabledExtensionCount = static_cast<uint32_t>(extensionNamesMinusExcluded.size());
 
     // Get the function pointers we need
     next_get_instance_proc_addr = apiLayerInfo->nextInfo->nextGetInstanceProcAddr;
@@ -1714,11 +1717,17 @@ XrResult OverlaysLayerXrCreateApiLayerInstance(const XrInstanceCreateInfo *insta
     XrResult result = next_create_api_layer_instance(&createInfoMinusOverlays, &new_api_layer_info, &returned_instance);
     *instance = returned_instance;
 
-    delete[] extensionNamesMinusOverlay;
-
     // Create the dispatch table to the next levels
     std::shared_ptr<XrGeneratedDispatchTable> next_dispatch = std::make_shared<XrGeneratedDispatchTable>();
     GeneratedXrPopulateDispatchTable(next_dispatch.get(), returned_instance, next_get_instance_proc_addr);
+
+    // Patch dispatch table for adjust reference space "sub layer"
+    const bool enable_adjust_reference_space = std::any_of(begin_ext_name, end_ext_name, [](const char* elem) {
+        return (strcmp(elem, XR_EXTX_ADJUST_REFERENCE_SPACE_EXTENSION_NAME) == 0);
+    });
+    if (enable_adjust_reference_space) {
+        adjusted_reference_space_sublayer::CreateInstance(*instance, next_dispatch.get());
+    }
 
     OverlaysLayerXrInstanceHandleInfo::Ptr instanceInfo = std::make_shared<OverlaysLayerXrInstanceHandleInfo>(next_dispatch);
     instanceInfo->createInfo = reinterpret_cast<XrInstanceCreateInfo*>(CopyXrStructChainWithMalloc(*instance, instanceCreateInfo));
